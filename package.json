@@ -1,0 +1,29 @@
+{
+  "name": "zenui",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.13.1",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "test:coverage": "turbo run test:coverage",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^22.19.1",
+    "@vitest/coverage-v8": "^4.0.18",
+    "eslint": "^9.39.1",
+    "eslint-plugin-import-x": "^4.16.1",
+    "globals": "^16.5.0",
+    "turbo": "^2.6.3",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.50.1",
+    "vitest": "^4.0.18"
+  }
+}
