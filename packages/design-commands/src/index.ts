@@ -23,7 +23,7 @@ export const designCommandSchema = z.discriminatedUnion('type', [
   z.object({ ...metadata, type: z.literal('UPDATE_STYLE'), nodeId: z.string(), patch: recordPatch }).strict(),
   z.object({ ...metadata, type: z.literal('UPDATE_RESPONSIVE_STYLE'), nodeId: z.string(), breakpoint: z.enum(['tablet', 'mobile']), patch: recordPatch }).strict(),
   z.object({ ...metadata, type: z.literal('UPDATE_THEME'), patch: recordPatch }).strict(),
-  z.object({ ...metadata, type: z.literal('REPLACE_SUBTREE'), nodeId: z.string(), nodes: z.array(designNodeSchema).min(1), rootNodeId: z.string() }).strict(),
+  z.object({ ...metadata, type: z.literal('REPLACE_SUBTREE'), nodeId: z.string(), nodes: z.array(designNodeSchema).min(1), rootNodeId: z.string(), index: z.number().int().nonnegative().optional() }).strict(),
 ])
 
 export type DesignCommand = z.infer<typeof designCommandSchema>
@@ -65,6 +65,24 @@ function findDescendants(document: DesignDocument, nodeId: string): string[] {
   }
   visit(nodeId)
   return result
+}
+
+function subtreeNodes(document: DesignDocument, nodeId: string): DesignDocument['nodes'][string][] {
+  return [nodeId, ...findDescendants(document, nodeId)].map(id => structuredClone(document.nodes[id]!))
+}
+
+function inversePatch(
+  previous: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(Object.keys(patch).map(key => [key, previous[key]]))
+}
+
+function applyPatch(target: Record<string, unknown>, patch: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) delete target[key]
+    else target[key] = value
+  }
 }
 
 function insertAt(children: string[], index: number, nodeId: string): boolean {
@@ -114,13 +132,22 @@ function applyOne(document: DesignDocument, command: DesignCommand): { inverse: 
       const node = document.nodes[command.nodeId]
       if (!node) return { code: 'node_not_found', path: 'nodeId', message: 'Node does not exist' }
       if (node.parentId === null) return { code: 'root_operation_forbidden', path: 'nodeId', message: 'Root cannot be removed' }
-      if (node.children.length > 0) return { code: 'invalid_command', path: 'nodeId', message: 'Phase 0 contract removes leaf nodes only' }
       const parent = document.nodes[node.parentId]
       if (!parent) return { code: 'document_invalid', path: 'nodeId', message: 'Parent is missing' }
       const index = parent.children.indexOf(node.id)
+      const nodes = subtreeNodes(document, node.id)
       parent.children.splice(index, 1)
-      delete document.nodes[node.id]
-      return { inverse: { ...cloneCommandMetadata(command, 'INSERT_NODE'), type: 'INSERT_NODE', parentId: parent.id, index, node } }
+      for (const subtreeNode of nodes) delete document.nodes[subtreeNode.id]
+      return {
+        inverse: {
+          ...cloneCommandMetadata(command, 'REPLACE_SUBTREE'),
+          type: 'REPLACE_SUBTREE',
+          nodeId: node.id,
+          rootNodeId: node.id,
+          nodes,
+          index,
+        },
+      }
     }
     case 'DUPLICATE_NODE': {
       const node = document.nodes[command.nodeId]
@@ -140,24 +167,94 @@ function applyOne(document: DesignDocument, command: DesignCommand): { inverse: 
       const node = document.nodes[command.nodeId]
       if (!node) return { code: 'node_not_found', path: 'nodeId', message: 'Node does not exist' }
       const key = command.type === 'UPDATE_PROPS' ? 'props' : 'style'
-      const previous = structuredClone(node[key])
-      Object.assign(node[key], command.patch)
-      return { inverse: { ...cloneCommandMetadata(command, command.type), type: command.type, nodeId: node.id, patch: previous } as DesignCommand }
+      const previous = structuredClone(node[key]) as Record<string, unknown>
+      applyPatch(node[key], command.patch)
+      return {
+        inverse: {
+          ...cloneCommandMetadata(command, command.type),
+          type: command.type,
+          nodeId: node.id,
+          patch: inversePatch(previous, command.patch),
+        } as DesignCommand,
+      }
     }
     case 'UPDATE_RESPONSIVE_STYLE': {
       const node = document.nodes[command.nodeId]
       if (!node) return { code: 'node_not_found', path: 'nodeId', message: 'Node does not exist' }
-      const previous = structuredClone(node.responsive[command.breakpoint] ?? {})
-      node.responsive[command.breakpoint] = { ...(node.responsive[command.breakpoint] ?? {}), ...command.patch }
-      return { inverse: { ...cloneCommandMetadata(command, 'UPDATE_RESPONSIVE_STYLE'), type: 'UPDATE_RESPONSIVE_STYLE', nodeId: node.id, breakpoint: command.breakpoint, patch: previous } }
+      const previous = structuredClone(node.responsive[command.breakpoint] ?? {}) as Record<string, unknown>
+      const next = { ...(node.responsive[command.breakpoint] ?? {}) }
+      applyPatch(next, command.patch)
+      node.responsive[command.breakpoint] = next
+      return {
+        inverse: {
+          ...cloneCommandMetadata(command, 'UPDATE_RESPONSIVE_STYLE'),
+          type: 'UPDATE_RESPONSIVE_STYLE',
+          nodeId: node.id,
+          breakpoint: command.breakpoint,
+          patch: inversePatch(previous, command.patch),
+        },
+      }
     }
     case 'UPDATE_THEME': {
-      const previous = structuredClone(document.theme)
-      document.theme = { ...document.theme, ...command.patch }
-      return { inverse: { ...cloneCommandMetadata(command, 'UPDATE_THEME'), type: 'UPDATE_THEME', patch: previous } }
+      const previous = structuredClone(document.theme) as unknown as Record<string, unknown>
+      const next = structuredClone(document.theme) as unknown as Record<string, unknown>
+      applyPatch(next, command.patch)
+      document.theme = next as unknown as DesignDocument['theme']
+      return {
+        inverse: {
+          ...cloneCommandMetadata(command, 'UPDATE_THEME'),
+          type: 'UPDATE_THEME',
+          patch: inversePatch(previous, command.patch),
+        },
+      }
     }
-    case 'REPLACE_SUBTREE':
-      return { code: 'invalid_command', path: 'type', message: 'REPLACE_SUBTREE execution is deferred to Phase 1; contract parsing is available' }
+    case 'REPLACE_SUBTREE': {
+      const target = document.nodes[command.nodeId]
+      const replacementRoot = command.nodes.find(node => node.id === command.rootNodeId)
+      if (!replacementRoot) return { code: 'invalid_command', path: 'rootNodeId', message: 'Replacement root is missing' }
+
+      if (!target) {
+        if (command.index === undefined) return { code: 'node_not_found', path: 'nodeId', message: 'Node does not exist' }
+        const parent = replacementRoot.parentId ? document.nodes[replacementRoot.parentId] : undefined
+        if (!parent) return { code: 'parent_not_found', path: 'nodes', message: 'Replacement parent does not exist' }
+        if (!isAllowedChild(parent.type, replacementRoot.type)) return { code: 'invalid_parent_child', path: 'nodes', message: 'Replacement root cannot be inserted into this parent' }
+        const ids = new Set(command.nodes.map(node => node.id))
+        if (ids.size !== command.nodes.length || command.nodes.some(node => document.nodes[node.id])) {
+          return { code: 'invalid_command', path: 'nodes', message: 'Replacement node IDs must be unique' }
+        }
+        if (!insertAt(parent.children, command.index, replacementRoot.id)) return { code: 'index_out_of_bounds', path: 'index', message: 'Replacement index is out of bounds' }
+        for (const node of command.nodes) document.nodes[node.id] = structuredClone(node)
+        return { inverse: { ...cloneCommandMetadata(command, 'REMOVE_NODE'), type: 'REMOVE_NODE', nodeId: replacementRoot.id } }
+      }
+
+      if (target.parentId === null) return { code: 'root_operation_forbidden', path: 'nodeId', message: 'Root cannot be replaced' }
+      const parent = document.nodes[target.parentId]
+      if (!parent) return { code: 'document_invalid', path: 'nodeId', message: 'Parent is missing' }
+      if (replacementRoot.parentId !== parent.id || !isAllowedChild(parent.type, replacementRoot.type)) {
+        return { code: 'invalid_parent_child', path: 'nodes', message: 'Replacement root cannot be inserted into this parent' }
+      }
+
+      const previousNodes = subtreeNodes(document, target.id)
+      const previousIds = new Set(previousNodes.map(node => node.id))
+      const replacementIds = new Set(command.nodes.map(node => node.id))
+      if (replacementIds.size !== command.nodes.length || command.nodes.some(node => document.nodes[node.id] && !previousIds.has(node.id))) {
+        return { code: 'invalid_command', path: 'nodes', message: 'Replacement node IDs must be unique' }
+      }
+
+      const index = parent.children.indexOf(target.id)
+      parent.children[index] = replacementRoot.id
+      for (const node of previousNodes) delete document.nodes[node.id]
+      for (const node of command.nodes) document.nodes[node.id] = structuredClone(node)
+      return {
+        inverse: {
+          ...cloneCommandMetadata(command, 'REPLACE_SUBTREE'),
+          type: 'REPLACE_SUBTREE',
+          nodeId: replacementRoot.id,
+          rootNodeId: target.id,
+          nodes: previousNodes,
+        },
+      }
+    }
   }
 }
 

@@ -8,14 +8,20 @@
   },
   "scripts": {
     "build": "turbo run build",
+    "db:check": "pnpm --filter @zenui/database db:check",
+    "db:generate": "pnpm --filter @zenui/database db:generate",
+    "db:migrate": "pnpm --filter @zenui/database db:migrate",
     "dev": "turbo run dev --parallel",
     "lint": "turbo run lint",
     "test": "turbo run test",
     "test:coverage": "turbo run test:coverage",
+    "test:e2e": "playwright test",
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.57.0",
     "@types/node": "^22.19.1",
     "@vitest/coverage-v8": "^4.0.18",
     "eslint": "^9.39.1",
@@ -25,5 +31,8 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.50.1",
     "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "sharp": "^0.35.3"
   }
 }

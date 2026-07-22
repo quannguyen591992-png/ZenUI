@@ -10,7 +10,7 @@
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint src test",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "vitest run --coverage --coverage.thresholds.branches=80 --coverage.thresholds.functions=80 --coverage.thresholds.lines=80 --coverage.thresholds.statements=80",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

@@ -149,6 +149,8 @@ Threats and controls:
 - Cross-workspace access must fail before returning resource metadata.
 - Provider connections belong to a workspace/user and cannot be referenced by another tenant.
 - Authorization integration tests are required in Phase 2 and Phase 6.
+- Phase 2 project mutations require an exact `APP_ORIGIN` match before body parsing or repository access; missing, `null` and foreign origins fail with a safe 403.
+- The Playwright-only identity route and PGlite runtime require both non-production `NODE_ENV` and `ZENUI_E2E_ENABLED=true`; identities are allowlisted, signed, expiring and stored in an HTTP-only same-site cookie. The route returns 404 when the guard is disabled.
 
 ## MVP policy decisions
 

@@ -68,7 +68,7 @@
 - Database/Auth: PostgreSQL + Drizzle ORM + Auth.js, thiết kế workspace-ready; implementation thuộc Phase 2.
 - AI/LLM: Google Gemini sau provider-neutral adapter; mọi structured output phải qua Zod và semantic validation phía server.
 - Deploy: Vercel là provider đầu tiên; OAuth credential chỉ ở server, deployment gắn immutable revision.
-- Test framework: Vitest + V8 coverage; Playwright E2E scaffold/implementation thuộc Phase 1.
+- Test framework: Vitest + Testing Library + V8 coverage; Playwright E2E chạy critical editor flow.
 
 ### 5.2 Commands thực tế
 - Install: `pnpm install`
@@ -78,13 +78,19 @@
 - Build: `pnpm build`
 - Typecheck: `pnpm typecheck`
 - Lint: `pnpm lint`
+- E2E: `pnpm test:e2e`
 
 ### 5.3 Kiến trúc package
 - `apps/web`: dashboard/editor/API BFF.
 - `apps/worker`: AI/export/deploy job boundary.
 - `packages/design-schema`: Design Document v1, Zod schemas, limits, semantic validator và JSON Schema export.
-- `packages/component-registry`: registry duy nhất cho 8 component prototype và parent-child matrix.
-- `packages/design-commands`: command discriminated union và atomic transaction contract.
+- `packages/component-registry`: registry duy nhất cho 18 component Phase 2, composite templates, Inspector metadata và parent-child matrix.
+- `packages/design-commands`: command discriminated union, subtree operations và atomic transaction contract.
+- `packages/editor-core`: editor session/history, drop planning, sequential autosave coordinator và project-scoped recovery persistence thuần TypeScript.
+- `packages/html-compiler`: shared render primitives và deterministic standalone HTML compiler.
+- `packages/database`: PostgreSQL/Drizzle schema, migration, workspace-scoped repository, optimistic document versions và immutable revisions; integration test dùng PGlite.
+- `apps/web/lib/server` và `apps/web/app/api`: Auth.js configuration, exact-Origin guard, RBAC/API envelopes, project/document/command/revision boundaries và guarded non-production E2E runtime.
+- `tests/e2e`: authenticated dashboard/editor autosave/reload/revision/tenant/conflict/export journeys chạy Chromium, Firefox và WebKit; axe audit chặn serious/critical violations.
 - `docs/adr`, `docs/product`, `docs/security`: quyết định kiến trúc, interaction/API contracts và threat model.
 
 ### 5.4 Ghi chú riêng của dự án

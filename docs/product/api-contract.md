@@ -1,6 +1,6 @@
 # Internal API Contract v1
 
-This Phase 0 document defines conventions; endpoints are implemented in later phases.
+This document defines the v1 conventions and tracks the Phase 2 endpoint implementation status. Implemented routes still follow the same envelopes and authorization invariants.
 
 ## Conventions
 
@@ -38,20 +38,24 @@ Error:
 
 No stack trace, SQL detail, provider token or provider response body is returned.
 
-## Planned resources
+## Resources and implementation status
 
-| Method | Path | Purpose | Key status |
-|---|---|---|---|
-| POST | `/api/v1/projects` | Create project in current workspace | 201 |
-| GET | `/api/v1/projects/:projectId` | Read authorized project | 200/404 |
-| PUT | `/api/v1/projects/:projectId/document` | Replace validated draft at expected version | 200/409/422 |
-| POST | `/api/v1/projects/:projectId/commands` | Apply atomic command batch | 200/409/422 |
-| GET | `/api/v1/projects/:projectId/revisions` | List immutable revisions | 200 |
-| POST | `/api/v1/projects/:projectId/revisions/:revisionId/restore` | Restore into a new draft version | 200/409 |
-| POST | `/api/v1/projects/:projectId/generation-runs` | Queue AI generation/edit | 202/429 |
-| POST | `/api/v1/projects/:projectId/exports` | Queue immutable HTML artifact | 202 |
-| POST | `/api/v1/projects/:projectId/share-links` | Share one revision | 201 |
-| POST | `/api/v1/projects/:projectId/deployments` | Deploy one revision | 202/409/429 |
+| Method | Path | Purpose | Key status | Phase 2 state |
+|---|---|---|---|---|
+| GET | `/api/v1/projects?workspaceId=:workspaceId` | List projects in an authorized workspace | 200/401/404/422 | Implemented |
+| POST | `/api/v1/projects` | Create project in an authorized workspace | 201/401/403/404/422 | Implemented |
+| GET | `/api/v1/projects/:projectId` | Read authorized project | 200/404/422 | Implemented |
+| PATCH | `/api/v1/projects/:projectId` | Rename an authorized project | 200/403/404/422 | Implemented |
+| DELETE | `/api/v1/projects/:projectId` | Soft-archive an authorized project | 200/403/404/422 | Implemented |
+| GET | `/api/v1/projects/:projectId/document` | Read the validated current draft and version | 200/404/422 | Implemented |
+| POST | `/api/v1/projects/:projectId/commands` | Apply an atomic command batch | 200/401/403/404/409/422 | Implemented |
+| GET | `/api/v1/projects/:projectId/revisions` | List immutable revisions | 200/404/422 | Implemented |
+| POST | `/api/v1/projects/:projectId/revisions` | Snapshot the current server draft | 201/403/404/422 | Implemented |
+| POST | `/api/v1/projects/:projectId/revisions/:revisionId/restore` | Restore into a new draft version | 200/403/404/409/422 | Implemented |
+| POST | `/api/v1/projects/:projectId/generation-runs` | Queue AI generation/edit | 202/429 | Phase 3 |
+| POST | `/api/v1/projects/:projectId/exports` | Queue immutable HTML artifact | 202 | Phase 4 |
+| POST | `/api/v1/projects/:projectId/share-links` | Share one revision | 201 | Phase 5 |
+| POST | `/api/v1/projects/:projectId/deployments` | Deploy one revision | 202/409/429 | Phase 6 |
 
 ## Optimistic document writes
 
@@ -90,4 +94,4 @@ Permission for operation ---- no ----> 403
 Execute resource operation
 ```
 
-Read operations may use 404 to avoid tenant enumeration. State-changing operations use CSRF-safe Auth.js session patterns and same-site secure cookies.
+Read operations use 404 to avoid tenant enumeration. Auth.js sessions use HTTP-only, secure, same-site cookies. Every state-changing project route enforces an exact trusted `Origin` policy before parsing the body or invoking repository mutation; missing, `null` or foreign origins return safe HTTP 403 `invalid_origin`. The trusted origin is configured server-side with `APP_ORIGIN`.

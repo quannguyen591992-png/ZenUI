@@ -15,11 +15,11 @@
 | Tên dự án | ZenUI |
 | Mục tiêu MVP | Prompt tạo landing page, kéo-thả có cấu trúc, chỉnh sửa trực quan, AI chỉnh sửa, export, share và deploy |
 | Trạng thái tổng thể | Implementation |
-| Phase hiện tại | Phase 1 — Editor Core Prototype |
+| Phase hiện tại | Phase 3 — AI Generation & Editing |
 | Ngày tạo | 2026-07-21 |
-| Cập nhật gần nhất | 2026-07-21 |
+| Cập nhật gần nhất | 2026-07-22 |
 | Người chịu trách nhiệm cập nhật | Developer/AI agent thực hiện phase |
-| Phiên bản tài liệu | 0.2.0 |
+| Phiên bản tài liệu | 0.4.0 |
 
 ### 0.1. Trạng thái hợp lệ
 
@@ -1031,8 +1031,8 @@ createdAt
 | Phase | Tên | Trạng thái | Mục tiêu | Phụ thuộc |
 |---|---|---|---|---|
 | 0 | Product & Architecture Foundation | Completed | Chốt contract, schema, stack và prototype plan | Không |
-| 1 | Editor Core Prototype | Not started | Renderer, command system, drag/drop cơ bản | Phase 0 |
-| 2 | Editor Foundation | Not started | Dashboard, registry, canvas, layers, inspector, persistence | Phase 1 |
+| 1 | Editor Core Prototype | Completed | Renderer, command system, drag/drop cơ bản | Phase 0 |
+| 2 | Editor Foundation | Completed | Dashboard, registry, canvas, layers, inspector, persistence | Phase 1 |
 | 3 | AI Generation & Editing | Not started | Prompt tạo trang và AI operations | Phase 2 |
 | 4 | Secure Preview & Export | Not started | Preview sandbox, HTML compiler/export | Phase 2 |
 | 5 | Share | Not started | Immutable public revision link | Phase 4 |
@@ -1116,19 +1116,19 @@ Chứng minh các rủi ro kỹ thuật lớn nhất trước khi tích hợp AI
 
 ## 14.3. Checklist
 
-- [ ] Viết schema tests trước implementation.
-- [ ] Viết command reducer tests.
-- [ ] Implement component registry.
-- [ ] Implement renderer.
-- [ ] Implement selection.
-- [ ] Implement drag/drop từ palette.
-- [ ] Implement reorder.
-- [ ] Implement invalid-drop rejection.
-- [ ] Implement basic inspector.
-- [ ] Implement undo/redo.
-- [ ] Implement persistence.
-- [ ] Implement HTML compiler.
-- [ ] Viết E2E happy path.
+- [x] Viết schema tests trước implementation.
+- [x] Viết command reducer tests.
+- [x] Implement component registry.
+- [x] Implement renderer.
+- [x] Implement selection.
+- [x] Implement drag/drop từ palette.
+- [x] Implement reorder.
+- [x] Implement invalid-drop rejection.
+- [x] Implement basic inspector.
+- [x] Implement undo/redo.
+- [x] Implement persistence.
+- [x] Implement HTML compiler.
+- [x] Viết E2E happy path.
 
 ## 14.4. Exit criteria
 
@@ -1144,26 +1144,28 @@ Kéo Heading vào Section
 
 Bắt buộc:
 
-- [ ] Unit tests command/schema pass.
-- [ ] E2E core flow pass.
-- [ ] Build/typecheck/lint pass.
-- [ ] Không có cycle/orphan/duplicate node sau fuzz/property tests cơ bản.
+- [x] Unit tests command/schema pass.
+- [x] E2E core flow pass.
+- [x] Build/typecheck/lint pass.
+- [x] Không có cycle/orphan/duplicate node sau fuzz/property tests cơ bản.
 
 ## 14.5. Phase Completion Record
 
 ```text
-Status: Not started
-Completed date:
-Implemented:
-Changed files/modules:
-Verification commands:
-Passed:
-Failed:
-Skipped:
-Known limitations:
-Decisions made:
-Risks added/closed:
-Next phase readiness:
+Phase: Phase 1 — Editor Core Prototype
+Status: Completed
+Completed date: 2026-07-21
+Implemented: REPLACE_SUBTREE/subtree inverse semantics; editor-core state/history/drop planner/versioned local persistence; deterministic safe HTML compiler; responsive React editor with registry palette, Canvas selection, dnd-kit pointer/keyboard drag, reorder controls, invalid-target announcements, text/color Inspector, undo/redo, reload and HTML download; fast-check property invariants; Playwright happy/invalid flows.
+Changed files/modules: apps/web editor UI/test config/component tests; packages/design-commands; new packages/editor-core and html-compiler; root Playwright config/tests/e2e; package manifests/lockfile; CLAUDE.md; PROJECT_PLAN.md.
+Verification commands: pnpm lint; pnpm typecheck; pnpm test; pnpm test:coverage; pnpm build; pnpm test:e2e; secret-pattern scan; unsafe-render scan; Mermaid scan; git diff/status review.
+Passed: lint 7/7; typecheck 7/7; unit/component/property tests 70/70 (11 schema, 12 registry, 29 commands, 8 editor-core, 4 compiler, 6 web); coverage gate passed; build 7/7; Playwright Chromium 2/2; 100 fast-check generated edit/history runs retained valid documents; no secret, dangerouslySetInnerHTML, arbitrary script or Mermaid match.
+Coverage: design-schema 97.53/92.85/100/98.57; component-registry 97.5/88.88/100/100; design-commands 87.07/75.65/95/97.67; editor-core 91.95/85.24/100/100; html-compiler 95.12/88.57/100/97.22; web 82.99/69/91.89/89.51 (statements/branches/functions/lines).
+Failed: None in final verification.
+Skipped: Worker behavioral tests remain deferred because Phase 1 added no worker behavior; manual cross-browser E2E beyond Chromium not run.
+Known limitations: Command engine and web UI interaction branch coverage remain below 80%; package gates are explicit at current baselines while executable schema/registry/editor-core/compiler packages exceed 80% on all metrics. Persistence is browser-local prototype only; server autosave/revision, Layers tree and full Inspector remain Phase 2. Separate-origin preview/CSP stays Phase 4.
+Decisions made: Reused registry/schema/command direction; dnd-kit for pointer/keyboard sensors; separate pure editor-core and html-compiler packages; local storage envelope version 1.
+Risks added/closed: R-001 reduced by atomic commands and property tests; R-004 reduced by shared registry/render primitives; TD-004 closed; web portion of TD-005 closed, worker portion remains Phase 3 owner.
+Next phase readiness: Ready for Phase 2 Editor Foundation.
 ```
 
 ---
@@ -1192,45 +1194,46 @@ Xây editor usable với project persistence, layers, inspector, responsive và 
 
 ## 15.3. Checklist
 
-- [ ] Project CRUD và authorization tests.
-- [ ] Layers tree đồng bộ canvas.
-- [ ] Drag/drop giữa các container.
-- [ ] Composite components.
-- [ ] Inspector content/layout/typography/appearance.
-- [ ] Responsive overrides.
-- [ ] Autosave state machine.
-- [ ] Conflict handling.
-- [ ] Revision snapshot.
-- [ ] Restore flow.
-- [ ] Loading/error/empty states.
-- [ ] E2E editor workflow.
+- [x] Project CRUD và authorization tests.
+- [x] Layers tree đồng bộ canvas.
+- [x] Drag/drop giữa các container.
+- [x] Composite components.
+- [x] Inspector content/layout/typography/appearance.
+- [x] Responsive overrides.
+- [x] Autosave state machine.
+- [x] Conflict handling.
+- [x] Revision snapshot.
+- [x] Restore flow.
+- [x] Loading/error/empty states.
+- [x] E2E editor workflow.
 
 ## 15.4. Exit criteria
 
-- [ ] Có ít nhất 15 component dùng được.
-- [ ] Canvas và Layers luôn đồng bộ.
-- [ ] Invalid parent/child bị từ chối.
-- [ ] Autosave và reload không mất dữ liệu.
-- [ ] Restore revision hoạt động.
-- [ ] Desktop/tablet/mobile render đúng override.
-- [ ] Authorization không cho truy cập chéo workspace.
-- [ ] Test/build/lint/typecheck/E2E pass.
+- [x] Có ít nhất 15 component dùng được.
+- [x] Canvas và Layers luôn đồng bộ.
+- [x] Invalid parent/child bị từ chối.
+- [x] Autosave và reload không mất dữ liệu.
+- [x] Restore revision hoạt động.
+- [x] Desktop/tablet/mobile render đúng override.
+- [x] Authorization không cho truy cập chéo workspace.
+- [x] Test/build/lint/typecheck/E2E pass.
 
 ## 15.5. Phase Completion Record
 
 ```text
-Status: Not started
-Completed date:
-Implemented:
-Changed files/modules:
-Verification commands:
-Passed:
-Failed:
-Skipped:
-Known limitations:
-Decisions made:
-Risks added/closed:
-Next phase readiness:
+Phase: Phase 2 — Editor Foundation
+Status: Completed
+Completed date: 2026-07-22
+Implemented: PostgreSQL/Drizzle workspace repository and immutable migration; Auth.js production session boundary plus non-production guarded E2E session/PGlite harness; exact trusted-Origin guard for every project mutation; project list/create/read/rename/archive, document, atomic command and revision list/create/restore APIs; authenticated dashboard with loading/error/empty/role states; registry 18 components, Layers/Canvas/DnD/Inspector/responsive editor; server-backed sequential autosave, project recovery copies, stale-version conflict UI, revision creation/restore; Chromium/Firefox/WebKit authenticated persistence/tenant/conflict/export journeys and axe accessibility audit.
+Changed files/modules: root env/workspace/Playwright/dependency config; packages/database repository/tests; apps/web dashboard/project routes/auth/runtime/API/editor/styles/tests; tests/e2e; docs/product/api-contract.md; docs/security/threat-model.md; CLAUDE.md; PROJECT_PLAN.md.
+Verification commands: focused Vitest RED/GREEN targets for Origin/repository/API/dashboard/E2E-runtime/editor; pnpm db:check with safe placeholder DATABASE_URL; pnpm lint; pnpm typecheck; pnpm test; pnpm test:coverage; pnpm build; pnpm test:e2e; pnpm audit --prod; secret/unsafe-render/auth-localStorage scans; git diff --check; Mermaid scan.
+Passed: lint 8/8; typecheck 8/8; unit/component/property/integration tests 143/143 (13 schema, 23 registry, 34 commands, 11 editor-core, 5 compiler, 11 database, 56 web); coverage gates >=80% on all executable packages/apps — schema 97.56/92.85/100/98.59, registry 97.82/94.11/100/100, commands 96.62/92.17/100/100, editor-core 91.42/84.52/100/98.86, compiler 95/90.38/100/98.11, database 93.4/82/100/100, web 88.51/80.15/92.51/90.9 (statements/branches/functions/lines); build 8/8; Playwright 15/15 across Chromium, Firefox and WebKit; axe found zero serious/critical dashboard/editor violations; db:check pass; final production dependency audit clean after forcing sharp >=0.35.0; security scans clean; git diff --check clean except expected Windows LF/CRLF notices; no Mermaid block.
+Failed: Intermediate RED tests, first E2E parallel run, initial lint, initial coverage and initial dependency audit failed for intended missing behavior/concurrency/import/branch/sharp issues; all final reruns passed.
+Skipped: Live external PostgreSQL service was not required because deterministic integration/E2E use PGlite against the immutable PostgreSQL migration. Worker behavioral tests remain Phase 3 ownership because no worker behavior exists yet.
+Known limitations: Production login still requires configured GitHub OAuth and PostgreSQL; test-only E2E routes are guarded by NODE_ENV != production plus ZENUI_E2E_ENABLED. Recovery is explicit reload/download, not automatic merge. Separate-origin preview/CSP remains Phase 4 by scope.
+Decisions made: Keep same-site secure Auth.js production sessions; enforce exact Origin on mutations; use a signed allowlisted HTTP-only E2E identity cookie and singleton in-memory PGlite only when guarded; serialize cross-browser E2E to avoid shared reset races; recovery never silently overwrites the server.
+Risks added/closed: R-005 reduced by optimistic autosave/conflict E2E; TD-006, TD-007 and TD-008 closed. Phase 3+ security risks remain with their owners.
+Next phase readiness: Ready for Phase 3 AI Generation & Editing.
 ```
 
 ---
@@ -1757,8 +1760,11 @@ Khi một quyết định lớn thay đổi, phải:
 | TD-001 | Planning | Stack/provider/auth chưa chốt | Blocking | Chốt trong Phase 0 | Closed — 2026-07-21, D-007 đến D-011/ADR-0002 đến ADR-0005 |
 | TD-002 | Planning | Chưa có schema implementation | Blocking | Phase 0/1 | Closed — 2026-07-21, Zod + semantic validator + JSON Schema và tests |
 | TD-003 | Planning | Chưa có threat model chi tiết | High | Phase 0 và cập nhật Phase 4/6 | Closed — 2026-07-21, `docs/security/threat-model.md`; phải review lại ở Phase 4/6 |
-| TD-004 | Phase 0 | `REPLACE_SUBTREE` mới parse contract, chưa thực thi | Medium | Implement bằng TDD cùng undo/redo command reducer | Open — Phase 1 |
-| TD-005 | Phase 0 | Web/worker scaffold chưa có behavioral tests | Low | Thêm tests khi Phase 1/3 tạo behavior thực tế | Open — phase owner |
+| TD-004 | Phase 0 | `REPLACE_SUBTREE` mới parse contract, chưa thực thi | Medium | Implement bằng TDD cùng undo/redo command reducer | Closed — 2026-07-21, Phase 1 subtree execution/inverse/atomic tests |
+| TD-005 | Phase 0 | Web/worker scaffold chưa có behavioral tests | Low | Thêm tests khi Phase 1/3 tạo behavior thực tế | Partially closed — 2026-07-21 web has component + E2E tests; worker remains Phase 3 owner |
+| TD-006 | Phase 1 | Branch coverage của commands/web chưa đạt 80% | Medium | Nâng focused edge-case và DnD integration tests; giữ explicit package thresholds không thấp hơn baseline Phase 1 | Closed — 2026-07-21, commands 92.17% branches và web 87.85% branches; mọi metric >=80% |
+| TD-007 | Phase 2 | Chưa có explicit Origin/CSRF control và test cho project mutation routes | High | Thêm trusted-origin guard dùng Auth.js same-site session pattern và route tests trước khi nối dashboard thật | Closed — 2026-07-22, exact trusted-Origin guard và mutation tests pass |
+| TD-008 | Phase 2 | Autosave/revision repository đã có nhưng chưa nối editor/API/UI và authenticated E2E | High | Hoàn thiện document/revision routes, server-backed editor, conflict/recovery UI và Playwright journey | Closed — 2026-07-22, server persistence/revision/conflict E2E pass 15/15 trên 3 browser |
 
 Không xóa technical debt đã đóng; chuyển trạng thái sang `Closed` và ghi phase/ngày xử lý.
 
@@ -1771,6 +1777,10 @@ Không xóa technical debt đã đóng; chuyển trạng thái sang `Closed` và
 | 2026-07-21 | Phase 0 | Tạo kế hoạch tổng thể, workflow ASCII, phase gates và update protocol | Review nội dung tài liệu; chưa có code/test | AI Agent |
 | 2026-07-21 | Phase 0 | Scaffold monorepo; đóng băng Design Document/command/registry contracts; thêm ADR, wireframe, API contract và threat model; sửa lint/type narrowing | `pnpm lint`, `pnpm typecheck`, `pnpm test` (44/44), `pnpm test:coverage`, `pnpm build` đều pass; executable package statement coverage >=80% | AI Agent |
 | 2026-07-21 | Cross-phase | Đổi tên sản phẩm thành ZenUI và npm workspace scope thành `@zenui` | Chạy lại lint, typecheck, test và build sau rename | AI Agent |
+| 2026-07-21 | Phase 1 | Hoàn thiện subtree commands/history; thêm editor-core, HTML compiler, responsive editor, local persistence, Inspector, dnd-kit, property tests và Playwright | `pnpm lint/typecheck/test/test:coverage/build/test:e2e` pass; 70/70 tests; 2/2 Chromium E2E; security/doc scans sạch | AI Agent |
+| 2026-07-21 | Phase 2 | Bắt đầu Phase 2 tuần tự trong main session; đọc lại API/auth/security contracts, lập implementation plan và chạy baseline | `pnpm lint` 7/7; `pnpm typecheck` 7/7; `pnpm test` 70/70; configured coverage pass; strict branch gate còn thiếu ở commands/web | AI Agent |
+| 2026-07-21 | Phase 2 | Triển khai DB/Auth/RBAC/API slices, registry 18 component, Layers/DnD/Inspector/responsive và autosave/revision foundations; chạy lại E2E, coverage, build và security verification sau compact | Final: lint/typecheck/build 8/8; tests + coverage 132/132 với mọi executable metric >=80%; Chromium E2E 2/2; auth/API 21/21; db:check pass bằng placeholder URL; audit sạch; security scans không có match; Phase 2 vẫn In progress vì server-backed UI/revision/conflict E2E và Origin guard còn thiếu | AI Agent |
+| 2026-07-22 | Phase 2 | Hoàn tất trusted-Origin, full project/document/revision APIs, authenticated dashboard, server autosave/conflict/recovery/revision UI, guarded E2E auth runtime, axe và đa trình duyệt | Final: lint/typecheck/build 8/8; 143/143 tests; mọi coverage metric >=80%; Playwright Chromium/Firefox/WebKit 15/15; axe serious/critical 0; db:check và production audit sạch; TD-007/TD-008 closed | AI Agent |
 
 Mỗi phiên triển khai có thay đổi đáng kể phải thêm một dòng vào bảng này.
 
@@ -1854,16 +1864,16 @@ Với một developer có AI hỗ trợ:
 
 # 32. Handoff hiện tại
 
-Trạng thái hiện tại: **Phase 0 completed; ready for direct Phase 1 implementation using TDD.**
+Trạng thái hiện tại: **Phase 2 Editor Foundation completed; sẵn sàng bắt đầu Phase 3 bằng TDD.**
 
 Bước tiếp theo:
 
-1. Bắt đầu Phase 1 từ renderer dùng Design Document và registry hiện có.
-2. Viết RED tests cho command reducer/undo-redo, gồm thực thi `REPLACE_SUBTREE`.
-3. Implement palette, selection và structured drag/drop với invalid-target rejection.
-4. Thêm inspector text/color và persistence đơn giản theo user journeys đã chốt.
-5. Implement deterministic standalone HTML compiler dùng chung render descriptors.
-6. Thêm Playwright happy path cho kéo-thả -> sửa -> reorder -> undo/redo -> reload -> export.
-7. Chạy đầy đủ Phase 1 gates và cập nhật Completion Record trước khi chuyển Phase 2.
+1. Chốt provider-neutral AI adapter contract và mock provider cho tests.
+2. Viết RED tests cho create-design structured output, selected-node operations và invalid-output atomic rejection.
+3. Implement Google Gemini adapter phía server sau contract trung lập; không đưa API key ra client.
+4. Thêm bounded repair, timeout/retry classification, usage ledger và rate/budget guard.
+5. Nối generation/edit runs vào immutable revision và SSE status.
+6. Chạy prompt-injection/semantic validation/regression fixtures và authenticated E2E prompt -> edit -> revision.
+7. Giữ Phase 3 `In progress` cho tới khi toàn bộ verification gate tương ứng GREEN.
 
 > Sau khi hoàn thành từng bước hoặc phase, bắt buộc cập nhật file này trước khi chuyển sang bước tiếp theo.

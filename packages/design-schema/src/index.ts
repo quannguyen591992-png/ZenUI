@@ -11,13 +11,24 @@ export const COMPONENT_TYPES = [
   'section',
   'container',
   'stack',
+  'columns',
+  'column',
+  'divider',
+  'spacer',
   'heading',
   'paragraph',
   'image',
   'button',
+  'link',
+  'icon',
+  'badge',
+  'navbar',
+  'hero',
+  'feature-card',
 ] as const
 
 export const FONT_ALLOWLIST = ['Arial', 'Georgia', 'Manrope', 'system-ui'] as const
+export const ICON_ALLOWLIST = ['arrow-right', 'check', 'menu', 'star'] as const
 
 const nodeIdSchema = z.string().min(1).max(100).regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/)
 const hexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
@@ -76,10 +87,23 @@ const propsByType = {
   section: z.object({ label: z.string().min(1).max(100).optional() }).strict(),
   container: z.object({}).strict(),
   stack: z.object({}).strict(),
+  columns: z.object({}).strict(),
+  column: z.object({}).strict(),
+  divider: z.object({}).strict(),
+  spacer: z.object({ size: z.number().int().min(0).max(400) }).strict(),
   heading: z.object({ text: z.string().min(1).max(500), level: z.number().int().min(1).max(6) }).strict(),
   paragraph: z.object({ text: z.string().min(1).max(5000) }).strict(),
   image: z.object({ src: safeImageUrlSchema, alt: z.string().min(1).max(300) }).strict(),
   button: z.object({ text: z.string().min(1).max(200), href: safeLinkSchema }).strict(),
+  link: z.object({ text: z.string().min(1).max(500), href: safeLinkSchema }).strict(),
+  icon: z.object({ name: z.enum(ICON_ALLOWLIST), label: z.string().min(1).max(100) }).strict(),
+  badge: z.object({ text: z.string().min(1).max(100) }).strict(),
+  navbar: z.object({ brand: z.string().min(1).max(100) }).strict(),
+  hero: z.object({ label: z.string().min(1).max(100) }).strict(),
+  'feature-card': z.object({
+    title: z.string().min(1).max(200),
+    description: z.string().min(1).max(1000),
+  }).strict(),
 } as const
 
 const nodeSchemas = COMPONENT_TYPES.map(type => z.object({
