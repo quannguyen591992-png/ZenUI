@@ -1,0 +1,178 @@
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { createSafeWorkerFailureEvent, loadWorkerRuntimeConfig } from '../src/runtime.js'
+
+const environment = {
+  DATABASE_URL: 'postgresql://example.test/zenui',
+  REDIS_URL: 'redis://example.test:6379',
+  GOOGLE_GENERATIVE_AI_API_KEY: 'test-key',
+  GEMINI_MODEL: 'gemini-test',
+  GOOGLE_IMAGE_GENERATION_ENABLED: 'true',
+  GOOGLE_IMAGE_MODEL: 'imagen-test',
+  REMOTE_IMAGE_HOST_ALLOWLIST: 'images.example.com',
+  ASSET_ORIGIN: 'https://assets.example.com',
+  DEPLOY_PROJECT_NAME_SECRET: 'project-secret',
+  PROVIDER_CREDENTIAL_KEYS: JSON.stringify({
+    1: Buffer.alloc(32, 1).toString('base64'),
+    2: Buffer.alloc(32, 2).toString('base64'),
+  }),
+  PROVIDER_CREDENTIAL_ACTIVE_KEY_VERSION: '2',
+  METRICS_BEARER_TOKEN: 'internal-metrics-secret',
+  WORKER_SERVICES: 'generation,asset,export,deployment',
+  PEXELS_API_KEY: 'pexels-test-key',
+  VERCEL_CLIENT_ID: 'client-id',
+  VERCEL_CLIENT_SECRET: 'client-secret',
+  VERCEL_REDIRECT_URI: 'https://app.example.test/callback',
+  S3_ENDPOINT: 'https://s3.example.test',
+  S3_REGION: 'us-east-1',
+  S3_BUCKET: 'zenui',
+  S3_ACCESS_KEY: 'access',
+  S3_SECRET_KEY: 'secret',
+}
+
+const previous = { ...process.env }
+afterEach(() => {
+  process.env = { ...previous }
+})
+
+describe('worker runtime configuration', () => {
+  it('loads a strict multi-version credential keyring with one active version', () => {
+    process.env = { ...previous, ...environment }
+    const config = loadWorkerRuntimeConfig()
+    expect(config.deployment?.credentialKeys).toEqual(environment.PROVIDER_CREDENTIAL_KEYS)
+    expect(config.deployment?.credentialActiveKeyVersion).toBe(2)
+    expect(config.recoveryIntervalSeconds).toBe(30)
+    expect(config.recoveryMaxAttempts).toBe(3)
+    expect(config.databasePoolMax).toBe(8)
+    expect(config.remoteImageHostAllowlist).toBe('images.example.com')
+    expect(config.assetOrigin).toBe('https://assets.example.com')
+    expect(config.asset).toMatchObject({
+      providerApiKey: 'pexels-test-key', concurrency: 2, maxInputPixels: 40_000_000,
+      maxWidth: 4096, maxHeight: 4096, maxOutputBytes: 8 * 1024 * 1024,
+    })
+    expect(config.queuePauseAtDepth).toBe(500)
+    expect(config.queueResumeAtDepth).toBe(250)
+    expect(config.queuePauseAtOldestAgeSeconds).toBe(120)
+    expect(config.queueResumeAtOldestAgeSeconds).toBe(60)
+  })
+
+  it('rejects invalid pool and backpressure thresholds', () => {
+    process.env = { ...previous, ...environment, DATABASE_POOL_MAX: '0' }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('DATABASE_POOL_MAX is invalid')
+
+    process.env = {
+      ...previous,
+      ...environment,
+      WORKER_QUEUE_PAUSE_AT_DEPTH: '100',
+      WORKER_QUEUE_RESUME_AT_DEPTH: '100',
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('WORKER_QUEUE_RESUME_AT_DEPTH must be below WORKER_QUEUE_PAUSE_AT_DEPTH')
+
+    process.env = {
+      ...previous,
+      ...environment,
+      WORKER_QUEUE_PAUSE_AT_OLDEST_AGE_SECONDS: '60',
+      WORKER_QUEUE_RESUME_AT_OLDEST_AGE_SECONDS: '60',
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('WORKER_QUEUE_RESUME_AT_OLDEST_AGE_SECONDS must be below WORKER_QUEUE_PAUSE_AT_OLDEST_AGE_SECONDS')
+  })
+
+  it('loads generation, asset and export services without Vercel configuration', () => {
+    process.env = {
+      ...previous,
+      ...environment,
+      WORKER_SERVICES: 'generation,asset,export',
+      VERCEL_CLIENT_ID: '',
+      VERCEL_CLIENT_SECRET: '',
+      VERCEL_REDIRECT_URI: '',
+      PROVIDER_CREDENTIAL_KEYS: '',
+      PROVIDER_CREDENTIAL_ACTIVE_KEY_VERSION: '',
+      DEPLOY_PROJECT_NAME_SECRET: '',
+    }
+    const config = loadWorkerRuntimeConfig()
+    expect(config.services).toEqual(['generation', 'asset', 'export'])
+    expect(config.deployment).toBeNull()
+    expect(config.generation).toMatchObject({
+      model: 'gemini-test',
+      imageGenerationEnabled: true,
+      imageModel: 'imagen-test',
+      maxImagesPerRun: 4,
+      generateMaxOutputTokens: 4096,
+      editMaxOutputTokens: 2048,
+      generateMaxTotalTokens: 12_000,
+      editMaxTotalTokens: 8_000,
+      generateMaxRepairAttempts: 0,
+      editMaxRepairAttempts: 2,
+      providerHttpAttempts: 5,
+      maxTransientRetries: 1,
+    })
+    expect(config.export).toMatchObject({ bucket: 'zenui' })
+  })
+
+  it('rejects unknown or empty worker service selections', () => {
+    process.env = { ...previous, ...environment, WORKER_SERVICES: 'generation,unknown' }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('WORKER_SERVICES is invalid')
+    process.env = { ...previous, ...environment, WORKER_SERVICES: '' }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('WORKER_SERVICES is required')
+  })
+
+  it('loads bounded capacity and per-mode AI budget overrides', () => {
+    process.env = {
+      ...previous,
+      ...environment,
+      DATABASE_POOL_MAX: '12',
+      WORKER_QUEUE_PAUSE_AT_DEPTH: '600',
+      WORKER_QUEUE_RESUME_AT_DEPTH: '300',
+      WORKER_QUEUE_PAUSE_AT_OLDEST_AGE_SECONDS: '180',
+      WORKER_QUEUE_RESUME_AT_OLDEST_AGE_SECONDS: '90',
+      AI_GENERATE_MAX_OUTPUT_TOKENS: '3000',
+      AI_EDIT_MAX_OUTPUT_TOKENS: '1500',
+      AI_GENERATE_MAX_TOTAL_TOKENS: '9000',
+      AI_EDIT_MAX_TOTAL_TOKENS: '5000',
+      AI_GENERATE_MAX_REPAIR_ATTEMPTS: '0',
+      AI_EDIT_MAX_REPAIR_ATTEMPTS: '1',
+      AI_PROVIDER_HTTP_ATTEMPTS: '1',
+      AI_PROVIDER_MAX_TRANSIENT_RETRIES: '0',
+    }
+    const config = loadWorkerRuntimeConfig()
+    expect(config).toMatchObject({
+      databasePoolMax: 12,
+      queuePauseAtDepth: 600,
+      queueResumeAtDepth: 300,
+      queuePauseAtOldestAgeSeconds: 180,
+      queueResumeAtOldestAgeSeconds: 90,
+      generation: {
+        generateMaxOutputTokens: 3000,
+        editMaxOutputTokens: 1500,
+        generateMaxTotalTokens: 9000,
+        editMaxTotalTokens: 5000,
+        generateMaxRepairAttempts: 0,
+        editMaxRepairAttempts: 1,
+        providerHttpAttempts: 1,
+        maxTransientRetries: 0,
+      },
+    })
+  })
+
+  it('emits bounded failure events without durable resource identifiers', () => {
+    const event = createSafeWorkerFailureEvent('generation')
+    expect(event).toEqual({
+      level: 'error',
+      event: 'generation_job_failed',
+      code: 'worker_error',
+    })
+    expect(JSON.stringify(event)).not.toContain('jobId')
+  })
+
+  it('rejects malformed or missing active keyring versions', () => {
+    process.env = {
+      ...previous,
+      ...environment,
+      PROVIDER_CREDENTIAL_KEYS: JSON.stringify({ 1: Buffer.alloc(32, 1).toString('base64') }),
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('PROVIDER_CREDENTIAL_ACTIVE_KEY_VERSION is missing from PROVIDER_CREDENTIAL_KEYS')
+
+    process.env = { ...previous, ...environment, PROVIDER_CREDENTIAL_KEYS: 'not-json' }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('PROVIDER_CREDENTIAL_KEYS is invalid')
+  })
+})

@@ -4,27 +4,140 @@ export const DESIGN_LIMITS = {
   maxNodes: 500,
   maxDepth: 12,
   maxSerializedBytes: 1024 * 1024,
+  maxPages: 20,
+  maxNavigationItems: 20,
+  maxPageSlugLength: 80,
+  maxPageSlugSegments: 4,
+  maxCompiledFiles: 20,
+  maxCompiledFileBytes: 2 * 1024 * 1024,
+  maxCompiledSiteBytes: 8 * 1024 * 1024,
+  maxExportZipBytes: 10 * 1024 * 1024,
 } as const
+
+const RESERVED_PAGE_SEGMENTS = new Set([
+  'api', '_next', 'a', 's', 'projects', 'integrations',
+  'favicon.ico', 'robots.txt', 'sitemap.xml',
+])
+
+export type NormalizePageSlugResult =
+  | { success: true; slug: string }
+  | { success: false; code: 'invalid_page_slug' | 'reserved_page_slug' | 'page_slug_too_long' }
+
+export function normalizePageSlug(input: string): NormalizePageSlugResult {
+  const value = input.trim()
+  if (!value || value === '/') return { success: true, slug: '/' }
+  if (
+    [...value].some(character => {
+      const code = character.charCodeAt(0)
+      return code <= 0x1f || code === 0x7f
+    })
+    || /[\\?#%]/.test(value)
+    || value.includes('//')
+  ) return { success: false, code: 'invalid_page_slug' }
+  const rawSegments = value.replace(/^\/+|\/+$/g, '').split('/')
+  if (rawSegments.some(segment => RESERVED_PAGE_SEGMENTS.has(segment.toLowerCase()))) {
+    return { success: false, code: 'reserved_page_slug' }
+  }
+  if (
+    rawSegments.length === 0
+    || rawSegments.length > DESIGN_LIMITS.maxPageSlugSegments
+    || rawSegments.some(segment => !segment || segment === '.' || segment === '..')
+  ) return { success: false, code: 'invalid_page_slug' }
+  const segments = rawSegments.map(segment => segment
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-'))
+  if (segments.some(segment => !segment)) return { success: false, code: 'invalid_page_slug' }
+  if (segments.some(segment => RESERVED_PAGE_SEGMENTS.has(segment))) {
+    return { success: false, code: 'reserved_page_slug' }
+  }
+  const slug = `/${segments.join('/')}`
+  return slug.length > DESIGN_LIMITS.maxPageSlugLength
+    ? { success: false, code: 'page_slug_too_long' }
+    : { success: true, slug }
+}
 
 export const COMPONENT_TYPES = [
   'page',
   'section',
   'container',
   'stack',
+  'columns',
+  'column',
+  'divider',
+  'spacer',
   'heading',
   'paragraph',
   'image',
   'button',
+  'link',
+  'icon',
+  'badge',
+  'navbar',
+  'hero',
+  'feature-card',
 ] as const
 
 export const FONT_ALLOWLIST = ['Arial', 'Georgia', 'Manrope', 'system-ui'] as const
+export const ICON_ALLOWLIST = ['arrow-right', 'check', 'menu', 'star'] as const
 
 const nodeIdSchema = z.string().min(1).max(100).regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/)
+export const assetIdSchema = z.string().uuid()
 const hexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
 const safeImageUrlSchema = z.string().url().refine(value => {
-  const protocol = new URL(value).protocol
-  return protocol === 'https:' || protocol === 'http:'
-}, 'Image URL must use HTTP or HTTPS')
+  const url = new URL(value)
+  return url.protocol === 'https:'
+    && !url.username
+    && !url.password
+    && !url.port
+    && url.hostname !== 'localhost'
+    && !/^\[.*\]$/.test(url.hostname)
+    && !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(url.hostname)
+}, 'Image URL must use public HTTPS without credentials or a custom port')
+
+export interface RemoteImagePolicy {
+  sources: string[]
+  allows(value: string): boolean
+}
+
+function normalizeImageHost(value: string): { host: string; subdomains: boolean } {
+  const trimmed = value.trim().toLowerCase().replace(/\.$/, '')
+  const subdomains = trimmed.startsWith('*.')
+  const host = subdomains ? trimmed.slice(2) : trimmed
+  if (!host
+    || host === 'localhost'
+    || host.includes('/')
+    || host.includes(':')
+    || host.includes('@')
+    || host.startsWith('.')
+    || host.endsWith('.')
+    || !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(host)
+    || !host.includes('.')
+    || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) {
+    throw new Error('invalid_image_host')
+  }
+  return { host: new URL(`https://${host}`).hostname.toLowerCase().replace(/\.$/, ''), subdomains }
+}
+
+export function createRemoteImagePolicy(input: string): RemoteImagePolicy {
+  if (!input.trim()) throw new Error('REMOTE_IMAGE_HOST_ALLOWLIST is required')
+  const entries = input.split(',').map(normalizeImageHost)
+  const keys = entries.map(entry => `${entry.subdomains ? '*.' : ''}${entry.host}`)
+  if (new Set(keys).size !== keys.length) throw new Error('duplicate_image_host')
+  const sorted = [...entries].sort((left, right) => `${left.subdomains ? '*.' : ''}${left.host}`.localeCompare(`${right.subdomains ? '*.' : ''}${right.host}`))
+  return {
+    sources: sorted.map(entry => `https://${entry.subdomains ? '*.' : ''}${entry.host}`),
+    allows(value: string): boolean {
+      const parsed = safeImageUrlSchema.safeParse(value)
+      if (!parsed.success) return false
+      const hostname = new URL(parsed.data).hostname.toLowerCase().replace(/\.$/, '')
+      return sorted.some(entry => entry.subdomains ? hostname.endsWith(`.${entry.host}`) : hostname === entry.host)
+    },
+  }
+}
 const safeLinkSchema = z.string().min(1).refine(value => {
   if (value.startsWith('#') || value.startsWith('/')) return !value.startsWith('//')
   try {
@@ -41,8 +154,15 @@ export const styleSchema = z.object({
   justifyContent: z.enum(['start', 'center', 'end', 'space-between']).optional(),
   alignItems: z.enum(['start', 'center', 'end', 'stretch']).optional(),
   gap: z.number().int().min(0).max(200).optional(),
+  gridColumns: z.number().int().min(1).max(3).optional(),
+  gridColumnSpan: z.number().int().min(1).max(3).optional(),
+  gridRowSpan: z.number().int().min(1).max(2).optional(),
   width: z.union([z.number().int().min(0).max(4000), z.enum(['auto', 'full'])]).optional(),
   maxWidth: z.number().int().min(0).max(4000).optional(),
+  minHeight: z.number().int().min(0).max(1200).optional(),
+  aspectRatio: z.enum(['square', 'landscape', 'wide', 'portrait']).optional(),
+  objectFit: z.enum(['cover', 'contain']).optional(),
+  objectPosition: z.enum(['center', 'top', 'bottom', 'left', 'right']).optional(),
   paddingTop: z.number().int().min(0).max(400).optional(),
   paddingRight: z.number().int().min(0).max(400).optional(),
   paddingBottom: z.number().int().min(0).max(400).optional(),
@@ -55,12 +175,14 @@ export const styleSchema = z.object({
   fontSize: z.number().int().min(10).max(160).optional(),
   fontWeight: z.enum(['400', '500', '600', '700', '800']).optional(),
   lineHeight: z.number().min(0.8).max(3).optional(),
+  letterSpacing: z.number().min(-4).max(12).optional(),
   textAlign: z.enum(['left', 'center', 'right']).optional(),
   color: hexColorSchema.optional(),
   backgroundColor: hexColorSchema.optional(),
   borderColor: hexColorSchema.optional(),
   borderWidth: z.number().int().min(0).max(20).optional(),
   borderRadius: z.number().int().min(0).max(200).optional(),
+  shadow: z.enum(['sm', 'md', 'lg']).optional(),
   opacity: z.number().min(0).max(1).optional(),
 }).strict()
 
@@ -71,15 +193,87 @@ const responsiveSchema = z.object({
   mobile: styleSchema.optional(),
 }).strict()
 
+export const legacyRemoteImagePropsSchema = z.object({
+  src: safeImageUrlSchema,
+  alt: z.string().min(1).max(300),
+}).strict()
+
+export const ownedImagePropsSchema = z.object({
+  assetId: assetIdSchema,
+  alt: z.string().max(300),
+  decorative: z.boolean(),
+}).strict().superRefine((value, context) => {
+  if (value.decorative && value.alt !== '') {
+    context.addIssue({ code: 'custom', path: ['alt'], message: 'Decorative images require an empty alternative text' })
+  }
+  if (!value.decorative && value.alt.trim().length === 0) {
+    context.addIssue({ code: 'custom', path: ['alt'], message: 'Content images require meaningful alternative text' })
+  }
+})
+
+export const imagePropsSchema = z.union([legacyRemoteImagePropsSchema, ownedImagePropsSchema])
+
+const pageReferenceFields = {
+  pageId: nodeIdSchema,
+  fragment: nodeIdSchema.optional(),
+} as const
+
+const linkBaseFields = {
+  text: z.string().min(1).max(500),
+  brandSlot: z.literal(true).optional(),
+  logoAssetId: assetIdSchema.optional(),
+  logoAlt: z.string().min(1).max(300).optional(),
+} as const
+
+export const linkPropsSchema = z.union([
+  z.object({ ...linkBaseFields, href: safeLinkSchema }).strict(),
+  z.object({ ...linkBaseFields, ...pageReferenceFields }).strict(),
+]).superRefine((value, context) => {
+  if (Boolean(value.logoAssetId) !== Boolean(value.logoAlt)) {
+    context.addIssue({ code: 'custom', path: ['logoAssetId'], message: 'Brand logos require both an owned asset and alternative text' })
+  }
+  if ((value.logoAssetId || value.logoAlt) && value.brandSlot !== true) {
+    context.addIssue({ code: 'custom', path: ['brandSlot'], message: 'Owned logos are only valid on an explicit brand slot' })
+  }
+})
+
+export const buttonPropsSchema = z.union([
+  z.object({ text: z.string().min(1).max(200), href: safeLinkSchema }).strict(),
+  z.object({ text: z.string().min(1).max(200), ...pageReferenceFields }).strict(),
+])
+
 const propsByType = {
   page: z.object({}).strict(),
-  section: z.object({ label: z.string().min(1).max(100).optional() }).strict(),
+  section: z.object({
+    label: z.string().min(1).max(100).optional(),
+    hidden: z.boolean().optional(),
+  }).strict(),
   container: z.object({}).strict(),
   stack: z.object({}).strict(),
+  columns: z.object({}).strict(),
+  column: z.object({}).strict(),
+  divider: z.object({}).strict(),
+  spacer: z.object({ size: z.number().int().min(0).max(400) }).strict(),
   heading: z.object({ text: z.string().min(1).max(500), level: z.number().int().min(1).max(6) }).strict(),
   paragraph: z.object({ text: z.string().min(1).max(5000) }).strict(),
-  image: z.object({ src: safeImageUrlSchema, alt: z.string().min(1).max(300) }).strict(),
-  button: z.object({ text: z.string().min(1).max(200), href: safeLinkSchema }).strict(),
+  image: imagePropsSchema,
+  button: buttonPropsSchema,
+  link: linkPropsSchema,
+  icon: z.object({ name: z.enum(ICON_ALLOWLIST), label: z.string().min(1).max(100) }).strict(),
+  badge: z.object({ text: z.string().min(1).max(100) }).strict(),
+  navbar: z.object({
+    brand: z.string().min(1).max(100),
+    hidden: z.boolean().optional(),
+  }).strict(),
+  hero: z.object({
+    label: z.string().min(1).max(100),
+    hidden: z.boolean().optional(),
+  }).strict(),
+  'feature-card': z.object({
+    title: z.string().min(1).max(200),
+    description: z.string().min(1).max(1000),
+    mediaSlot: z.enum(['hero-image', 'feature-1', 'feature-2', 'feature-3']).optional(),
+  }).strict(),
 } as const
 
 const nodeSchemas = COMPONENT_TYPES.map(type => z.object({
@@ -115,20 +309,83 @@ const themeSchema = z.object({
   }).strict(),
 }).strict()
 
-export const designDocumentSchema = z.object({
-  schemaVersion: z.literal(1),
+const pageV1Schema = z.object({
+  id: nodeIdSchema,
+  name: z.string().min(1).max(100),
+  slug: z.literal('/'),
+  rootNodeId: nodeIdSchema,
+}).strict()
+
+const pageV2Schema = z.object({
+  id: nodeIdSchema,
+  name: z.string().trim().min(1).max(100),
+  slug: z.string().min(1).max(DESIGN_LIMITS.maxPageSlugLength),
+  rootNodeId: nodeIdSchema,
+}).strict()
+
+const navigationItemSchema = z.object({
+  pageId: nodeIdSchema,
+  label: z.string().trim().min(1).max(100),
+}).strict()
+
+const documentFields = {
   projectId: nodeIdSchema,
   version: z.number().int().positive(),
   theme: themeSchema,
-  pages: z.array(z.object({
-    id: nodeIdSchema,
-    name: z.string().min(1).max(100),
-    slug: z.literal('/'),
-    rootNodeId: nodeIdSchema,
-  }).strict()).length(1),
   nodes: z.record(nodeIdSchema, designNodeSchema),
+} as const
+
+export const designDocumentV1Schema = z.object({
+  schemaVersion: z.literal(1),
+  ...documentFields,
+  pages: z.array(pageV1Schema).length(1),
 }).strict()
 
+export const designDocumentV2Schema = z.object({
+  schemaVersion: z.literal(2),
+  ...documentFields,
+  pages: z.array(pageV2Schema).min(1).max(DESIGN_LIMITS.maxPages),
+  navigation: z.object({
+    items: z.array(navigationItemSchema).max(DESIGN_LIMITS.maxNavigationItems),
+  }).strict(),
+}).strict()
+
+export const designDocumentSchema = z.union([designDocumentV1Schema, designDocumentV2Schema])
+
+const generatedNodePropsSchema = z.object({
+  alt: z.string().min(1).max(300).optional(),
+  brand: z.string().min(1).max(100).optional(),
+  description: z.string().min(1).max(1000).optional(),
+  href: safeLinkSchema.optional(),
+  label: z.string().min(1).max(100).optional(),
+  level: z.number().int().min(1).max(6).optional(),
+  name: z.enum(ICON_ALLOWLIST).optional(),
+  size: z.number().int().min(0).max(400).optional(),
+  src: safeImageUrlSchema.optional(),
+  text: z.string().min(1).max(5000).optional(),
+  title: z.string().min(1).max(200).optional(),
+}).strict()
+
+const generatedDesignNodeSchema = z.object({
+  id: nodeIdSchema,
+  type: z.enum(COMPONENT_TYPES),
+  parentId: nodeIdSchema.nullable(),
+  children: z.array(nodeIdSchema).max(DESIGN_LIMITS.maxNodes),
+  props: generatedNodePropsSchema,
+  style: styleSchema,
+  responsive: responsiveSchema,
+}).strict()
+
+export const generatedDesignDocumentSchema = z.object({
+  schemaVersion: z.union([z.literal(1), z.literal(2)]),
+  theme: themeSchema,
+  pages: z.array(z.union([pageV1Schema, pageV2Schema])).min(1).max(DESIGN_LIMITS.maxPages),
+  navigation: z.object({ items: z.array(navigationItemSchema).max(DESIGN_LIMITS.maxNavigationItems) }).strict().optional(),
+  nodes: z.record(nodeIdSchema, generatedDesignNodeSchema),
+}).strict()
+
+export type DesignDocumentV1 = z.infer<typeof designDocumentV1Schema>
+export type DesignDocumentV2 = z.infer<typeof designDocumentV2Schema>
 export type DesignDocument = z.infer<typeof designDocumentSchema>
 export type DesignNode = z.infer<typeof designNodeSchema>
 export type ComponentType = DesignNode['type']
@@ -145,6 +402,14 @@ export type DesignValidationIssueCode =
   | 'cycle_detected'
   | 'depth_limit_exceeded'
   | 'unsafe_url'
+  | 'invalid_image_host'
+  | 'page_limit_exceeded'
+  | 'invalid_page_slug'
+  | 'duplicate_page_id'
+  | 'duplicate_page_slug'
+  | 'navigation_invalid'
+  | 'broken_page_reference'
+  | 'cross_page_relationship'
 
 export interface DesignValidationIssue {
   code: DesignValidationIssueCode
@@ -164,7 +429,13 @@ function schemaIssues(error: z.ZodError): DesignValidationIssue[] {
   }))
 }
 
-function detectCycleAndDepth(document: DesignDocument, rootNodeId: string, issues: DesignValidationIssue[]): void {
+function detectCycleAndDepth(
+  document: DesignDocument,
+  rootNodeId: string,
+  issues: DesignValidationIssue[],
+  ownerByNode?: Map<string, string>,
+  pageId?: string,
+): void {
   const visiting = new Set<string>()
   const visited = new Set<string>()
 
@@ -181,6 +452,14 @@ function detectCycleAndDepth(document: DesignDocument, rootNodeId: string, issue
 
     const node = document.nodes[nodeId]
     if (!node) return
+    if (ownerByNode && pageId) {
+      const owner = ownerByNode.get(nodeId)
+      if (owner && owner !== pageId) {
+        issues.push({ code: 'cross_page_relationship', path: `nodes.${nodeId}`, message: 'A node can belong to only one page' })
+        return
+      }
+      ownerByNode.set(nodeId, pageId)
+    }
     visiting.add(nodeId)
     for (const childId of node.children) walk(childId, depth + 1)
     visiting.delete(nodeId)
@@ -190,10 +469,75 @@ function detectCycleAndDepth(document: DesignDocument, rootNodeId: string, issue
   walk(rootNodeId, 1)
 }
 
-export function validateDesignDocument(input: unknown): DesignValidationResult {
+export type BrokenPageReference =
+  | { kind: 'navigation'; index: number; pageId: string }
+  | { kind: 'node'; nodeId: string; pageId: string }
+
+export function collectBrokenPageReferences(document: DesignDocument): BrokenPageReference[] {
+  if (document.schemaVersion !== 2) return []
+  const pageIds = new Set(document.pages.map(page => page.id))
+  const broken: BrokenPageReference[] = []
+  document.navigation.items.forEach((item, index) => {
+    if (!pageIds.has(item.pageId)) broken.push({ kind: 'navigation', index, pageId: item.pageId })
+  })
+  for (const node of Object.values(document.nodes)) {
+    if ((node.type === 'button' || node.type === 'link') && 'pageId' in node.props && !pageIds.has(node.props.pageId)) {
+      broken.push({ kind: 'node', nodeId: node.id, pageId: node.props.pageId })
+    }
+  }
+  return broken.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
+}
+
+function normalizedRouteInput(input: string): string | null {
+  const withoutTrailingSlash = input.length > 1 ? input.replace(/\/+$/, '') : input
+  const normalized = normalizePageSlug(withoutTrailingSlash)
+  return normalized.success ? normalized.slug : null
+}
+
+export function findPageByRoute(document: DesignDocument, route: string): DesignDocument['pages'][number] | null {
+  const normalized = normalizedRouteInput(route)
+  if (!normalized) return null
+  return document.pages.find(page => {
+    const pageSlug = normalizePageSlug(page.slug)
+    return pageSlug.success && pageSlug.slug === normalized
+  }) ?? null
+}
+
+export function migrateDesignDocumentV1ToV2(input: DesignDocumentV1 | DesignDocumentV2): DesignDocumentV2 {
+  if (input.schemaVersion === 2) return structuredClone(input)
+  return {
+    ...structuredClone(input),
+    schemaVersion: 2,
+    navigation: {
+      items: input.pages.map(page => ({ pageId: page.id, label: page.name })),
+    },
+  }
+}
+
+export type ParseDesignDocumentResult =
+  | { success: true; data: DesignDocumentV2; migrated: boolean }
+  | { success: false; issues: DesignValidationIssue[] }
+
+export function parseDesignDocument(
+  input: unknown,
+  options: { imagePolicy?: RemoteImagePolicy } = {},
+): ParseDesignDocumentResult {
+  const validation = validateDesignDocument(input, options)
+  if (!validation.success) return validation
+  return {
+    success: true,
+    data: migrateDesignDocumentV1ToV2(validation.data),
+    migrated: validation.data.schemaVersion === 1,
+  }
+}
+
+export function validateDesignDocument(
+  input: unknown,
+  options: { imagePolicy?: RemoteImagePolicy } = {},
+): DesignValidationResult {
   let serializedBytes: number
   try {
-    serializedBytes = Buffer.byteLength(JSON.stringify(input), 'utf8')
+    serializedBytes = new TextEncoder().encode(JSON.stringify(input)).byteLength
   } catch {
     return { success: false, issues: [{ code: 'schema_invalid', path: '', message: 'Document must be serializable' }] }
   }
@@ -207,20 +551,56 @@ export function validateDesignDocument(input: unknown): DesignValidationResult {
   const document = parsed.data
   const issues: DesignValidationIssue[] = []
   const entries = Object.entries(document.nodes)
+  if (options.imagePolicy) {
+    for (const [key, node] of entries) {
+      if (node.type === 'image' && 'src' in node.props && !options.imagePolicy.allows(node.props.src)) {
+        issues.push({
+          code: 'invalid_image_host',
+          path: `nodes.${key}.props.src`,
+          message: 'Image host is not allowed',
+        })
+      }
+    }
+  }
   if (entries.length > DESIGN_LIMITS.maxNodes) {
     issues.push({ code: 'node_limit_exceeded', path: 'nodes', message: `Document exceeds ${DESIGN_LIMITS.maxNodes} nodes` })
   }
 
-  const page = document.pages[0]
-  const root = page ? document.nodes[page.rootNodeId] : undefined
-  if (!root || root.type !== 'page' || root.parentId !== null) {
-    issues.push({ code: 'root_invalid', path: 'pages.0.rootNodeId', message: 'Root must reference a parentless page node' })
+  const pageIds = new Set<string>()
+  const rootIds = new Set<string>()
+  const slugKeys = new Set<string>()
+  let homeCount = 0
+  for (const [index, page] of document.pages.entries()) {
+    if (pageIds.has(page.id)) issues.push({ code: 'duplicate_page_id', path: `pages.${index}.id`, message: 'Page IDs must be unique' })
+    pageIds.add(page.id)
+    const normalized = normalizePageSlug(page.slug)
+    if (!normalized.success || normalized.slug !== page.slug) {
+      issues.push({ code: 'invalid_page_slug', path: `pages.${index}.slug`, message: 'Page slug must be canonical and safe' })
+    } else {
+      const key = normalized.slug.normalize('NFKC').toLowerCase()
+      if (slugKeys.has(key)) issues.push({ code: 'duplicate_page_slug', path: `pages.${index}.slug`, message: 'Page routes must be unique' })
+      slugKeys.add(key)
+      if (normalized.slug === '/') homeCount += 1
+    }
+    if (rootIds.has(page.rootNodeId)) issues.push({ code: 'root_invalid', path: `pages.${index}.rootNodeId`, message: 'Each page requires a distinct root' })
+    rootIds.add(page.rootNodeId)
+    const root = document.nodes[page.rootNodeId]
+    if (!root || root.type !== 'page' || root.parentId !== null) {
+      issues.push({ code: 'root_invalid', path: `pages.${index}.rootNodeId`, message: 'Root must reference a parentless page node' })
+    }
+  }
+  if (homeCount !== 1) issues.push({ code: 'root_invalid', path: 'pages', message: 'Document requires exactly one home page' })
+  if (document.schemaVersion === 2 && document.pages.length > DESIGN_LIMITS.maxPages) {
+    issues.push({ code: 'page_limit_exceeded', path: 'pages', message: `Document exceeds ${DESIGN_LIMITS.maxPages} pages` })
   }
 
   for (const [key, node] of entries) {
     if (key !== node.id) issues.push({ code: 'node_id_mismatch', path: `nodes.${key}.id`, message: 'Node ID must match its map key' })
-    if (node.id !== page?.rootNodeId && (!node.parentId || !document.nodes[node.parentId])) {
+    if (!rootIds.has(node.id) && (!node.parentId || !document.nodes[node.parentId])) {
       issues.push({ code: 'orphan_node', path: `nodes.${key}.parentId`, message: 'Non-root node must have an existing parent' })
+    }
+    if (rootIds.has(node.id) && node.parentId !== null) {
+      issues.push({ code: 'root_invalid', path: `nodes.${key}.parentId`, message: 'Page roots must be parentless' })
     }
     const parent = node.parentId ? document.nodes[node.parentId] : undefined
     if (parent && !parent.children.includes(node.id)) {
@@ -233,8 +613,43 @@ export function validateDesignDocument(input: unknown): DesignValidationResult {
     }
   }
 
-  if (page) detectCycleAndDepth(document, page.rootNodeId, issues)
+  const ownerByNode = new Map<string, string>()
+  for (const page of document.pages) detectCycleAndDepth(document, page.rootNodeId, issues, ownerByNode, page.id)
+  for (const [key] of entries) {
+    if (!ownerByNode.has(key)) issues.push({ code: 'orphan_node', path: `nodes.${key}`, message: 'Every node must belong to one page' })
+  }
+  if (document.schemaVersion === 2) {
+    if (document.navigation.items.length > DESIGN_LIMITS.maxNavigationItems) {
+      issues.push({ code: 'navigation_invalid', path: 'navigation.items', message: 'Navigation exceeds its item limit' })
+    }
+    const navigationPageIds = new Set<string>()
+    document.navigation.items.forEach((item, index) => {
+      if (navigationPageIds.has(item.pageId)) issues.push({ code: 'navigation_invalid', path: `navigation.items.${index}.pageId`, message: 'Navigation page IDs must be unique' })
+      navigationPageIds.add(item.pageId)
+    })
+    for (const broken of collectBrokenPageReferences(document)) {
+      const path = broken.kind === 'navigation' ? `navigation.items.${broken.index}.pageId` : `nodes.${broken.nodeId}.props.pageId`
+      issues.push({ code: 'broken_page_reference', path, message: 'Page reference does not exist' })
+    }
+  }
   return issues.length === 0 ? { success: true, data: document } : { success: false, issues }
+}
+
+export function collectAssetReferences(document: DesignDocument): string[] {
+  const ids = new Set<string>()
+  for (const node of Object.values(document.nodes)) {
+    if (node.type === 'image' && 'assetId' in node.props) ids.add(node.props.assetId)
+    if (node.type === 'link' && 'logoAssetId' in node.props && node.props.logoAssetId) ids.add(node.props.logoAssetId)
+  }
+  return [...ids].sort()
+}
+
+export function collectLegacyRemoteImageReferences(document: DesignDocument): string[] {
+  const urls = new Set<string>()
+  for (const node of Object.values(document.nodes)) {
+    if (node.type === 'image' && 'src' in node.props) urls.add(node.props.src)
+  }
+  return [...urls].sort()
 }
 
 export function exportDesignDocumentJsonSchema(): Record<string, unknown> {

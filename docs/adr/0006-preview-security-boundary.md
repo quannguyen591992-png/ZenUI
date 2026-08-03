@@ -10,7 +10,7 @@ AI and user-controlled design content must be rendered interactively without gai
 
 ## Decision
 
-Host previews on a separate origin in a sandboxed iframe. Exchange only schema-validated `postMessage` events with exact origin checks. MVP output contains generated HTML/CSS but no arbitrary generated JavaScript.
+Host previews on a separate hostname/origin in a sandboxed iframe. Exchange only versioned schema-validated `postMessage` events with exact origin, exact window source and per-frame channel checks. The editor rejects preview configurations that reuse its hostname because cookie scope ignores ports. The iframe grants only `allow-scripts allow-same-origin`; the preview app serves deny-by-default CSP, nonce-bound application styles, exact `frame-ancestors`, no cookies and no credential-bearing URLs. MVP output contains deterministic generated HTML/CSS but no arbitrary generated JavaScript.
 
 ## Alternatives Considered
 

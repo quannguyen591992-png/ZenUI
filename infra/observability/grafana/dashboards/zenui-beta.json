@@ -1,0 +1,80 @@
+{
+  "id": null,
+  "uid": "zenui-beta",
+  "title": "ZenUI Beta Operations",
+  "tags": ["zenui", "beta"],
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Service readiness — label: Ready / Degraded",
+      "description": "Status always includes text; color is secondary.",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "min by (service) (zenui_readiness)", "legendFormat": "{{service}}" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{ "type": "value", "options": { "0": { "text": "⚠ Degraded" }, "1": { "text": "✓ Ready" } } }],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "#d03b3b", "value": null }, { "color": "#0ca30c", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "textMode": "auto" }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Oldest queued job (seconds)",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "max(zenui_queue_oldest_age_seconds)", "legendFormat": "Oldest age" }],
+      "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{ "color": "#0ca30c", "value": null }, { "color": "#fab219", "value": 60 }, { "color": "#d03b3b", "value": 120 }] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "textMode": "auto" }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "AI budget used",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "max(zenui_ai_budget_ratio)", "legendFormat": "Budget ratio" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "thresholds": { "mode": "absolute", "steps": [{ "color": "#0ca30c", "value": null }, { "color": "#fab219", "value": 0.8 }, { "color": "#d03b3b", "value": 1 }] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "textMode": "auto" }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Queue oldest age by queue",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 6 },
+      "targets": [{ "refId": "A", "expr": "max by (queue) (zenui_queue_oldest_age_seconds)", "legendFormat": "{{queue}}" }],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineWidth": 2, "showPoints": "always", "pointSize": 8 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Worker outcomes by queue",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 6 },
+      "targets": [{ "refId": "A", "expr": "sum by (queue, outcome) (rate(zenui_operations_total{service=\"worker\"}[5m]))", "legendFormat": "{{queue}} — {{outcome}}" }],
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "lineWidth": 2, "showPoints": "always", "pointSize": 8 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Accessible current-state table",
+      "description": "Text table is the non-color equivalent for queue and readiness state.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 15 },
+      "targets": [
+        { "refId": "A", "expr": "zenui_readiness", "format": "table", "instant": true },
+        { "refId": "B", "expr": "zenui_queue_oldest_age_seconds", "format": "table", "instant": true }
+      ],
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false } },
+      "fieldConfig": { "defaults": {}, "overrides": [] }
+    }
+  ]
+}

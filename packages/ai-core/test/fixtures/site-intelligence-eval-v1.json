@@ -1,0 +1,35 @@
+{
+  "version": "site-intelligence-eval-v1",
+  "cases": [
+    {
+      "id": "vi-content-mobile-review",
+      "locale": "vi",
+      "brief": {
+        "description": "NovaFlow giúp nhóm sản phẩm nhỏ lên kế hoạch ra mắt.",
+        "offer": "Công cụ lập kế hoạch ra mắt",
+        "audience": "nhóm sản phẩm nhỏ",
+        "primaryGoal": "đặt lịch tư vấn",
+        "cta": "Đặt lịch tư vấn",
+        "tone": "rõ ràng và đáng tin cậy",
+        "brandDetails": "NovaFlow, xanh đậm",
+        "mustHaveSections": ["introduction", "benefits", "trust", "faq", "contact"]
+      },
+      "expectedFindingCodes": ["hero-copy-too-long", "cta-needs-clarity", "weak-text-contrast", "mobile-grid-risk"]
+    },
+    {
+      "id": "en-content-mobile-review",
+      "locale": "en",
+      "brief": {
+        "description": "LaunchMap helps small product teams coordinate a clear launch plan.",
+        "offer": "A structured launch planning workspace",
+        "audience": "small product teams",
+        "primaryGoal": "book a product consultation",
+        "cta": "Book a consultation",
+        "tone": "clear and trustworthy",
+        "brandDetails": "LaunchMap, deep blue",
+        "mustHaveSections": ["introduction", "benefits", "trust", "faq", "contact"]
+      },
+      "expectedFindingCodes": ["hero-copy-too-long", "cta-needs-clarity", "weak-text-contrast", "mobile-grid-risk"]
+    }
+  ]
+}

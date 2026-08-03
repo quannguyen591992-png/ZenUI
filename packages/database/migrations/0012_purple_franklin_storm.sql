@@ -1,0 +1,1 @@
+ALTER TABLE "export_runs" ADD COLUMN "artifact_route_count" integer;

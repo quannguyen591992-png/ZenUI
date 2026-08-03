@@ -1,0 +1,60 @@
+groups:
+  - name: zenui-beta
+    interval: 30s
+    rules:
+      - alert: ZenUIServiceNotReady
+        expr: max by (service) (zenui_readiness == 0) == 1
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "ZenUI service is not ready"
+          runbook: "docs/operations/incident-runbook.md#service-not-ready"
+      - alert: ZenUIQueueBacklog
+        expr: max by (queue) (zenui_queue_oldest_age_seconds) > 120
+        for: 5m
+        labels: { severity: serious }
+        annotations:
+          summary: "ZenUI queue oldest job exceeds beta budget"
+          runbook: "docs/operations/incident-runbook.md#queue-backlog-or-stuck-lease"
+      - alert: ZenUIStuckLeases
+        expr: sum by (queue) (zenui_stuck_leases) > 0
+        for: 2m
+        labels: { severity: serious }
+        annotations:
+          summary: "ZenUI has expired active leases"
+          runbook: "docs/operations/incident-runbook.md#queue-backlog-or-stuck-lease"
+      - alert: ZenUIWorkerFailureRatio
+        expr: sum(rate(zenui_operations_total{service="worker",outcome="failed"}[5m])) / clamp_min(sum(rate(zenui_operations_total{service="worker"}[5m])), 0.001) > 0.05
+        for: 5m
+        labels: { severity: serious }
+        annotations:
+          summary: "ZenUI worker failure ratio exceeds five percent"
+          runbook: "docs/operations/incident-runbook.md#worker-failures"
+      - alert: ZenUIUnknownProviderOutcome
+        expr: increase(zenui_operations_total{operation="reconcile",errorCode="provider_outcome_unknown"}[10m]) > 0
+        for: 1m
+        labels: { severity: serious }
+        annotations:
+          summary: "A provider deployment outcome requires reconciliation"
+          runbook: "docs/operations/incident-runbook.md#provider-outcome-unknown"
+      - alert: ZenUITokenBudgetNearLimit
+        expr: max(zenui_ai_budget_ratio) > 0.8
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "ZenUI AI token budget is above eighty percent"
+          runbook: "docs/operations/incident-runbook.md#ai-budget"
+      - alert: ZenUITokenBudgetExhausted
+        expr: max(zenui_ai_budget_ratio) >= 1
+        for: 1m
+        labels: { severity: serious }
+        annotations:
+          summary: "ZenUI AI token budget is exhausted"
+          runbook: "docs/operations/incident-runbook.md#ai-budget"
+      - alert: ZenUIStorageOrProviderBurst
+        expr: sum(increase(zenui_operations_total{errorCode=~"storage_unavailable|provider_transient|provider_rate_limit"}[5m])) > 10
+        for: 2m
+        labels: { severity: serious }
+        annotations:
+          summary: "ZenUI storage or provider failures are elevated"
+          runbook: "docs/operations/incident-runbook.md#external-dependency-failures"

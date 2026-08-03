@@ -6,12 +6,13 @@ import {
   componentRegistry,
   createRegistryFixture,
   isAllowedChild,
+  validateRegistryRelationships,
 } from '../src/index.js'
 
 describe('prototype component registry', () => {
-  it('contains the eight Phase 0 component types exactly once', () => {
+  it('contains the eighteen Phase 2 component types exactly once', () => {
     expect(Object.keys(componentRegistry).sort()).toEqual([...COMPONENT_TYPES].sort())
-    expect(new Set(COMPONENT_TYPES).size).toBe(8)
+    expect(new Set(COMPONENT_TYPES).size).toBe(18)
   })
 
   it.each(COMPONENT_TYPES)('has valid defaults and a valid fixture for %s', type => {
@@ -27,6 +28,42 @@ describe('prototype component registry', () => {
     expect(isAllowedChild('container', 'heading')).toBe(true)
     expect(isAllowedChild('heading', 'paragraph')).toBe(false)
     expect(isAllowedChild('page', 'button')).toBe(false)
+  })
+
+  it('defines safe composite templates with unique local IDs', () => {
+    for (const type of ['navbar', 'hero', 'feature-card'] as const) {
+      const template = componentRegistry[type].template
+      expect(template).toBeDefined()
+      expect(template?.nodes.length).toBeGreaterThan(1)
+      expect(new Set(template?.nodes.map(node => node.id)).size).toBe(template?.nodes.length)
+      expect(template?.nodes.some(node => node.id === template.rootNodeId)).toBe(true)
+    }
+  })
+
+  it('reports invalid registry relationships in a document', () => {
+    const document = createRegistryFixture('button')
+    document.nodes['button-1']!.parentId = 'page-root'
+    document.nodes['container-1']!.children = document.nodes['container-1']!.children.filter(id => id !== 'button-1')
+    document.nodes['page-root']!.children.push('button-1')
+
+    expect(validateRegistryRelationships(document)).toEqual([expect.objectContaining({
+      code: 'invalid_parent_child',
+      path: 'nodes.page-root.children',
+    })])
+  })
+
+  it('accepts canonical owned images and an explicit navbar brand slot', () => {
+    expect(componentRegistry.image.propSchema.safeParse({
+      assetId: '11111111-1111-4111-8111-111111111111',
+      alt: 'Product dashboard',
+      decorative: false,
+    }).success).toBe(true)
+    const navbar = componentRegistry.navbar.template
+    expect(navbar?.nodes).toContainEqual(expect.objectContaining({
+      id: 'navbar-brand',
+      type: 'link',
+      props: expect.objectContaining({ brandSlot: true }),
+    }))
   })
 
   it('does not expose raw CSS or arbitrary font values', () => {

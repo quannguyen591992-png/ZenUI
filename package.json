@@ -7,15 +7,33 @@
     "node": ">=22.0.0"
   },
   "scripts": {
+    "backup:database": "node scripts/backup-database.mjs",
+    "ai:eval": "pnpm --filter @zenui/ai-core build && node scripts/ai-eval.mjs",
+    "ai:eval:test": "pnpm --filter @zenui/ai-core build && node --test scripts/ai-eval.test.mjs",
+    "backup:test": "node --test scripts/backup-restore.test.mjs",
     "build": "turbo run build",
-    "dev": "turbo run dev --parallel",
+    "capacity:smoke": "pnpm --filter @zenui/operations-core build && node tests/load/capacity-smoke.mjs",
+    "capacity:test": "pnpm --filter @zenui/operations-core build && node --test tests/load/capacity-smoke.test.mjs",
+    "topology:config": "docker compose -f infra/topology/compose.yaml config",
+    "db:check": "pnpm --filter @zenui/database db:check",
+    "db:generate": "pnpm --filter @zenui/database db:generate",
+    "db:migrate": "pnpm --filter @zenui/database db:migrate",
+    "dev": "node scripts/dev.mjs",
+    "dev:test": "node --test scripts/dev-runtime.test.mjs",
     "lint": "turbo run lint",
+    "local:bootstrap": "node scripts/local-bootstrap.mjs",
+    "local:up": "docker compose -f infra/topology/compose.yaml up -d postgres redis minio && pnpm db:migrate && pnpm local:bootstrap",
+    "local:down": "docker compose -f infra/topology/compose.yaml stop",
+    "restore:database": "node scripts/restore-database.mjs",
     "test": "turbo run test",
     "test:coverage": "turbo run test:coverage",
+    "test:e2e": "playwright test",
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.57.0",
     "@types/node": "^22.19.1",
     "@vitest/coverage-v8": "^4.0.18",
     "eslint": "^9.39.1",
@@ -25,5 +43,10 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.50.1",
     "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.858.0",
+    "pg": "^8.22.0",
+    "sharp": "^0.35.3"
   }
 }
