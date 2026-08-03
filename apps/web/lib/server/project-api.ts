@@ -1,6 +1,12 @@
 import { applyCommandTransaction, designCommandSchema } from '@zenui/design-commands'
-import { createValidDesignFixture, type DesignDocument } from '@zenui/design-schema'
+import {
+  createRemoteImagePolicy,
+  validateDesignDocument,
+  type DesignDocument,
+} from '@zenui/design-schema'
 import { z } from 'zod'
+
+import { createVietnameseStarterDocument } from '../starter-document'
 
 import { ApiError, errorResponse, parseJsonBody, successResponse } from './api'
 import { hasWorkspacePermission, type WorkspaceMembership } from './authorization'
@@ -12,6 +18,7 @@ export interface ProjectApiRecord {
   workspaceId: string
   name: string
   status: 'active' | 'archived'
+  creationState?: 'onboarding' | 'accepted'
   version: number
   document: DesignDocument
 }
@@ -19,6 +26,7 @@ export interface ProjectApiRecord {
 export interface ProjectRevisionRecord {
   id: string
   projectId: string
+  documentVersion: number
   source: 'manual' | 'restore' | 'ai' | 'import'
   summary: string
   createdAt: Date
@@ -26,7 +34,11 @@ export interface ProjectRevisionRecord {
 
 export interface ProjectApiRepository {
   list(context: AuthContext): Promise<ProjectApiRecord[]>
-  create(context: AuthContext, input: { name: string; document: unknown }): Promise<ProjectApiRecord>
+  create(context: AuthContext, input: {
+    name: string
+    document: unknown
+    creationState?: 'onboarding' | 'accepted'
+  }): Promise<ProjectApiRecord>
   findById(context: AuthContext, projectId: string): Promise<ProjectApiRecord | null>
   rename(context: AuthContext, projectId: string, name: string): Promise<ProjectApiRecord | null>
   archive(context: AuthContext, projectId: string): Promise<ProjectApiRecord | null>
@@ -55,6 +67,7 @@ export interface ProjectApiDependencies {
   findCurrentMembership(userId: string): Promise<WorkspaceMembership | null>
   findMembership(userId: string, workspaceId: string): Promise<WorkspaceMembership | null>
   trustedOrigin: string
+  remoteImageHostAllowlist: string
   projects: ProjectApiRepository
 }
 
@@ -192,10 +205,11 @@ export function createProjectCollectionHandlers(dependencies: ProjectApiDependen
           throw new ApiError('validation_error', 'Request validation failed', 422, zodDetails(parsed.error))
         }
         const context = await requireWorkspace(dependencies, parsed.data.workspaceId, 'manageProject')
-        const fixture = createValidDesignFixture()
+        const fixture = createVietnameseStarterDocument()
         const project = await dependencies.projects.create(context, {
           name: parsed.data.name,
           document: fixture,
+          creationState: 'onboarding',
         })
         return successResponse(project, {
           status: 201,
@@ -265,6 +279,16 @@ export function createProjectDocumentHandler(dependencies: ProjectApiDependencie
   }
 }
 
+function publicRevision(revision: ProjectRevisionRecord) {
+  return {
+    id: revision.id,
+    documentVersion: revision.documentVersion,
+    source: revision.source,
+    summary: revision.summary,
+    createdAt: revision.createdAt.toISOString(),
+  }
+}
+
 export function createProjectRevisionHandlers(dependencies: ProjectApiDependencies) {
   type Context = { params: Promise<{ projectId: string }> }
   return {
@@ -274,7 +298,7 @@ export function createProjectRevisionHandlers(dependencies: ProjectApiDependenci
         const authContext = await requireWorkspace(dependencies, workspaceId, 'read')
         const { projectId } = await context.params
         if (!await dependencies.projects.findById(authContext, projectId)) notFound()
-        return successResponse(await dependencies.projects.listRevisions(authContext, projectId))
+        return successResponse((await dependencies.projects.listRevisions(authContext, projectId)).map(publicRevision))
       } catch (error) {
         return errorResponse(error)
       }
@@ -290,7 +314,7 @@ export function createProjectRevisionHandlers(dependencies: ProjectApiDependenci
         const revision = await dependencies.projects.createRevision(authContext, projectId, {
           source: 'manual', summary: input.summary,
         })
-        return successResponse(revision, {
+        return successResponse(publicRevision(revision), {
           status: 201,
           headers: { Location: `/api/v1/projects/${projectId}/revisions/${revision.id}` },
         })
@@ -366,11 +390,23 @@ export function createProjectCommandHandler(dependencies: ProjectApiDependencies
         }])
       }
 
+      const imageValidation = validateDesignDocument(transaction.document, {
+        imagePolicy: createRemoteImagePolicy(dependencies.remoteImageHostAllowlist),
+      })
+      if (!imageValidation.success) {
+        const issue = imageValidation.issues.find(candidate => candidate.code === 'invalid_image_host')
+        throw new ApiError('invalid_image_host', 'Image host is not allowed', 422, [{
+          path: issue?.path ?? 'document',
+          code: 'invalid_image_host',
+          message: 'Image host is not allowed',
+        }])
+      }
+
       const saved = await dependencies.projects.replaceDocument(
         authContext,
         projectId,
         parsed.data.expectedVersion,
-        transaction.document,
+        imageValidation.data,
       )
       if (!saved.accepted) {
         const status = saved.code === 'not_found' ? 404 : 409

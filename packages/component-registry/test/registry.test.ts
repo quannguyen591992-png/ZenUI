@@ -52,6 +52,20 @@ describe('prototype component registry', () => {
     })])
   })
 
+  it('accepts canonical owned images and an explicit navbar brand slot', () => {
+    expect(componentRegistry.image.propSchema.safeParse({
+      assetId: '11111111-1111-4111-8111-111111111111',
+      alt: 'Product dashboard',
+      decorative: false,
+    }).success).toBe(true)
+    const navbar = componentRegistry.navbar.template
+    expect(navbar?.nodes).toContainEqual(expect.objectContaining({
+      id: 'navbar-brand',
+      type: 'link',
+      props: expect.objectContaining({ brandSlot: true }),
+    }))
+  })
+
   it('does not expose raw CSS or arbitrary font values', () => {
     const result = componentRegistry.heading.styleSchema.safeParse({
       rawCss: 'position:fixed',

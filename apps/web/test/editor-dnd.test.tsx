@@ -52,7 +52,7 @@ describe('ZenUI editor drag outcomes', () => {
 
     await user.click(screen.getByRole('button', { name: 'Simulate drag 1' }))
 
-    expect(screen.getByText('Drag cancelled')).toBeVisible()
+    expect(screen.getByText('Đã hủy thao tác kéo')).toBeVisible()
   })
 
   it('inserts a palette node into the dropped container', async () => {
@@ -61,8 +61,8 @@ describe('ZenUI editor drag outcomes', () => {
 
     await user.click(screen.getByRole('button', { name: 'Simulate drag 2' }))
 
-    expect(screen.getByRole('button', { name: 'Select New heading' })).toBeVisible()
-    expect(screen.getByText('Heading added')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Chọn Tiêu đề mới' })).toBeVisible()
+    expect(screen.getByText('Đã thêm Tiêu đề')).toBeVisible()
   })
 
   it('moves an existing node to a valid container and rejects an invalid root target', async () => {
@@ -70,9 +70,9 @@ describe('ZenUI editor drag outcomes', () => {
     render(<EditorApp />)
 
     await user.click(screen.getByRole('button', { name: 'Simulate drag 3' }))
-    expect(screen.getByText('Change applied')).toBeVisible()
+    expect(screen.getByText('Đã áp dụng thay đổi')).toBeVisible()
 
     await user.click(screen.getByRole('button', { name: 'Simulate drag 4' }))
-    expect(screen.getByText('heading is not allowed inside page')).toBeVisible()
+    expect(screen.getByText('Không thể đặt thành phần vào vị trí này.')).toBeVisible()
   })
 })

@@ -1,40 +1,24 @@
 import { createProjectRepository, projects, workspaceMembers } from '@zenui/database'
 import { and, eq } from 'drizzle-orm'
-import { cookies } from 'next/headers'
 
-import { createConfiguredAuth } from './configured-auth'
-import { getDatabase, waitForDatabase } from './database'
-import {
-  E2E_SESSION_COOKIE,
-  isE2eRuntimeEnabled,
-  verifyE2eSessionToken,
-} from './e2e-runtime'
+import { getDatabase } from './database'
+import { getRuntimeSession } from './runtime-session'
 
 import type { ProjectApiDependencies } from './project-api'
 
 export function createRouteDependencies(): ProjectApiDependencies {
   const database = getDatabase()
   const repository = createProjectRepository(database)
-  const e2eEnabled = isE2eRuntimeEnabled()
-  const auth = e2eEnabled ? null : createConfiguredAuth().auth
 
   const trustedOrigin = process.env.APP_ORIGIN
+  const remoteImageHostAllowlist = process.env.REMOTE_IMAGE_HOST_ALLOWLIST
   if (!trustedOrigin) throw new Error('APP_ORIGIN is required')
+  if (!remoteImageHostAllowlist) throw new Error('REMOTE_IMAGE_HOST_ALLOWLIST is required')
 
   return {
     trustedOrigin,
-    async getSession() {
-      await waitForDatabase()
-      if (e2eEnabled) {
-        const secret = process.env.AUTH_SECRET
-        if (!secret) throw new Error('AUTH_SECRET is required')
-        const token = (await cookies()).get(E2E_SESSION_COOKIE)?.value
-        const identity = token ? verifyE2eSessionToken(token, secret) : null
-        return identity ? { userId: identity.userId } : null
-      }
-      const session = await auth!()
-      return session?.user.id ? { userId: session.user.id } : null
-    },
+    remoteImageHostAllowlist,
+    getSession: getRuntimeSession,
     async findCurrentMembership(userId) {
       const [membership] = await database.select({
         userId: workspaceMembers.userId,

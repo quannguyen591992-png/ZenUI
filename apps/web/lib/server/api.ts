@@ -22,7 +22,7 @@ export function successResponse<T>(data: T, init?: ResponseInit): NextResponse<{
   return NextResponse.json({ data }, init)
 }
 
-export function errorResponse(error: unknown): NextResponse {
+export function errorResponse(error: unknown, init?: Pick<ResponseInit, 'headers'>): NextResponse {
   if (error instanceof ApiError) {
     return NextResponse.json({
       error: {
@@ -30,7 +30,7 @@ export function errorResponse(error: unknown): NextResponse {
         message: error.message,
         ...(error.details ? { details: error.details } : {}),
       },
-    }, { status: error.status })
+    }, { status: error.status, ...init })
   }
 
   return NextResponse.json({

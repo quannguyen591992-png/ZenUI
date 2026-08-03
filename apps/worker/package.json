@@ -5,9 +5,32 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "lint": "eslint src",
-    "test": "vitest run --passWithNoTests",
-    "test:coverage": "vitest run --coverage --passWithNoTests",
+    "dev": "tsx watch src/start.ts",
+    "lint": "eslint src test",
+    "start": "tsx src/start.ts",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage --coverage.thresholds.branches=80 --coverage.thresholds.functions=80 --coverage.thresholds.lines=80 --coverage.thresholds.statements=80",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.858.0",
+    "@google/genai": "^1.30.0",
+    "@zenui/ai-core": "workspace:*",
+    "@zenui/asset-core": "workspace:*",
+    "@zenui/database": "workspace:*",
+    "@zenui/deployment-core": "workspace:*",
+    "@zenui/design-schema": "workspace:*",
+    "@zenui/export-core": "workspace:*",
+    "@zenui/html-compiler": "workspace:*",
+    "@zenui/operations-core": "workspace:*",
+    "bullmq": "^5.63.2",
+    "drizzle-orm": "^0.45.2",
+    "ioredis": "^5.8.2",
+    "pg": "^8.22.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.20.0",
+    "tsx": "^4.23.1"
   }
 }

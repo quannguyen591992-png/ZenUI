@@ -18,7 +18,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@zenui/ai-core": "workspace:*",
+    "@zenui/asset-core": "workspace:*",
+    "@zenui/design-commands": "workspace:*",
     "@zenui/design-schema": "workspace:*",
+    "@zenui/deployment-core": "workspace:*",
+    "@zenui/export-core": "workspace:*",
+    "@zenui/share-core": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "pg": "^8.22.0",
     "zod": "^4.3.5"

@@ -8,6 +8,97 @@
       "when": 1784646794930,
       "tag": "0000_keen_gateway",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784691976907,
+      "tag": "0001_sad_champions",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784708554408,
+      "tag": "0002_secure_exports",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784715280551,
+      "tag": "0003_silly_living_mummy",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784727157510,
+      "tag": "0004_bumpy_zuras",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784774184077,
+      "tag": "0005_parched_the_leader",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784774377102,
+      "tag": "0006_pink_stranger",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784779961683,
+      "tag": "0007_illegal_wendigo",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785139371895,
+      "tag": "0008_careless_domino",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785211800000,
+      "tag": "0009_ai_proposals",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785247200000,
+      "tag": "0010_site_intelligence",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785293495451,
+      "tag": "0011_yellow_madelyne_pryor",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785320057578,
+      "tag": "0012_purple_franklin_storm",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1785488000000,
+      "tag": "0013_generated_asset_source",
+      "breakpoints": true
     }
   ]
 }

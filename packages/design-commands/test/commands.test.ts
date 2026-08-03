@@ -1,4 +1,4 @@
-import { createValidDesignFixture } from '@zenui/design-schema'
+import { createValidDesignFixture, migrateDesignDocumentV1ToV2 } from '@zenui/design-schema'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -16,7 +16,8 @@ const metadata = {
 describe('design command contract', () => {
   it.each([
     'INSERT_NODE', 'MOVE_NODE', 'REMOVE_NODE', 'DUPLICATE_NODE', 'UPDATE_PROPS',
-    'UPDATE_STYLE', 'UPDATE_RESPONSIVE_STYLE', 'UPDATE_THEME', 'REPLACE_SUBTREE',
+    'UPDATE_STYLE', 'UPDATE_RESPONSIVE_STYLE', 'UPDATE_THEME', 'REPLACE_SUBTREE', 'REPLACE_DOCUMENT',
+    'CREATE_PAGE', 'UPDATE_PAGE', 'MOVE_PAGE', 'DUPLICATE_PAGE', 'REMOVE_PAGE', 'UPDATE_NAVIGATION',
   ])('defines a discriminated command for %s', type => {
     const samples: Record<string, unknown> = {
       INSERT_NODE: { ...metadata, type, parentId: 'container-1', index: 0, node: { id: 'new-heading', type: 'heading', parentId: 'container-1', children: [], props: { text: 'New', level: 2 }, style: {}, responsive: {} } },
@@ -28,9 +29,83 @@ describe('design command contract', () => {
       UPDATE_RESPONSIVE_STYLE: { ...metadata, type, nodeId: 'heading-1', breakpoint: 'mobile', patch: { fontSize: 24 } },
       UPDATE_THEME: { ...metadata, type, patch: { colors: { primary: '#112233' } } },
       REPLACE_SUBTREE: { ...metadata, type, nodeId: 'heading-1', nodes: [{ id: 'replacement', type: 'heading', parentId: 'container-1', children: [], props: { text: 'Replacement', level: 2 }, style: {}, responsive: {} }], rootNodeId: 'replacement' },
+      REPLACE_DOCUMENT: { ...metadata, type, document: createValidDesignFixture() },
+      CREATE_PAGE: { ...metadata, type, index: 1, page: { id: 'about', name: 'About', slug: '/about', rootNodeId: 'about-root' }, nodes: [{ id: 'about-root', type: 'page', parentId: null, children: [], props: {}, style: {}, responsive: {} }] },
+      UPDATE_PAGE: { ...metadata, type, pageId: 'home', patch: { name: 'Homepage' } },
+      MOVE_PAGE: { ...metadata, type, pageId: 'home', newIndex: 0 },
+      DUPLICATE_PAGE: { ...metadata, type, sourcePageId: 'home', index: 1, page: { id: 'home-copy', name: 'Home copy', slug: '/home-copy', rootNodeId: 'home-copy-root' }, nodes: [{ id: 'home-copy-root', type: 'page', parentId: null, children: [], props: {}, style: {}, responsive: {} }] },
+      REMOVE_PAGE: { ...metadata, type, pageId: 'about' },
+      UPDATE_NAVIGATION: { ...metadata, type, items: [{ pageId: 'home', label: 'Home' }] },
     }
 
     expect(designCommandSchema.safeParse(samples[type]).success).toBe(true)
+  })
+
+  it('replaces an AI-generated document while preserving server ownership metadata', () => {
+    const current = createValidDesignFixture()
+    current.projectId = 'trusted-project'
+    current.version = 7
+    const generated = createValidDesignFixture()
+    generated.projectId = 'model-forged-project'
+    generated.version = 999
+    generated.nodes['heading-1']!.props = { text: 'AI landing page', level: 1 }
+
+    const result = applyCommandTransaction(current, 7, [{
+      commandId: 'ai-generation',
+      documentVersion: 7,
+      source: 'ai',
+      type: 'REPLACE_DOCUMENT',
+      document: generated,
+    }])
+
+    expect(result).toMatchObject({ accepted: true, version: 8 })
+    if (!result.accepted) return
+    expect(result.document.projectId).toBe('trusted-project')
+    expect(result.document.version).toBe(8)
+    expect(result.document.nodes['heading-1']?.props).toMatchObject({ text: 'AI landing page' })
+    expect(result.inverseCommands).toEqual([expect.objectContaining({
+      type: 'REPLACE_DOCUMENT',
+      document: expect.objectContaining({ projectId: 'trusted-project', version: 7 }),
+    })])
+  })
+
+  it('rejects an invalid AI-generated document without changing the current document', () => {
+    const current = createValidDesignFixture()
+    const generated = createValidDesignFixture()
+    generated.nodes['heading-1']!.props = { text: 'Unsafe', level: 99 }
+
+    const result = applyCommandTransaction(current, 1, [{
+      ...metadata,
+      source: 'ai',
+      type: 'REPLACE_DOCUMENT',
+      document: generated,
+    }])
+
+    expect(result).toMatchObject({ accepted: false, error: { code: 'document_invalid' } })
+    expect(current.nodes['heading-1']?.props).toMatchObject({ text: 'Build your next product' })
+  })
+
+  it('atomically replaces legacy remote image props with one canonical owned asset', () => {
+    const command = JSON.parse(JSON.stringify({
+      ...metadata,
+      type: 'UPDATE_PROPS',
+      nodeId: 'image-1',
+      patch: {
+        src: null,
+        assetId: '11111111-1111-4111-8111-111111111111',
+        alt: 'Owned product dashboard',
+        decorative: false,
+      },
+    })) as DesignCommand
+    const result = applyCommandTransaction(createValidDesignFixture(), 1, [command])
+
+    expect(result).toMatchObject({ accepted: true, version: 2 })
+    if (!result.accepted) return
+    expect(result.document.nodes['image-1']?.props).toEqual({
+      assetId: '11111111-1111-4111-8111-111111111111',
+      alt: 'Owned product dashboard',
+      decorative: false,
+    })
   })
 
   it('applies a valid batch atomically and increments the document version once', () => {
@@ -436,6 +511,81 @@ describe('design command contract', () => {
     expect(applyCommandTransaction(createValidDesignFixture(), 1, [cycle])).toMatchObject({
       accepted: false, error: { code: 'cycle_detected' },
     })
+  })
+
+  it('creates, updates, reorders and restores a page atomically', () => {
+    const document = migrateDesignDocumentV1ToV2(createValidDesignFixture())
+    const created = applyCommandTransaction(document, 1, [{
+      ...metadata,
+      type: 'CREATE_PAGE',
+      index: 1,
+      page: { id: 'about', name: 'About', slug: '/about', rootNodeId: 'about-root' },
+      nodes: [{ id: 'about-root', type: 'page', parentId: null, children: [], props: {}, style: {}, responsive: {} }],
+    }])
+    expect(created).toMatchObject({ accepted: true, document: { pages: [{ id: 'home' }, { id: 'about' }] } })
+    if (!created.accepted) return
+
+    const updated = applyCommandTransaction(created.document, 2, [{
+      ...metadata, documentVersion: 2, type: 'UPDATE_PAGE', pageId: 'about', patch: { name: 'Company', slug: '/company' },
+    }, {
+      ...metadata, commandId: 'nav', documentVersion: 2, type: 'UPDATE_NAVIGATION',
+      items: [{ pageId: 'about', label: 'Company' }, { pageId: 'home', label: 'Home' }],
+    }, {
+      ...metadata, commandId: 'move', documentVersion: 2, type: 'MOVE_PAGE', pageId: 'about', newIndex: 0,
+    }])
+    expect(updated).toMatchObject({
+      accepted: true,
+      document: {
+        pages: [{ id: 'about', name: 'Company', slug: '/company' }, { id: 'home' }],
+        navigation: { items: [{ pageId: 'about', label: 'Company' }, { pageId: 'home', label: 'Home' }] },
+      },
+    })
+    if (!updated.accepted) return
+
+    const undone = applyCommandTransaction(updated.document, 3, updated.inverseCommands)
+    expect(undone).toMatchObject({ accepted: true, document: { pages: [{ id: 'home' }, { id: 'about', name: 'About', slug: '/about' }] } })
+  })
+
+  it('deep-duplicates a page and removes it with inverse restoration', () => {
+    const document = migrateDesignDocumentV1ToV2(createValidDesignFixture())
+    const sourceNodes = Object.values(document.nodes)
+    const idMap = new Map(sourceNodes.map(node => [node.id, `copy-${node.id}`]))
+    const nodes = sourceNodes.map(node => ({
+      ...structuredClone(node),
+      id: idMap.get(node.id)!,
+      parentId: node.parentId ? idMap.get(node.parentId)! : null,
+      children: node.children.map(childId => idMap.get(childId)!),
+    }))
+    const duplicated = applyCommandTransaction(document, 1, [{
+      ...metadata,
+      type: 'DUPLICATE_PAGE',
+      sourcePageId: 'home',
+      index: 1,
+      page: { id: 'about', name: 'About', slug: '/about', rootNodeId: 'copy-page-root' },
+      nodes,
+    }])
+    expect(duplicated).toMatchObject({ accepted: true, document: { pages: [{ id: 'home' }, { id: 'about' }] } })
+    if (!duplicated.accepted) return
+
+    const removed = applyCommandTransaction(duplicated.document, 2, [{
+      ...metadata, documentVersion: 2, type: 'REMOVE_PAGE', pageId: 'about',
+    }])
+    expect(removed).toMatchObject({ accepted: true, document: { pages: [{ id: 'home' }] } })
+    if (!removed.accepted) return
+    expect(removed.document.nodes['copy-page-root']).toBeUndefined()
+
+    const restored = applyCommandTransaction(removed.document, 3, removed.inverseCommands)
+    expect(restored).toMatchObject({ accepted: true, document: { pages: [{ id: 'home' }, { id: 'about' }] } })
+  })
+
+  it('protects Home and referenced pages from destructive commands', () => {
+    const document = migrateDesignDocumentV1ToV2(createValidDesignFixture())
+    expect(applyCommandTransaction(document, 1, [{
+      ...metadata, type: 'UPDATE_PAGE', pageId: 'home', patch: { slug: '/renamed-home' },
+    }])).toMatchObject({ accepted: false, error: { code: 'root_operation_forbidden' } })
+    expect(applyCommandTransaction(document, 1, [{
+      ...metadata, type: 'REMOVE_PAGE', pageId: 'home',
+    }])).toMatchObject({ accepted: false, error: { code: 'root_operation_forbidden' } })
   })
 
   it('rejects malformed and empty command batches', () => {

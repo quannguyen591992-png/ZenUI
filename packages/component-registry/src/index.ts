@@ -1,7 +1,10 @@
 import {
   COMPONENT_TYPES,
   FONT_ALLOWLIST,
+  buttonPropsSchema,
   createValidDesignFixture,
+  imagePropsSchema,
+  linkPropsSchema,
   styleSchema,
   type ComponentType,
   type DesignDocument,
@@ -62,7 +65,8 @@ function templateNode(
 const navbarTemplate: ComponentTemplate = {
   rootNodeId: 'navbar-root',
   nodes: [
-    templateNode('navbar-root', 'navbar', null, ['navbar-link', 'navbar-button'], { brand: 'ZenUI' }),
+    templateNode('navbar-root', 'navbar', null, ['navbar-brand', 'navbar-link', 'navbar-button'], { brand: 'ZenUI' }),
+    templateNode('navbar-brand', 'link', 'navbar-root', [], { text: 'ZenUI', href: '#top', brandSlot: true }),
     templateNode('navbar-link', 'link', 'navbar-root', [], { text: 'Features', href: '#features' }),
     templateNode('navbar-button', 'button', 'navbar-root', [], { text: 'Get started', href: '#start' }),
   ],
@@ -100,14 +104,17 @@ const definitions: readonly ComponentDefinition[] = [
   {
     type: 'section', displayName: 'Section', category: 'layout', isContainer: true,
     defaultProps: {}, defaultStyle: { paddingTop: 64, paddingBottom: 64 },
-    propSchema: z.object({ label: z.string().min(1).max(100).optional() }).strict(), styleSchema,
+    propSchema: z.object({
+      label: z.string().min(1).max(100).optional(),
+      hidden: z.boolean().optional(),
+    }).strict(), styleSchema,
     allowedParents: ['page'], allowedChildren: flowChildren, aiDescription: 'Top-level responsive page section.',
     inspector: [], renderTag: 'section', template: undefined,
   },
   {
     type: 'container', displayName: 'Container', category: 'layout', isContainer: true,
     defaultProps: {}, defaultStyle: { width: 'full', maxWidth: 1200 }, propSchema: emptyProps, styleSchema,
-    allowedParents: ['section', 'stack', 'column', 'hero', 'feature-card'], allowedChildren: flowChildren,
+    allowedParents: ['section', 'stack', 'column', 'hero', 'feature-card', 'navbar'], allowedChildren: flowChildren,
     aiDescription: 'Width-constrained content container.', inspector: [], renderTag: 'div', template: undefined,
   },
   {
@@ -161,10 +168,7 @@ const definitions: readonly ComponentDefinition[] = [
   {
     type: 'image', displayName: 'Image', category: 'content', isContainer: false,
     defaultProps: { src: 'https://images.example.com/placeholder.png', alt: 'Placeholder image' }, defaultStyle: { width: 'full' },
-    propSchema: z.object({
-      src: z.string().url().refine(value => ['http:', 'https:'].includes(new URL(value).protocol)),
-      alt: z.string().min(1).max(300),
-    }).strict(), styleSchema,
+    propSchema: imagePropsSchema, styleSchema,
     allowedParents: contentParents, allowedChildren: [], aiDescription: 'HTTP(S) image with required alternative text.',
     inspector: [{ key: 'src', label: 'Image URL', control: 'url' }, { key: 'alt', label: 'Alternative text', control: 'text' }],
     renderTag: 'img', template: undefined,
@@ -173,7 +177,7 @@ const definitions: readonly ComponentDefinition[] = [
     type: 'button', displayName: 'Button', category: 'content', isContainer: false,
     defaultProps: { text: 'Call to action', href: '#action' },
     defaultStyle: { backgroundColor: '#2563eb', color: '#ffffff', borderRadius: 8 },
-    propSchema: z.object({ text: z.string().min(1).max(200), href: z.string().min(1) }).strict(), styleSchema,
+    propSchema: buttonPropsSchema, styleSchema,
     allowedParents: [...contentParents, 'navbar'], allowedChildren: [], aiDescription: 'Call-to-action link rendered as a button.',
     inspector: [{ key: 'text', label: 'Label', control: 'text' }, { key: 'href', label: 'Destination', control: 'url' }],
     renderTag: 'a', template: undefined,
@@ -181,7 +185,7 @@ const definitions: readonly ComponentDefinition[] = [
   {
     type: 'link', displayName: 'Link', category: 'content', isContainer: false,
     defaultProps: { text: 'Link', href: '#link' }, defaultStyle: {},
-    propSchema: z.object({ text: z.string().min(1).max(500), href: z.string().min(1) }).strict(), styleSchema,
+    propSchema: linkPropsSchema, styleSchema,
     allowedParents: [...contentParents, 'navbar'], allowedChildren: [], aiDescription: 'Safe navigation link.',
     inspector: [{ key: 'text', label: 'Text', control: 'text' }, { key: 'href', label: 'Destination', control: 'url' }],
     renderTag: 'a', template: undefined,
@@ -204,7 +208,10 @@ const definitions: readonly ComponentDefinition[] = [
   {
     type: 'navbar', displayName: 'Navbar', category: 'composite', isContainer: true,
     defaultProps: { brand: 'ZenUI' }, defaultStyle: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-    propSchema: z.object({ brand: z.string().min(1).max(100) }).strict(), styleSchema,
+    propSchema: z.object({
+      brand: z.string().min(1).max(100),
+      hidden: z.boolean().optional(),
+    }).strict(), styleSchema,
     allowedParents: ['page'], allowedChildren: ['container', 'stack', 'link', 'button', 'icon'],
     aiDescription: 'Top navigation composite.', inspector: [{ key: 'brand', label: 'Brand', control: 'text' }],
     renderTag: 'nav', template: navbarTemplate,
@@ -212,16 +219,23 @@ const definitions: readonly ComponentDefinition[] = [
   {
     type: 'hero', displayName: 'Hero', category: 'composite', isContainer: true,
     defaultProps: { label: 'Hero' }, defaultStyle: { paddingTop: 96, paddingBottom: 96 },
-    propSchema: z.object({ label: z.string().min(1).max(100) }).strict(), styleSchema,
+    propSchema: z.object({
+      label: z.string().min(1).max(100),
+      hidden: z.boolean().optional(),
+    }).strict(), styleSchema,
     allowedParents: ['page'], allowedChildren: flowChildren,
     aiDescription: 'Landing page hero composite.', inspector: [], renderTag: 'section', template: heroTemplate,
   },
   {
     type: 'feature-card', displayName: 'Feature Card', category: 'composite', isContainer: true,
     defaultProps: { title: 'Feature', description: 'Describe the feature.' }, defaultStyle: { paddingTop: 24, paddingBottom: 24, borderRadius: 12 },
-    propSchema: z.object({ title: z.string().min(1).max(200), description: z.string().min(1).max(1000) }).strict(), styleSchema,
-    allowedParents: ['section', 'container', 'stack', 'column', 'hero'],
-    allowedChildren: ['container', 'stack', 'heading', 'paragraph', 'image', 'button', 'link', 'icon', 'badge'],
+    propSchema: z.object({
+      title: z.string().min(1).max(200),
+      description: z.string().min(1).max(1000),
+      mediaSlot: z.enum(['hero-image', 'feature-1', 'feature-2', 'feature-3']).optional(),
+    }).strict(), styleSchema,
+    allowedParents: ['section', 'container', 'stack', 'column', 'hero', 'feature-card'],
+    allowedChildren: ['container', 'stack', 'heading', 'paragraph', 'image', 'button', 'link', 'icon', 'badge', 'feature-card'],
     aiDescription: 'Feature summary composite card.', inspector: [], renderTag: 'article', template: featureCardTemplate,
   },
 ]

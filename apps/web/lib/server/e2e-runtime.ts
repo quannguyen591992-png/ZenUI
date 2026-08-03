@@ -15,15 +15,54 @@ export const E2E_IDENTITIES = {
 
 export const E2E_SESSION_COOKIE = 'zenui-e2e-session'
 
+let directionProviderCalls = 0
+
+export function recordE2eDirectionProviderCall(): void {
+  if (!isE2eRuntimeEnabled()) throw new Error('e2e_runtime_disabled')
+  directionProviderCalls += 1
+}
+
+export function readE2eRuntimeCounters() {
+  if (!isE2eRuntimeEnabled()) throw new Error('e2e_runtime_disabled')
+  return { directionProviderCalls }
+}
+
+export function resetE2eRuntimeCounters(): void {
+  if (!isE2eRuntimeEnabled()) throw new Error('e2e_runtime_disabled')
+  directionProviderCalls = 0
+}
+
 type E2eIdentityName = keyof typeof E2E_IDENTITIES
 
 type RuntimeEnvironment = {
   NODE_ENV?: string
   ZENUI_E2E_ENABLED?: string
+  ZENUI_LOCAL_AUTH_ENABLED?: string
+}
+
+export type RuntimeMode = 'production' | 'local' | 'e2e'
+
+export function resolveRuntimeMode(environment: RuntimeEnvironment = process.env): RuntimeMode {
+  if (environment.NODE_ENV === 'production') return 'production'
+  const e2e = environment.ZENUI_E2E_ENABLED === 'true'
+  const local = environment.ZENUI_LOCAL_AUTH_ENABLED === 'true'
+  if (e2e && local) throw new Error('runtime_mode_conflict')
+  if (e2e) return 'e2e'
+  if (local) return 'local'
+  return 'production'
 }
 
 export function isE2eRuntimeEnabled(environment: RuntimeEnvironment = process.env): boolean {
-  return environment.NODE_ENV !== 'production' && environment.ZENUI_E2E_ENABLED === 'true'
+  return resolveRuntimeMode(environment) === 'e2e'
+}
+
+export function isLocalAuthRuntimeEnabled(environment: RuntimeEnvironment = process.env): boolean {
+  return resolveRuntimeMode(environment) === 'local'
+}
+
+export function isGuardedIdentityRuntimeEnabled(environment: RuntimeEnvironment = process.env): boolean {
+  const mode = resolveRuntimeMode(environment)
+  return mode === 'local' || mode === 'e2e'
 }
 
 function signature(payload: string, secret: string): string {

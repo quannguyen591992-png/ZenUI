@@ -10,6 +10,10 @@ test-results/
 .env.*
 !.env.example
 *.log
+*.dump
+*.dump.sha256.json
+infra/observability/secrets/metrics_bearer_token
 *.tsbuildinfo
 .DS_Store
 Thumbs.db
+.claude/

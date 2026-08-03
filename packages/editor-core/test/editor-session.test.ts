@@ -1,4 +1,4 @@
-import { createValidDesignFixture, validateDesignDocument } from '@zenui/design-schema'
+import { createValidDesignFixture, migrateDesignDocumentV1ToV2, validateDesignDocument } from '@zenui/design-schema'
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
@@ -9,6 +9,11 @@ import {
   loadDraft,
   planInsert,
   planMove,
+  planPageCreate,
+  planPageDelete,
+  planPageDuplicate,
+  planSectionDelete,
+  selectPage,
   queueAutosave,
   redo,
   resolveAutosave,
@@ -105,6 +110,48 @@ describe('editor session', () => {
     const state = createEditorState(createValidDesignFixture())
     expect(selectNode(state, 'heading-1').selectedNodeId).toBe('heading-1')
     expect(selectNode(state, 'missing').selectedNodeId).toBeNull()
+  })
+
+  it('tracks an active page and clears cross-page selection', () => {
+    const document = migrateDesignDocumentV1ToV2(createValidDesignFixture())
+    document.pages.push({ id: 'about', name: 'About', slug: '/about', rootNodeId: 'about-root' })
+    document.nodes['about-root'] = { id: 'about-root', type: 'page', parentId: null, children: [], props: {}, style: {}, responsive: {} }
+    const home = selectNode(createEditorState(document), 'heading-1')
+
+    expect(home.activePageId).toBe('home')
+    expect(selectPage(home, 'about')).toMatchObject({ activePageId: 'about', selectedNodeId: null })
+    expect(selectPage(home, 'missing')).toBe(home)
+  })
+
+  it('plans bounded page create, duplicate and delete impact', () => {
+    const document = migrateDesignDocumentV1ToV2(createValidDesignFixture())
+    const created = planPageCreate(document, { name: 'About', slug: 'About Us' }, () => 'about', () => 'about-root')
+    expect(created).toMatchObject({ accepted: true, command: { type: 'CREATE_PAGE', page: { id: 'about', slug: '/about-us' } } })
+    if (!created.accepted) return
+    const withAbout = executeCommands(createEditorState(document), [created.command]).document
+    if (withAbout.schemaVersion !== 2) throw new Error('Expected v2 document')
+
+    const duplicate = planPageDuplicate(withAbout, 'home', { name: 'Home copy', slug: '/home-copy' }, source => `copy-${source}`)
+    expect(duplicate).toMatchObject({ accepted: true, command: { type: 'DUPLICATE_PAGE', page: { id: 'copy-home', rootNodeId: 'copy-page-root' } } })
+
+    withAbout.navigation.items.push({ pageId: 'about', label: 'About' })
+    expect(planPageDelete(withAbout, 'about')).toMatchObject({
+      accepted: false, code: 'document_invalid', impact: { navigationItems: 1, internalLinks: 0 },
+    })
+    expect(planPageDelete(withAbout, 'home')).toMatchObject({ accepted: false, code: 'root_operation_forbidden' })
+  })
+
+  it('protects the last section on the active page rather than the Home page', () => {
+    const document = migrateDesignDocumentV1ToV2(createValidDesignFixture())
+    document.nodes['about-root'] = {
+      id: 'about-root', type: 'page', parentId: null, children: ['about-section'], props: {}, style: {}, responsive: {},
+    }
+    document.nodes['about-section'] = {
+      id: 'about-section', type: 'section', parentId: 'about-root', children: [], props: { label: 'About' }, style: {}, responsive: {},
+    }
+    document.pages.push({ id: 'about', name: 'About', slug: '/about', rootNodeId: 'about-root' })
+
+    expect(planSectionDelete(document, 'about-section')).toMatchObject({ accepted: false, code: 'invalid_command' })
   })
 
   it('plans registry-backed insert and rejects invalid targets', () => {

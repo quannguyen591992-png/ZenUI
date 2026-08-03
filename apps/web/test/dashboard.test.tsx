@@ -30,25 +30,29 @@ describe('authenticated dashboard', () => {
 
     render(<Dashboard />)
 
-    expect(screen.getByRole('status')).toHaveTextContent('Loading projects')
-    expect(await screen.findByText('No projects yet')).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Create project' })).toBeVisible()
+    expect(screen.getByRole('status')).toHaveTextContent('Đang tải dự án')
+    expect(await screen.findByText('Chưa có dự án')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Tạo dự án' })).toBeVisible()
   })
 
-  it('renders a safe authentication error with retry', async () => {
+  it('offers sign-in again when the session expires instead of retrying forever', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
-      error: { code: 'unauthorized', message: 'Authentication required' },
+      error: { code: 'unauthorized', message: 'Vui lòng đăng nhập để tiếp tục.' },
     }, 401))
     vi.stubGlobal('fetch', fetchMock)
 
     render(<Dashboard />)
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Authentication required')
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Retry' }))
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Vui lòng đăng nhập để tiếp tục.')
+    expect(screen.getByRole('link', { name: 'Đăng nhập lại' })).toHaveAttribute(
+      'href',
+      '/login?callbackUrl=%2Fdashboard',
+    )
+    expect(screen.queryByRole('button', { name: 'Thử lại' })).not.toBeInTheDocument()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
   })
 
-  it('creates, renames and archives projects for an owner', async () => {
+  it('creates, renames and deletes projects for an owner', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ data: { userId: 'owner', workspaceId, role: 'owner' } }))
       .mockResolvedValueOnce(jsonResponse({ data: [] }))
@@ -59,20 +63,21 @@ describe('authenticated dashboard', () => {
     const user = userEvent.setup()
     render(<Dashboard />)
 
-    await screen.findByText('No projects yet')
-    await user.type(screen.getByLabelText('Project name'), 'Landing page')
-    await user.click(screen.getByRole('button', { name: 'Create project' }))
-    expect(await screen.findByRole('link', { name: 'Open Landing page' })).toHaveAttribute('href', `/projects/${project.id}`)
+    await screen.findByText('Chưa có dự án')
+    await user.type(screen.getByLabelText('Tên dự án'), 'Landing page')
+    await user.click(screen.getByRole('button', { name: 'Tạo dự án' }))
+    expect(await screen.findByRole('link', { name: 'Mở Landing page' })).toHaveAttribute('href', `/projects/${project.id}`)
 
-    await user.click(screen.getByRole('button', { name: 'Rename Landing page' }))
-    const rename = screen.getByLabelText('Rename project')
+    await user.click(screen.getByRole('button', { name: 'Đổi tên Landing page' }))
+    const rename = screen.getByLabelText('Đổi tên dự án')
     await user.clear(rename)
     await user.type(rename, 'Renamed')
-    await user.click(screen.getByRole('button', { name: 'Save project name' }))
-    expect(await screen.findByRole('link', { name: 'Open Renamed' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Lưu tên dự án' }))
+    expect(await screen.findByRole('link', { name: 'Mở Renamed' })).toBeVisible()
 
-    await user.click(screen.getByRole('button', { name: 'Archive Renamed' }))
-    expect(await screen.findByText('No projects yet')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Lưu trữ Renamed' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Xóa Renamed' }))
+    expect(await screen.findByText('Chưa có dự án')).toBeVisible()
   })
 
   it('shows a safe create failure and keeps the empty state', async () => {
@@ -83,12 +88,12 @@ describe('authenticated dashboard', () => {
     const user = userEvent.setup()
     render(<Dashboard />)
 
-    await screen.findByText('No projects yet')
-    await user.type(screen.getByLabelText('Project name'), 'Failed project')
-    await user.click(screen.getByRole('button', { name: 'Create project' }))
+    await screen.findByText('Chưa có dự án')
+    await user.type(screen.getByLabelText('Tên dự án'), 'Failed project')
+    await user.click(screen.getByRole('button', { name: 'Tạo dự án' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to create')
-    expect(screen.getByText('No projects yet')).toBeVisible()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Không thể hoàn tất yêu cầu')
+    expect(screen.getByText('Chưa có dự án')).toBeVisible()
   })
 
   it('shows safe mutation failures without discarding the current list', async () => {
@@ -99,14 +104,14 @@ describe('authenticated dashboard', () => {
     const user = userEvent.setup()
     render(<Dashboard />)
 
-    await screen.findByRole('link', { name: 'Open Landing page' })
-    await user.click(screen.getByRole('button', { name: 'Rename Landing page' }))
-    await user.clear(screen.getByLabelText('Rename project'))
-    await user.type(screen.getByLabelText('Rename project'), 'New name')
-    await user.click(screen.getByRole('button', { name: 'Save project name' }))
+    await screen.findByRole('link', { name: 'Mở Landing page' })
+    await user.click(screen.getByRole('button', { name: 'Đổi tên Landing page' }))
+    await user.clear(screen.getByLabelText('Đổi tên dự án'))
+    await user.type(screen.getByLabelText('Đổi tên dự án'), 'New name')
+    await user.click(screen.getByRole('button', { name: 'Lưu tên dự án' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to rename')
-    expect(screen.getByLabelText('Rename project')).toHaveValue('New name')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Không thể hoàn tất yêu cầu')
+    expect(screen.getByLabelText('Đổi tên dự án')).toHaveValue('New name')
   })
 
   it('keeps project management controls hidden from viewers', async () => {
@@ -116,9 +121,9 @@ describe('authenticated dashboard', () => {
 
     render(<Dashboard />)
 
-    expect(await screen.findByRole('link', { name: 'Open Landing page' })).toBeVisible()
-    expect(screen.queryByRole('button', { name: /create project/i })).toBeNull()
-    expect(screen.queryByRole('button', { name: /rename landing page/i })).toBeNull()
-    expect(screen.queryByRole('button', { name: /archive landing page/i })).toBeNull()
+    expect(await screen.findByRole('link', { name: 'Mở Landing page' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: /tạo dự án/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /đổi tên landing page/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /xóa landing page/i })).toBeNull()
   })
 })

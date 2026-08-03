@@ -36,6 +36,7 @@ function dependencies(overrides: Partial<ProjectApiDependencies> = {}): ProjectA
     findCurrentMembership: () => Promise.resolve({ userId, workspaceId, role: 'owner' }),
     findMembership: () => Promise.resolve({ userId, workspaceId, role: 'owner' }),
     trustedOrigin: 'http://localhost',
+    remoteImageHostAllowlist: 'images.example.com',
     projects: {
       list: () => Promise.resolve([current]),
       create: (_context, input) => Promise.resolve({ ...current, name: input.name }),
@@ -55,8 +56,8 @@ function dependencies(overrides: Partial<ProjectApiDependencies> = {}): ProjectA
         current = { ...current, version: expectedVersion + 1, document }
         return Promise.resolve({ accepted: true, version: current.version, document })
       },
-      listRevisions: () => Promise.resolve([{ id: 'revision-1', projectId, source: 'manual' as const, summary: 'Initial snapshot', createdAt: new Date('2026-07-22T00:00:00.000Z') }]),
-      createRevision: (_context, _projectId, input) => Promise.resolve({ id: 'revision-2', projectId, source: 'manual' as const, summary: input.summary, createdAt: new Date('2026-07-22T01:00:00.000Z') }),
+      listRevisions: () => Promise.resolve([{ id: 'revision-1', projectId, documentVersion: 1, source: 'manual' as const, summary: 'Initial snapshot', createdAt: new Date('2026-07-22T00:00:00.000Z') }]),
+      createRevision: (_context, _projectId, input) => Promise.resolve({ id: 'revision-2', projectId, documentVersion: 1, source: 'manual' as const, summary: input.summary, createdAt: new Date('2026-07-22T01:00:00.000Z') }),
       restoreRevision: (_context, _projectId, _revisionId, expectedVersion) => {
         if (expectedVersion !== current.version) return Promise.resolve({ accepted: false, code: 'stale_document_version' as const })
         current = { ...current, version: expectedVersion + 1, document: { ...current.document, version: expectedVersion + 1 } }
@@ -240,7 +241,13 @@ describe('project API handlers', () => {
       context,
     )
     expect(listed.status).toBe(200)
-    await expect(listed.json()).resolves.toMatchObject({ data: [{ id: 'revision-1' }] })
+    await expect(listed.json()).resolves.toEqual({ data: [{
+      id: 'revision-1',
+      documentVersion: 1,
+      source: 'manual',
+      summary: 'Initial snapshot',
+      createdAt: '2026-07-22T00:00:00.000Z',
+    }] })
 
     const created = await revisionHandlers.POST(new Request(`http://localhost/api/v1/projects/${projectId}/revisions`, {
       method: 'POST',
@@ -283,6 +290,24 @@ describe('project API handlers', () => {
     const body = await response.json() as { data: { version: number; document: DesignDocument } }
     expect(body.data.version).toBe(2)
     expect(body.data.document.nodes['heading-1']?.props).toMatchObject({ text: 'Saved on server' })
+  })
+
+  it('rejects image host changes outside the configured allowlist', async () => {
+    const handler = createProjectCommandHandler(dependencies())
+    const response = await handler(new Request(`http://localhost/api/v1/projects/${projectId}/commands`, {
+      method: 'POST',
+      headers: { origin: 'http://localhost' },
+      body: JSON.stringify({
+        workspaceId,
+        expectedVersion: 1,
+        commands: [{
+          commandId: 'unsafe-image-host', documentVersion: 1, source: 'user', type: 'UPDATE_PROPS',
+          nodeId: 'image-1', patch: { src: 'https://evil.example.test/hero.png' },
+        }],
+      }),
+    }), { params: Promise.resolve({ projectId }) })
+    expect(response.status).toBe(422)
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'invalid_image_host' } })
   })
 
   it('rejects item and revision mutations with unsafe origins before repository access', async () => {

@@ -1,8 +1,10 @@
 import { isAllowedChild } from '@zenui/component-registry'
 import {
   designNodeSchema,
+  parseDesignDocument,
   validateDesignDocument,
   type DesignDocument,
+  type DesignDocumentV2,
 } from '@zenui/design-schema'
 import { z } from 'zod'
 
@@ -13,6 +15,16 @@ const metadata = {
 } as const
 
 const recordPatch = z.record(z.string(), z.unknown())
+const pageSchema = z.object({
+  id: z.string().min(1).max(100),
+  name: z.string().trim().min(1).max(100),
+  slug: z.string().min(1).max(80),
+  rootNodeId: z.string().min(1).max(100),
+}).strict()
+const navigationItemSchema = z.object({
+  pageId: z.string().min(1).max(100),
+  label: z.string().trim().min(1).max(100),
+}).strict()
 
 export const designCommandSchema = z.discriminatedUnion('type', [
   z.object({ ...metadata, type: z.literal('INSERT_NODE'), parentId: z.string(), index: z.number().int().nonnegative(), node: designNodeSchema }).strict(),
@@ -24,6 +36,13 @@ export const designCommandSchema = z.discriminatedUnion('type', [
   z.object({ ...metadata, type: z.literal('UPDATE_RESPONSIVE_STYLE'), nodeId: z.string(), breakpoint: z.enum(['tablet', 'mobile']), patch: recordPatch }).strict(),
   z.object({ ...metadata, type: z.literal('UPDATE_THEME'), patch: recordPatch }).strict(),
   z.object({ ...metadata, type: z.literal('REPLACE_SUBTREE'), nodeId: z.string(), nodes: z.array(designNodeSchema).min(1), rootNodeId: z.string(), index: z.number().int().nonnegative().optional() }).strict(),
+  z.object({ ...metadata, type: z.literal('REPLACE_DOCUMENT'), document: z.unknown() }).strict(),
+  z.object({ ...metadata, type: z.literal('CREATE_PAGE'), index: z.number().int().nonnegative(), page: pageSchema, nodes: z.array(designNodeSchema).min(1) }).strict(),
+  z.object({ ...metadata, type: z.literal('UPDATE_PAGE'), pageId: z.string().min(1).max(100), patch: z.object({ name: z.string().trim().min(1).max(100).optional(), slug: z.string().min(1).max(80).optional() }).strict() }).strict(),
+  z.object({ ...metadata, type: z.literal('MOVE_PAGE'), pageId: z.string().min(1).max(100), newIndex: z.number().int().nonnegative() }).strict(),
+  z.object({ ...metadata, type: z.literal('DUPLICATE_PAGE'), sourcePageId: z.string().min(1).max(100), index: z.number().int().nonnegative(), page: pageSchema, nodes: z.array(designNodeSchema).min(1) }).strict(),
+  z.object({ ...metadata, type: z.literal('REMOVE_PAGE'), pageId: z.string().min(1).max(100) }).strict(),
+  z.object({ ...metadata, type: z.literal('UPDATE_NAVIGATION'), items: z.array(navigationItemSchema).max(20) }).strict(),
 ])
 
 export type DesignCommand = z.infer<typeof designCommandSchema>
@@ -80,7 +99,7 @@ function inversePatch(
 
 function applyPatch(target: Record<string, unknown>, patch: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined) delete target[key]
+    if (value === undefined || value === null) delete target[key]
     else target[key] = value
   }
 }
@@ -89,6 +108,28 @@ function insertAt(children: string[], index: number, nodeId: string): boolean {
   if (index > children.length) return false
   children.splice(index, 0, nodeId)
   return true
+}
+
+function requireV2(document: DesignDocument): DesignDocumentV2 | null {
+  return document.schemaVersion === 2 ? document : null
+}
+
+function pageSubtreeNodes(document: DesignDocument, rootNodeId: string): DesignDocument['nodes'][string][] {
+  return subtreeNodes(document, rootNodeId)
+}
+
+function validPageNodes(document: DesignDocument, page: { rootNodeId: string }, nodes: readonly DesignDocument['nodes'][string][]): boolean {
+  const ids = new Set(nodes.map(node => node.id))
+  const root = nodes.find(node => node.id === page.rootNodeId)
+  return Boolean(
+    root
+    && root.type === 'page'
+    && root.parentId === null
+    && ids.size === nodes.length
+    && nodes.every(node => !document.nodes[node.id])
+    && nodes.every(node => node.children.every(childId => ids.has(childId)))
+    && nodes.every(node => node.parentId === null ? node.id === page.rootNodeId : ids.has(node.parentId)),
+  )
 }
 
 function cloneCommandMetadata(command: DesignCommand, type: DesignCommand['type']): Pick<DesignCommand, 'commandId' | 'documentVersion' | 'source'> & { type: DesignCommand['type'] } {
@@ -205,6 +246,139 @@ function applyOne(document: DesignDocument, command: DesignCommand): { inverse: 
           ...cloneCommandMetadata(command, 'UPDATE_THEME'),
           type: 'UPDATE_THEME',
           patch: inversePatch(previous, command.patch),
+        },
+      }
+    }
+    case 'CREATE_PAGE': {
+      const v2 = requireV2(document)
+      if (!v2) return { code: 'document_invalid', path: 'schemaVersion', message: 'Page commands require Design Document v2' }
+      if (command.index > v2.pages.length) return { code: 'index_out_of_bounds', path: 'index', message: 'Page index is out of bounds' }
+      if (v2.pages.some(page => page.id === command.page.id)) return { code: 'invalid_command', path: 'page.id', message: 'Page ID already exists' }
+      if (!validPageNodes(document, command.page, command.nodes)) return { code: 'invalid_command', path: 'nodes', message: 'Page nodes must form one unique subtree' }
+      v2.pages.splice(command.index, 0, structuredClone(command.page))
+      for (const node of command.nodes) v2.nodes[node.id] = structuredClone(node)
+      return {
+        inverse: {
+          ...cloneCommandMetadata(command, 'REMOVE_PAGE'),
+          type: 'REMOVE_PAGE',
+          pageId: command.page.id,
+        },
+      }
+    }
+    case 'UPDATE_PAGE': {
+      const v2 = requireV2(document)
+      if (!v2) return { code: 'document_invalid', path: 'schemaVersion', message: 'Page commands require Design Document v2' }
+      const page = v2.pages.find(item => item.id === command.pageId)
+      if (!page) return { code: 'invalid_command', path: 'pageId', message: 'Page does not exist' }
+      if (page.slug === '/' && command.patch.slug && command.patch.slug !== '/') {
+        return { code: 'root_operation_forbidden', path: 'patch.slug', message: 'Home route cannot be changed' }
+      }
+      const previous = { name: page.name, slug: page.slug }
+      if (command.patch.name !== undefined) page.name = command.patch.name
+      if (command.patch.slug !== undefined) page.slug = command.patch.slug
+      return {
+        inverse: {
+          ...cloneCommandMetadata(command, 'UPDATE_PAGE'),
+          type: 'UPDATE_PAGE',
+          pageId: page.id,
+          patch: Object.fromEntries(Object.keys(command.patch).map(key => [key, previous[key as keyof typeof previous]])),
+        },
+      }
+    }
+    case 'MOVE_PAGE': {
+      const v2 = requireV2(document)
+      if (!v2) return { code: 'document_invalid', path: 'schemaVersion', message: 'Page commands require Design Document v2' }
+      const index = v2.pages.findIndex(page => page.id === command.pageId)
+      if (index < 0) return { code: 'invalid_command', path: 'pageId', message: 'Page does not exist' }
+      if (command.newIndex >= v2.pages.length) return { code: 'index_out_of_bounds', path: 'newIndex', message: 'Page index is out of bounds' }
+      const [page] = v2.pages.splice(index, 1)
+      v2.pages.splice(command.newIndex, 0, page!)
+      return {
+        inverse: {
+          ...cloneCommandMetadata(command, 'MOVE_PAGE'),
+          type: 'MOVE_PAGE',
+          pageId: command.pageId,
+          newIndex: index,
+        },
+      }
+    }
+    case 'DUPLICATE_PAGE': {
+      const v2 = requireV2(document)
+      if (!v2) return { code: 'document_invalid', path: 'schemaVersion', message: 'Page commands require Design Document v2' }
+      if (!v2.pages.some(page => page.id === command.sourcePageId)) return { code: 'invalid_command', path: 'sourcePageId', message: 'Source page does not exist' }
+      if (command.index > v2.pages.length) return { code: 'index_out_of_bounds', path: 'index', message: 'Page index is out of bounds' }
+      if (v2.pages.some(page => page.id === command.page.id)) return { code: 'invalid_command', path: 'page.id', message: 'Page ID already exists' }
+      if (!validPageNodes(document, command.page, command.nodes)) return { code: 'invalid_command', path: 'nodes', message: 'Duplicate nodes must form one unique subtree' }
+      v2.pages.splice(command.index, 0, structuredClone(command.page))
+      for (const node of command.nodes) v2.nodes[node.id] = structuredClone(node)
+      return {
+        inverse: {
+          ...cloneCommandMetadata(command, 'REMOVE_PAGE'),
+          type: 'REMOVE_PAGE',
+          pageId: command.page.id,
+        },
+      }
+    }
+    case 'REMOVE_PAGE': {
+      const v2 = requireV2(document)
+      if (!v2) return { code: 'document_invalid', path: 'schemaVersion', message: 'Page commands require Design Document v2' }
+      const index = v2.pages.findIndex(page => page.id === command.pageId)
+      if (index < 0) return { code: 'invalid_command', path: 'pageId', message: 'Page does not exist' }
+      const page = v2.pages[index]!
+      if (page.slug === '/') return { code: 'root_operation_forbidden', path: 'pageId', message: 'Home page cannot be removed' }
+      if (v2.navigation.items.some(item => item.pageId === page.id)) return { code: 'document_invalid', path: 'pageId', message: 'Remove the page from navigation first' }
+      const linked = Object.values(v2.nodes).some(node => (
+        (node.type === 'button' || node.type === 'link') && 'pageId' in node.props && node.props.pageId === page.id
+      ))
+      if (linked) return { code: 'document_invalid', path: 'pageId', message: 'Remove internal links to the page first' }
+      const nodes = pageSubtreeNodes(v2, page.rootNodeId)
+      v2.pages.splice(index, 1)
+      for (const node of nodes) delete v2.nodes[node.id]
+      return {
+        inverse: {
+          ...cloneCommandMetadata(command, 'CREATE_PAGE'),
+          type: 'CREATE_PAGE',
+          index,
+          page: structuredClone(page),
+          nodes,
+        },
+      }
+    }
+    case 'UPDATE_NAVIGATION': {
+      const v2 = requireV2(document)
+      if (!v2) return { code: 'document_invalid', path: 'schemaVersion', message: 'Page commands require Design Document v2' }
+      const previous = structuredClone(v2.navigation.items)
+      v2.navigation.items = structuredClone(command.items)
+      return {
+        inverse: {
+          ...cloneCommandMetadata(command, 'UPDATE_NAVIGATION'),
+          type: 'UPDATE_NAVIGATION',
+          items: previous,
+        },
+      }
+    }
+    case 'REPLACE_DOCUMENT': {
+      if (typeof command.document !== 'object' || command.document === null) {
+        return { code: 'document_invalid', path: 'document', message: 'Replacement document is invalid' }
+      }
+      const candidate = structuredClone(command.document) as Record<string, unknown>
+      candidate.projectId = document.projectId
+      candidate.version = document.version
+      const validation = parseDesignDocument(candidate)
+      if (!validation.success) {
+        return {
+          code: 'document_invalid',
+          path: validation.issues[0]?.path ?? 'document',
+          message: validation.issues[0]?.message ?? 'Replacement document is invalid',
+        }
+      }
+      const previous = structuredClone(document)
+      Object.assign(document, validation.data)
+      return {
+        inverse: {
+          ...cloneCommandMetadata(command, 'REPLACE_DOCUMENT'),
+          type: 'REPLACE_DOCUMENT',
+          document: previous,
         },
       }
     }

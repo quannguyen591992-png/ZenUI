@@ -1,0 +1,24 @@
+await fetch('/api/e2e/session', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ identity: 'owner' }),
+});
+location.reload();
+
+
+
+
+Chúng tôi cung cấp các khóa học đào tạo về cách ứng dụng AI vào thực tế công việc và lập trình. 
+Website này được thiết kế dành cho sinh viên IT, lập trình viên và những người đi làm muốn tối ưu 
+hiệu suất. Mục tiêu lớn nhất của website là giới thiệu rõ lộ trình học và tăng tỷ lệ chuyển đổi 
+học viên đăng ký. Khách truy cập sau khi tìm hiểu thông tin nên nhấn nút 'Đăng ký ngay' hoặc 
+điền form để nhận tư vấn miễn phí. Website cần mang lại cảm giác hiện đại, tối giản, chuyên nghiệp
+ và đậm chất công nghệ tương lai. Về nhận diện, chúng tôi đã có tên thương hiệu là 'AI Tech Edu', 
+logo chủ đạo màu xanh navy và sử dụng font chữ Roboto. Website sẽ cần có những phần cơ bản như
+: Hero Banner, Lợi ích khóa học, Thông tin giảng viên, Đánh giá học viên và Form đăng ký
+
+
+
+
+
+Đổi tiêu đề lớn trong phần Hero thành: “Chăm sóc khách hàng nhanh hơn với AI”. Chỉ thay đổi tiêu đề lớn, giữ nguyên đoạn mô tả, các nút, bố cục, màu sắc và toàn bộ phần khác.

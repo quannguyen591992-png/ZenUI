@@ -3,7 +3,7 @@ import { accounts, sessions, users, verificationTokens } from '@zenui/database/s
 import NextAuth from 'next-auth'
 import GitHub from 'next-auth/providers/github'
 
-import { validateAuthEnvironment } from '../../auth'
+import { createBetaEmailPolicy, validateAuthEnvironment } from '../../auth'
 
 import { getDatabase } from './database'
 
@@ -12,7 +12,9 @@ export function createConfiguredAuth() {
     AUTH_SECRET: process.env.AUTH_SECRET,
     AUTH_GITHUB_ID: process.env.AUTH_GITHUB_ID,
     AUTH_GITHUB_SECRET: process.env.AUTH_GITHUB_SECRET,
+    BETA_ALLOWED_EMAILS: process.env.BETA_ALLOWED_EMAILS,
   })
+  const betaEmails = createBetaEmailPolicy(environment.BETA_ALLOWED_EMAILS)
   return NextAuth({
     adapter: DrizzleAdapter(getDatabase(), {
       usersTable: users,
@@ -32,7 +34,11 @@ export function createConfiguredAuth() {
         options: { httpOnly: true, sameSite: 'lax', path: '/', secure: true },
       },
     },
+    pages: { signIn: '/login', error: '/auth-error' },
     callbacks: {
+      signIn({ user }) {
+        return betaEmails.allows(user.email)
+      },
       session({ session, user }) {
         if (session.user) session.user.id = user.id
         return session

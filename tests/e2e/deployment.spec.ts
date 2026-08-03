@@ -1,0 +1,102 @@
+import AxeBuilder from '@axe-core/playwright'
+import { expect, test } from '@playwright/test'
+
+import { createProject, openAdvancedEditor, resetE2e, signIn, workspaceId } from './helpers'
+
+test.beforeEach(async ({ page, request }) => {
+  await resetE2e(request)
+  await signIn(page)
+})
+
+async function createRevision(page: import('@playwright/test').Page, projectId: string) {
+  await page.goto(`/projects/${projectId}`)
+  await openAdvancedEditor(page)
+  await page.getByLabel('Tên phiên bản').fill('Launch revision')
+  await page.getByRole('button', { name: 'Tạo phiên bản' }).click()
+  await expect(page.getByText('Launch revision')).toBeVisible()
+}
+
+test('connects Vercel and deploys one immutable revision safely', async ({ page, browser }) => {
+  const projectId = await createProject(page, 'Immutable deploy')
+  await createRevision(page, projectId)
+
+  await page.getByRole('button', { name: 'Triển khai' }).click()
+  await expect(page.getByText('Kết nối Vercel để triển khai một phiên bản.')).toBeVisible()
+  const popupPromise = page.waitForEvent('popup')
+  await page.getByRole('button', { name: 'Kết nối Vercel' }).click()
+  await popupPromise
+  await expect(page.getByText('Vercel đã kết nối')).toBeVisible({ timeout: 10_000 })
+
+  const results = await new AxeBuilder({ page }).include('.deploy-popover').analyze()
+  expect(results.violations.filter(violation => violation.impact === 'serious' || violation.impact === 'critical')).toEqual([])
+
+  const revisionResponse = await page.request.get(`/api/v1/projects/${projectId}/revisions?workspaceId=${workspaceId}`)
+  const revisionId = (await revisionResponse.json()).data[0].id as string
+
+  await page.getByRole('treeitem', { name: /^Tiêu đề: Biến ý tưởng thành website của riêng bạn/ }).click()
+  await page.getByRole('textbox', { name: 'Nội dung', exact: true }).fill('Changed after revision')
+  await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
+
+  await page.getByLabel('Môi trường triển khai').selectOption('preview')
+  await page.getByRole('checkbox', { name: /xác nhận triển khai/i }).check()
+  await page.getByRole('button', { name: 'Bắt đầu triển khai' }).dblclick()
+  await expect(page.getByText('Triển khai đã sẵn sàng')).toBeVisible({ timeout: 15_000 })
+
+  const deploymentsResponse = await page.request.get(`/api/v1/projects/${projectId}/deployments?workspaceId=${workspaceId}`)
+  const deploymentsBody = await deploymentsResponse.json()
+  expect(deploymentsBody.data).toHaveLength(1)
+  expect(deploymentsBody.data[0]).toMatchObject({ revisionId, status: 'ready', target: 'preview' })
+  expect(JSON.stringify(deploymentsBody)).not.toMatch(/providerDeploymentId|artifactKey|connectionId|workspaceId|projectId/i)
+
+  const artifact = await page.request.get(`/api/e2e/deployments/${deploymentsBody.data[0].id}`)
+  expect(artifact.status()).toBe(200)
+  expect(artifact.headers()['content-type']).toContain('application/zip')
+  const bundle = Buffer.from(await artifact.body())
+  expect([...bundle.subarray(0, 4)]).toEqual([0x50, 0x4b, 0x03, 0x04])
+  expect(bundle.toString('utf8')).toContain('Biến ý tưởng thành website của riêng bạn')
+  expect(bundle.toString('utf8')).not.toContain('Changed after revision')
+  expect(bundle.toString('utf8')).not.toMatch(/<script|\son\w+=/i)
+
+  const outsider = await browser.newPage()
+  await signIn(outsider, 'outsider')
+  const hidden = await outsider.request.get(`/api/v1/projects/${projectId}/deployments/${deploymentsBody.data[0].id}?workspaceId=${workspaceId}`)
+  expect(hidden.status()).toBe(404)
+  await outsider.close()
+})
+
+test('rejects forged deployment mutation, consumes OAuth state once and disconnects', async ({ page }) => {
+  const projectId = await createProject(page, 'Triển khai security')
+  await createRevision(page, projectId)
+  const revisionResponse = await page.request.get(`/api/v1/projects/${projectId}/revisions?workspaceId=${workspaceId}`)
+  const revisionId = (await revisionResponse.json()).data[0].id as string
+
+  const forged = await page.request.post(`/api/v1/projects/${projectId}/deployments`, {
+    headers: { origin: 'https://evil.test' },
+    data: { workspaceId, revisionId, requestId: crypto.randomUUID(), target: 'preview', confirmed: true },
+  })
+  expect(forged.status()).toBe(403)
+
+  const authorize = await page.request.post('/api/v1/provider-connections/vercel/authorize', {
+    headers: { origin: 'http://localhost:3000' },
+    data: { workspaceId, returnPath: `/projects/${projectId}` },
+  })
+  const installUrl = new URL((await authorize.json()).data.url)
+  const state = installUrl.searchParams.get('state')!
+  const callback = `/api/v1/provider-connections/vercel/callback?state=${state}&code=e2e-code&configurationId=icfg_e2e&teamId=team_e2e&source=external`
+  const accepted = await page.request.get(callback, { maxRedirects: 0 })
+  expect(accepted.status()).toBe(303)
+  const replay = await page.request.get(callback, { maxRedirects: 0 })
+  expect(replay.status()).toBe(403)
+
+  const disconnected = await page.request.delete(`/api/v1/provider-connections/vercel?workspaceId=${workspaceId}`, {
+    headers: { origin: 'http://localhost:3000' }, data: { workspaceId },
+  })
+  expect(disconnected.status()).toBe(200)
+  expect((await disconnected.json()).data.status).toBe('disconnected')
+
+  const denied = await page.request.post(`/api/v1/projects/${projectId}/deployments`, {
+    headers: { origin: 'http://localhost:3000' },
+    data: { workspaceId, revisionId, requestId: crypto.randomUUID(), target: 'preview', confirmed: true },
+  })
+  expect(denied.status()).toBe(409)
+})

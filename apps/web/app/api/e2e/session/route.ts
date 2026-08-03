@@ -1,17 +1,21 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
+import { resetE2eAssetSources } from '../../../../lib/server/asset-route-dependencies'
 import { resetE2eDatabase } from '../../../../lib/server/database'
 import {
   createE2eSessionToken,
   E2E_SESSION_COOKIE,
   isE2eRuntimeEnabled,
+  isGuardedIdentityRuntimeEnabled,
+  resetE2eRuntimeCounters,
 } from '../../../../lib/server/e2e-runtime'
+import { resetE2ePublicAssets } from '../../../../lib/server/public-asset-route-dependencies'
 
 const requestSchema = z.object({ identity: z.enum(['owner', 'outsider']) }).strict()
 
 export async function POST(request: Request) {
-  if (!isE2eRuntimeEnabled()) return new NextResponse(null, { status: 404 })
+  if (!isGuardedIdentityRuntimeEnabled()) return new NextResponse(null, { status: 404 })
   const parsed = requestSchema.safeParse(await request.json().catch(() => null))
   if (!parsed.success) {
     return NextResponse.json({ error: { code: 'validation_error', message: 'Invalid E2E identity' } }, { status: 422 })
@@ -31,9 +35,14 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE() {
-  if (!isE2eRuntimeEnabled()) return new NextResponse(null, { status: 404 })
-  await resetE2eDatabase()
-  const response = NextResponse.json({ data: { reset: true } })
+  if (!isGuardedIdentityRuntimeEnabled()) return new NextResponse(null, { status: 404 })
+  if (isE2eRuntimeEnabled()) {
+    await resetE2eDatabase()
+    resetE2eAssetSources()
+    resetE2ePublicAssets()
+    resetE2eRuntimeCounters()
+  }
+  const response = NextResponse.json({ data: { reset: isE2eRuntimeEnabled() } })
   response.cookies.delete(E2E_SESSION_COOKIE)
   return response
 }

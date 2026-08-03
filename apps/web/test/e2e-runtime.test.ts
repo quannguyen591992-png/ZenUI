@@ -4,6 +4,9 @@ import {
   createE2eSessionToken,
   E2E_IDENTITIES,
   isE2eRuntimeEnabled,
+  isGuardedIdentityRuntimeEnabled,
+  isLocalAuthRuntimeEnabled,
+  resolveRuntimeMode,
   verifyE2eSessionToken,
 } from '../lib/server/e2e-runtime'
 
@@ -12,6 +15,25 @@ describe('guarded E2E runtime', () => {
     expect(isE2eRuntimeEnabled({ NODE_ENV: 'production', ZENUI_E2E_ENABLED: 'true' })).toBe(false)
     expect(isE2eRuntimeEnabled({ NODE_ENV: 'test', ZENUI_E2E_ENABLED: 'false' })).toBe(false)
     expect(isE2eRuntimeEnabled({ NODE_ENV: 'test', ZENUI_E2E_ENABLED: 'true' })).toBe(true)
+  })
+
+  it('separates guarded local auth from deterministic E2E infrastructure', () => {
+    expect(resolveRuntimeMode({ NODE_ENV: 'development', ZENUI_LOCAL_AUTH_ENABLED: 'true' })).toBe('local')
+    expect(resolveRuntimeMode({ NODE_ENV: 'test', ZENUI_E2E_ENABLED: 'true' })).toBe('e2e')
+    expect(resolveRuntimeMode({ NODE_ENV: 'production', ZENUI_LOCAL_AUTH_ENABLED: 'true' })).toBe('production')
+    expect(isLocalAuthRuntimeEnabled({ NODE_ENV: 'development', ZENUI_LOCAL_AUTH_ENABLED: 'true' })).toBe(true)
+    expect(isLocalAuthRuntimeEnabled({ NODE_ENV: 'production', ZENUI_LOCAL_AUTH_ENABLED: 'true' })).toBe(false)
+    expect(isGuardedIdentityRuntimeEnabled({ NODE_ENV: 'development', ZENUI_LOCAL_AUTH_ENABLED: 'true' })).toBe(true)
+    expect(isGuardedIdentityRuntimeEnabled({ NODE_ENV: 'test', ZENUI_E2E_ENABLED: 'true' })).toBe(true)
+    expect(isGuardedIdentityRuntimeEnabled({ NODE_ENV: 'production', ZENUI_LOCAL_AUTH_ENABLED: 'true' })).toBe(false)
+  })
+
+  it('rejects ambiguous non-production runtime configuration', () => {
+    expect(() => resolveRuntimeMode({
+      NODE_ENV: 'development',
+      ZENUI_E2E_ENABLED: 'true',
+      ZENUI_LOCAL_AUTH_ENABLED: 'true',
+    })).toThrow('runtime_mode_conflict')
   })
 
   it('signs allowlisted identities and rejects forged or expired tokens', () => {
