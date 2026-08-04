@@ -22,7 +22,7 @@ ZenUI local-live mode runs the product against local PostgreSQL, Redis/BullMQ an
 - Worker health: `http://127.0.0.1:9464/health/ready`
 - MinIO console: `http://127.0.0.1:59001`
 
-The root ignored `.env` must point to topology ports `55432` (PostgreSQL), `56379` (Redis) and `59000` (MinIO API). Real secrets remain in `.env` and must not be copied into this document.
+The root ignored `.env` must point to topology ports `55432` (PostgreSQL), `46379` (Redis) and `59000` (MinIO API). Real secrets remain in `.env` and must not be copied into this document.
 
 ## Start
 

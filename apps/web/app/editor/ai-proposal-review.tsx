@@ -391,25 +391,30 @@ export function ContextualAi({
     : ['Ngắn gọn hơn', 'Cao cấp hơn', 'Cải thiện hành động chính']
   if (!proposal) {
     return (
-      <section className="contextual-ai" aria-labelledby="contextual-ai-heading">
-        <h2 id="contextual-ai-heading">Cùng thiết kế</h2>
-        <p>Đang chỉnh: <strong>{scopeLabel}</strong></p>
-        <label>
-          {mediaIntent ? 'Bạn muốn hình ảnh mới thể hiện điều gì?' : 'Bạn muốn cải thiện điều gì?'}
+      <section className="contextual-ai-pro" aria-labelledby="contextual-ai-heading">
+        <h2 id="contextual-ai-heading" className="ai-heading">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#ai-gradient)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><defs><linearGradient id="ai-gradient" x1="0%" y1="0%" x2="100%" y2="100%"><stop stopColor="#4f46e5" offset="0%"/><stop stopColor="#a855f7" offset="100%"/></linearGradient></defs><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+          Trợ lý thiết kế AI
+        </h2>
+        <p className="ai-scope">Đang chỉnh: <strong>{scopeLabel}</strong></p>
+        <div className="ai-command-bar">
           <textarea
             aria-label="Bạn muốn cải thiện điều gì?"
-            placeholder={mediaIntent ? 'Ví dụ: Đổi hình cho giống nội dung trang hơn' : undefined}
+            placeholder={mediaIntent ? 'Ví dụ: Đổi hình cho giống nội dung trang hơn' : 'Bạn muốn cải thiện điều gì?'}
             value={prompt}
             maxLength={4000}
+            rows={2}
             onChange={event => setPrompt(event.target.value)}
           />
-        </label>
+          <button className="ai-submit-btn" type="button" aria-label="Đề xuất thay đổi" disabled={!canSubmit || prompt.trim().length < 3} onClick={() => void create('request', prompt.trim())}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 7.6 7.6 2.4-7.6 2.4L12 22l-2.4-7.6-7.6-2.4 7.6-2.4L12 2z"/></svg>
+          </button>
+        </div>
         <div className="contextual-ai-suggestions" aria-label="Gợi ý AI">
           {suggestions.map(suggestion => <button key={suggestion} type="button" onClick={() => setPrompt(suggestion)}>{suggestion}</button>)}
         </div>
-        <button type="button" disabled={!canSubmit || prompt.trim().length < 3} onClick={() => void create('request', prompt.trim())}>Đề xuất thay đổi</button>
-        <small>Không có thay đổi nào được áp dụng trước khi bạn kiểm tra.</small>
-        {error && <p role="alert">{error}</p>}
+        <small className="ai-disclaimer">Không có thay đổi nào được áp dụng trước khi bạn kiểm tra.</small>
+        {error && <p role="alert" className="ai-error">{error}</p>}
       </section>
     )
   }

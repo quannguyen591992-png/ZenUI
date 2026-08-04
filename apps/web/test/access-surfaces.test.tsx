@@ -27,9 +27,9 @@ describe('public access surfaces', () => {
     render(<HomePage />)
 
     expect(screen.getByRole('heading', { name: /Từ ý tưởng đến website/i })).toBeVisible()
-    expect(screen.getByRole('navigation', { name: 'Điều hướng chính' }).querySelector('a[href="/login"]')).toHaveTextContent('Đăng nhập')
+    expect(screen.getByRole('link', { name: 'Đăng nhập' })).toHaveAttribute('href', '/login')
     expect(screen.getByRole('link', { name: 'Mở bảng điều khiển' })).toHaveAttribute('href', '/dashboard')
-    expect(screen.getAllByRole('link', { name: 'Yêu cầu quyền truy cập beta' })[0]).toHaveAttribute('href', '/beta')
+    expect(screen.getAllByRole('link', { name: 'Yêu cầu quyền Beta' })[0]).toHaveAttribute('href', '/beta')
     expect(screen.queryByText('Đang tải dự án...')).not.toBeInTheDocument()
     expect(fetchMock).not.toHaveBeenCalled()
   })

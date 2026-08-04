@@ -35,7 +35,7 @@ describe('ZenUI editor', () => {
     render(serverEditor(api()))
 
     expect(screen.queryByRole('heading', { name: 'Trợ lý AI' })).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Cùng thiết kế' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Trợ lý thiết kế AI' })).toBeVisible()
   })
 
   it('renders the Advanced sidebar tabs and selects a canvas node directly', async () => {
@@ -50,6 +50,18 @@ describe('ZenUI editor', () => {
     await user.click(within(canvas).getByRole('heading', { name: 'Biến ý tưởng thành website của riêng bạn' }))
 
     expect(screen.getByRole('treeitem', { name: /^Tiêu đề: Biến ý tưởng thành website của riêng bạn/ })).toHaveAttribute('aria-selected', 'true')
+    const selectedNode = canvas.querySelector<HTMLElement>('[data-node-id="heading-1"]')
+    const toolbar = selectedNode?.querySelector<HTMLElement>(':scope > .node-actions')
+    expect(toolbar).not.toBeNull()
+    const controls = within(toolbar!).getAllByRole('button')
+    expect(controls.map(control => control.getAttribute('aria-label'))).toEqual([
+      'Chọn Biến ý tưởng thành website của riêng bạn',
+      'Kéo Biến ý tưởng thành website của riêng bạn',
+      'Di chuyển Biến ý tưởng thành website của riêng bạn lên',
+      'Di chuyển Biến ý tưởng thành website của riêng bạn xuống',
+      'Nhân bản Biến ý tưởng thành website của riêng bạn',
+      'Xóa Biến ý tưởng thành website của riêng bạn',
+    ])
     expect(screen.getByRole('complementary', { name: 'Thuộc tính' })).toHaveTextContent('Tiêu đề')
     expect(screen.getByLabelText('Nội dung')).toHaveValue('Biến ý tưởng thành website của riêng bạn')
     expect(screen.getByRole('button', { name: 'Hoàn tác' })).toBeDisabled()
@@ -70,13 +82,14 @@ describe('ZenUI editor', () => {
     const text = screen.getByLabelText('Nội dung')
     await user.clear(text)
     await user.type(text, 'Phase 1 heading')
-    fireEvent.change(screen.getByLabelText('Màu chữ'), { target: { value: '#112233' } })
+    fireEvent.change(screen.getByLabelText('Tùy chỉnh màu chữ'), { target: { value: '#112233' } })
 
-    expect(screen.getByText('Phase 1 heading')).toHaveStyle({ color: '#112233' })
+    const canvas = screen.getByLabelText('Khung thiết kế')
+    expect(within(canvas).getByRole('heading', { name: 'Phase 1 heading' })).toHaveStyle({ color: '#112233' })
     await user.click(screen.getByRole('button', { name: 'Hoàn tác' }))
-    expect(screen.getByText('Phase 1 heading')).not.toHaveStyle({ color: '#112233' })
+    expect(within(canvas).getByRole('heading', { name: 'Phase 1 heading' })).not.toHaveStyle({ color: '#112233' })
     await user.click(screen.getByRole('button', { name: 'Làm lại' }))
-    expect(screen.getByText('Phase 1 heading')).toHaveStyle({ color: '#112233' })
+    expect(within(canvas).getByRole('heading', { name: 'Phase 1 heading' })).toHaveStyle({ color: '#112233' })
   })
 
   it('rejects an invalid add with an accessible explanation', async () => {
@@ -154,6 +167,21 @@ describe('ZenUI editor', () => {
     expect(screen.getByLabelText('Nội dung')).toBeVisible()
     await user.keyboard('{ArrowDown}')
     expect(screen.getByRole('treeitem', { name: /^Đoạn văn: Bắt đầu với một trang có cấu trúc rõ ràng/ })).toHaveFocus()
+  })
+
+  it('duplicates and deletes the exact Advanced Canvas node through history', async () => {
+    const user = userEvent.setup()
+    render(<EditorApp />)
+
+    await user.click(screen.getByRole('treeitem', { name: /^Tiêu đề: Biến ý tưởng thành website của riêng bạn/ }))
+    await user.click(screen.getByRole('button', { name: 'Nhân bản Biến ý tưởng thành website của riêng bạn' }))
+    expect(screen.getAllByRole('treeitem', { name: /^Tiêu đề: Biến ý tưởng thành website của riêng bạn/ })).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Hoàn tác' })).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: 'Xóa Biến ý tưởng thành website của riêng bạn' }))
+    expect(screen.getByRole('dialog', { name: 'Xóa thành phần?' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Xác nhận xóa thành phần' }))
+    expect(screen.getAllByRole('treeitem', { name: /^Tiêu đề: Biến ý tưởng thành website của riêng bạn/ })).toHaveLength(1)
   })
 
   it('keeps selection and drag controls as separate interactive elements', () => {
@@ -254,7 +282,7 @@ describe('ZenUI editor', () => {
     render(<EditorApp />)
 
     await user.click(screen.getByRole('treeitem', { name: /^Tiêu đề: Biến ý tưởng thành website của riêng bạn/ }))
-    fireEvent.change(screen.getByLabelText('Màu chữ'), { target: { value: '#112233' } })
+    fireEvent.change(screen.getByLabelText('Tùy chỉnh màu chữ'), { target: { value: '#112233' } })
     const canvas = screen.getByLabelText('Khung thiết kế')
     expect(within(canvas).getByRole('heading', { name: 'Biến ý tưởng thành website của riêng bạn' })).toHaveStyle({ color: '#112233' })
 
@@ -300,7 +328,7 @@ describe('ZenUI editor', () => {
     render(serverEditor(api({ saveCommands })))
 
     await user.click(screen.getByRole('treeitem', { name: /^Tiêu đề: Build your next product/ }))
-    fireEvent.change(screen.getByLabelText('Màu chữ'), { target: { value: '#112233' } })
+    fireEvent.change(screen.getByLabelText('Tùy chỉnh màu chữ'), { target: { value: '#112233' } })
 
     expect(await screen.findByText('Đã lưu')).toBeVisible()
     expect(saveCommands).toHaveBeenCalledTimes(1)
@@ -314,7 +342,7 @@ describe('ZenUI editor', () => {
     })))
 
     await userEvent.setup().click(screen.getByRole('treeitem', { name: /^Tiêu đề: Build your next product/ }))
-    fireEvent.change(screen.getByLabelText('Màu chữ'), { target: { value: '#112233' } })
+    fireEvent.change(screen.getByLabelText('Tùy chỉnh màu chữ'), { target: { value: '#112233' } })
 
     expect(await screen.findByText('Đang ngoại tuyến: bản khôi phục cục bộ vẫn được giữ')).toBeVisible()
     expect(localStorage.getItem(`zenui:recovery:${projectId}`)).not.toBeNull()

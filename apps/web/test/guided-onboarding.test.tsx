@@ -100,7 +100,7 @@ describe('production Guided Brief and Design Direction Gallery', () => {
     await screen.findByRole('heading', { name: 'Hãy cho chúng tôi biết website bạn muốn tạo' })
 
     await user.type(screen.getByLabelText('Mô tả doanh nghiệp hoặc ý tưởng'), 'NovaFlow giúp nhóm sản phẩm nhỏ lên kế hoạch ra mắt. Mục tiêu là nhận lịch tư vấn. Hành động chính: Đặt lịch tư vấn.')
-    await user.click(screen.getByRole('button', { name: 'Dùng mô tả của tôi' }))
+    await user.click(screen.getByRole('button', { name: 'Tạo tự động' }))
     expect(screen.getByLabelText('Bạn cung cấp sản phẩm hoặc dịch vụ gì?')).toHaveValue('NovaFlow giúp nhóm sản phẩm nhỏ lên kế hoạch ra mắt')
 
     await user.clear(screen.getByLabelText('Bạn cung cấp sản phẩm hoặc dịch vụ gì?'))

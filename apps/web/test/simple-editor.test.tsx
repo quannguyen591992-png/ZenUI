@@ -266,8 +266,39 @@ describe('Stage 6 section-first editor', () => {
     expect(story).toHaveTextContent('Mời hành động')
     expect(story).toHaveTextContent('Start today')
     expect(screen.queryByRole('heading', { name: 'Thành phần' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Viết lại' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Viết lại' })).toBeNull()
     expect(screen.getByText(/Đang chỉnh:/).closest('p')).toHaveTextContent('Đang chỉnh: Phần Features')
+  })
+
+  it('keeps section actions in the blue toolbar attached to the selected Canvas section', async () => {
+    const user = userEvent.setup()
+    renderSimple()
+
+    await user.click(await screen.findByRole('button', { name: 'Chọn Start today — Mời hành động' }))
+
+    const selectedSection = screen.getByLabelText('Khung thiết kế').querySelector<HTMLElement>('[data-node-id="cta-section"]')
+    expect(selectedSection).not.toBeNull()
+    const toolbar = selectedSection!.querySelector<HTMLElement>('.node-actions')
+    expect(toolbar).not.toBeNull()
+    expect(within(toolbar!).queryByRole('button', { name: 'Viết lại' })).toBeNull()
+    expect(within(toolbar!).queryByRole('button', { name: 'Thử bố cục khác' })).toBeNull()
+    expect(within(toolbar!).queryByRole('button', { name: 'Ẩn section' })).toBeNull()
+    const controls = within(toolbar!).getAllByRole('button')
+    expect(controls.map(control => control.getAttribute('aria-label'))).toEqual([
+      'Chọn Start today',
+      'Kéo Start today',
+      'Di chuyển Start today lên',
+      'Di chuyển Start today xuống',
+      'Nhân bản Start today',
+      'Xóa Start today',
+    ])
+    expect(within(toolbar!).getByRole('button', { name: 'Kéo Start today' })).toBeEnabled()
+    expect(within(toolbar!).getByRole('button', { name: 'Di chuyển Start today lên' })).toBeEnabled()
+    expect(within(toolbar!).getByRole('button', { name: 'Di chuyển Start today xuống' })).toBeDisabled()
+    expect(within(toolbar!).getByRole('button', { name: 'Nhân bản Start today' })).toBeEnabled()
+    expect(within(toolbar!).getByRole('button', { name: 'Xóa Start today' })).toBeEnabled()
+    expect(within(toolbar!).getAllByText('Start today')).toHaveLength(1)
+    expect(screen.queryByLabelText('Thao tác section')).toBeNull()
   })
 
   it('selects and edits a Canvas component directly in Simple mode without depending on AI', async () => {
@@ -279,6 +310,18 @@ describe('Stage 6 section-first editor', () => {
 
     const canvas = screen.getByLabelText('Khung thiết kế')
     await user.click(within(canvas).getByRole('heading', { name: 'Build your next product' }))
+
+    const selectedHeading = canvas.querySelector<HTMLElement>('[data-node-id="heading-1"]')
+    const toolbar = selectedHeading?.querySelector<HTMLElement>(':scope > .node-actions')
+    expect(toolbar).not.toBeNull()
+    expect(within(toolbar!).getAllByRole('button').map(button => button.getAttribute('aria-label'))).toEqual([
+      'Chọn Build your next product',
+      'Kéo Build your next product',
+      'Di chuyển Build your next product lên',
+      'Di chuyển Build your next product xuống',
+      'Nhân bản Build your next product',
+      'Xóa Build your next product',
+    ])
 
     const manualEditor = screen.getByRole('region', { name: 'Chỉnh sửa trực tiếp' })
     expect(within(manualEditor).getByRole('heading', { name: 'Thiết kế' })).toBeVisible()
@@ -326,7 +369,7 @@ describe('Stage 6 section-first editor', () => {
       }),
     })
 
-    await user.click(await screen.findByRole('button', { name: 'Viết lại' }))
+    await user.type(await screen.findByLabelText('Bạn muốn cải thiện điều gì?'), 'Viết lại phần này ngắn gọn hơn')
     await user.click(screen.getByRole('button', { name: 'Đề xuất thay đổi' }))
     expect(await screen.findByText(/Dịch vụ AI tạm thời chưa sẵn sàng/)).toBeVisible()
 
@@ -584,7 +627,8 @@ describe('Stage 6 section-first editor', () => {
       api={api({ saveCommands })}
     />)
 
-    expect(await screen.findByRole('heading', { name: 'Trang' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Quản lý trang' }))
+    expect(await screen.findByRole('heading', { name: 'Quản lý Trang' })).toBeVisible()
     await user.type(screen.getByLabelText('Tên trang mới'), 'About')
     await user.type(screen.getByLabelText('Đường dẫn trang mới'), 'About Us')
     await user.click(screen.getByRole('button', { name: 'Thêm trang' }))
@@ -619,6 +663,7 @@ describe('Stage 6 section-first editor', () => {
       api={api({ saveCommands })}
     />)
 
+    await user.click(screen.getByRole('button', { name: 'Quản lý trang' }))
     await user.clear(await screen.findByLabelText('Nhãn điều hướng About'))
     await user.type(screen.getByLabelText('Nhãn điều hướng About'), 'Về chúng tôi')
     await user.click(screen.getByRole('button', { name: 'Lưu nhãn About' }))
@@ -650,7 +695,7 @@ describe('Stage 6 section-first editor', () => {
     const user = userEvent.setup()
     renderSimple({ api: api({ saveCommands }), proposalApi: proposalApi({ accept }) })
 
-    await user.click(await screen.findByRole('button', { name: 'Viết lại' }))
+    await user.type(await screen.findByLabelText('Bạn muốn cải thiện điều gì?'), 'Viết lại phần này ngắn gọn hơn')
     await user.click(screen.getByRole('button', { name: 'Đề xuất thay đổi' }))
     expect(await screen.findByRole('heading', { name: 'Kiểm tra thay đổi được đề xuất' })).toBeVisible()
 
@@ -714,7 +759,7 @@ describe('Stage 6 section-first editor', () => {
     const user = userEvent.setup()
     renderSimple({ api: api({ saveCommands }), proposalApi: proposalApi({ discard, create }) })
 
-    await user.click(await screen.findByRole('button', { name: 'Viết lại' }))
+    await user.type(await screen.findByLabelText('Bạn muốn cải thiện điều gì?'), 'Viết lại phần này ngắn gọn hơn')
     await user.click(screen.getByRole('button', { name: 'Đề xuất thay đổi' }))
     await screen.findByRole('heading', { name: 'Kiểm tra thay đổi được đề xuất' })
     await user.click(screen.getByRole('button', { name: 'Tinh chỉnh' }))
@@ -756,7 +801,7 @@ describe('Stage 6 section-first editor', () => {
     expect(saveCommands).not.toHaveBeenCalled()
   })
 
-  it('reorders, duplicates, hides, shows and replaces a section through autosaved commands', async () => {
+  it('reorders and duplicates a section through autosaved commands', async () => {
     const saveCommands = vi.fn<EditorApi['saveCommands']>((_projectId, _workspaceId, expectedVersion) => (
       Promise.resolve({ accepted: true, version: expectedVersion + 1 })
     ))
@@ -764,21 +809,14 @@ describe('Stage 6 section-first editor', () => {
     renderSimple({ api: api({ saveCommands }) })
 
     await user.click(await screen.findByRole('button', { name: 'Chọn Start today — Mời hành động' }))
-    await user.click(screen.getByRole('button', { name: 'Di chuyển section lên' }))
+    await user.click(screen.getByRole('button', { name: 'Di chuyển Start today lên' }))
     await waitFor(() => expect(saveCommands).toHaveBeenCalledTimes(1))
 
-    await user.click(screen.getByRole('button', { name: 'Nhân bản section' }))
+    await user.click(screen.getByRole('button', { name: 'Nhân bản Start today' }))
     await waitFor(() => expect(saveCommands).toHaveBeenCalledTimes(2))
     expect(screen.getAllByRole('button', { name: 'Chọn Start today — Mời hành động' })).toHaveLength(2)
-
-    await user.click(screen.getByRole('button', { name: 'Ẩn section' }))
-    await waitFor(() => expect(saveCommands).toHaveBeenCalledTimes(3))
-    expect(screen.getByText('Đã ẩn')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Hiện section' }))
-    await waitFor(() => expect(saveCommands).toHaveBeenCalledTimes(4))
-
-    await user.click(screen.getByRole('button', { name: 'Thử bố cục khác' }))
-    await waitFor(() => expect(saveCommands).toHaveBeenCalledTimes(5))
+    expect(screen.queryByRole('button', { name: 'Ẩn section' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Thử bố cục khác' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Hoàn tác' })).toBeEnabled()
   })
 
@@ -806,16 +844,17 @@ describe('Stage 6 section-first editor', () => {
     renderSimple()
 
     await user.click(await screen.findByRole('button', { name: 'Chọn Start today — Mời hành động' }))
-    await user.click(screen.getByRole('button', { name: 'Xóa section' }))
+    await user.click(screen.getByRole('button', { name: 'Xóa Start today' }))
     expect(screen.getByRole('dialog', { name: 'Xóa section?' })).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Xác nhận xóa section' }))
     expect(screen.queryByRole('button', { name: 'Chọn Start today — Mời hành động' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Xóa section' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Xóa Features' })).toBeDisabled()
 
     cleanup()
     renderSimple({ role: 'viewer' })
-    expect(await screen.findByRole('button', { name: 'Thử bố cục khác' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Nhân bản section' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Xóa section' })).toBeDisabled()
+    expect(await screen.findByRole('button', { name: 'Kéo Features' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Thử bố cục khác' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Nhân bản Features' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Xóa Features' })).toBeDisabled()
   })
 })

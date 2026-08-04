@@ -130,6 +130,40 @@ test('creates pages, edits navigation and switches active routes in Simple mode'
   expect(accessibility.violations.filter(item => ['serious', 'critical'].includes(item.impact ?? ''))).toEqual([])
 })
 
+test('keeps the Share popover above the editor canvas', async ({ page }) => {
+  const projectId = await createProject(page, 'Share overlay stacking')
+  await page.goto(`/projects/${projectId}`)
+
+  await page.getByRole('button', { name: 'Chia sẻ', exact: true }).click()
+  const shareDialog = page.getByRole('dialog', { name: 'Chia sẻ website' })
+  await expect(shareDialog).toBeVisible()
+
+  const stacking = await shareDialog.evaluate(dialog => {
+    const canvas = document.querySelector<HTMLElement>('.canvas-viewport > .canvas-node')
+    if (!canvas) throw new Error('Missing editor canvas surface')
+    const dialogBounds = dialog.getBoundingClientRect()
+    const canvasBounds = canvas.getBoundingClientRect()
+    const overlap = {
+      left: Math.max(dialogBounds.left, canvasBounds.left),
+      top: Math.max(dialogBounds.top, canvasBounds.top),
+      right: Math.min(dialogBounds.right, canvasBounds.right),
+      bottom: Math.min(dialogBounds.bottom, canvasBounds.bottom),
+    }
+    if (overlap.right <= overlap.left || overlap.bottom <= overlap.top) {
+      throw new Error('Share popover must overlap the canvas to verify stacking')
+    }
+    const target = document.elementFromPoint(
+      overlap.left + (overlap.right - overlap.left) / 2,
+      overlap.top + Math.min(24, (overlap.bottom - overlap.top) / 2),
+    )
+    return {
+      topElementBelongsToShareDialog: target !== null && dialog.contains(target),
+    }
+  })
+
+  expect(stacking.topElementBelongsToShareDialog).toBe(true)
+})
+
 test('edits top-level sections in Simple mode and preserves the Advanced editor', async ({ page }) => {
   const projectId = await createProject(page, 'Section-first flow')
   await page.goto(`/projects/${projectId}`)
@@ -137,14 +171,53 @@ test('edits top-level sections in Simple mode and preserves the Advanced editor'
   await expect(page.getByRole('heading', { name: 'Câu chuyện trang' })).toBeVisible()
   const section = page.getByRole('button', { name: /Chọn Nội dung — Giải thích giá trị/ })
   await section.click()
-  await page.getByRole('button', { name: 'Nhân bản section' }).click()
+
+  const selectedSection = page.locator('[data-node-id="section-1"]')
+  const selectedToolbar = selectedSection.locator(':scope > .node-actions')
+  await expect(selectedToolbar).toBeVisible()
+  await expect(selectedToolbar.getByRole('button')).toHaveCount(6)
+  expect(await selectedToolbar.getByRole('button').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label')))).toEqual([
+    'Chọn Nội dung',
+    'Kéo Nội dung',
+    'Di chuyển Nội dung lên',
+    'Di chuyển Nội dung xuống',
+    'Nhân bản Nội dung',
+    'Xóa Nội dung',
+  ])
+  await expect(selectedToolbar.getByRole('button', { name: 'Kéo Nội dung' })).toBeVisible()
+  await expect(selectedToolbar.getByRole('button', { name: 'Xóa Nội dung' })).toBeVisible()
+  await expect(selectedToolbar.getByText('Nội dung', { exact: true })).toHaveCount(1)
+  await expect(selectedToolbar.getByRole('button', { name: 'Viết lại' })).toHaveCount(0)
+  await expect(selectedToolbar.getByRole('button', { name: 'Thử bố cục khác' })).toHaveCount(0)
+  await expect(selectedToolbar.getByRole('button', { name: 'Ẩn section' })).toHaveCount(0)
+  await expect(page.locator('.section-actions')).toHaveCount(0)
+  const attachment = await selectedSection.evaluate(element => {
+    const toolbar = element.querySelector<HTMLElement>(':scope > .node-actions')
+    if (!toolbar) throw new Error('Missing selected section toolbar')
+    const visual = element.querySelector<HTMLElement>(':scope > .node-visual')
+    if (!visual) throw new Error('Missing selected section content')
+    const sectionBounds = element.getBoundingClientRect()
+    const toolbarBounds = toolbar.getBoundingClientRect()
+    const visualBounds = visual.getBoundingClientRect()
+    return {
+      distance: Math.abs(sectionBounds.top - toolbarBounds.top),
+      overlapsContent: toolbarBounds.bottom > visualBounds.top,
+      toolbarRight: toolbarBounds.right,
+      viewportRight: document.documentElement.clientWidth,
+    }
+  })
+  expect(attachment.distance).toBeLessThanOrEqual(4)
+  expect(attachment.overlapsContent).toBe(false)
+  expect(attachment.toolbarRight).toBeLessThanOrEqual(attachment.viewportRight)
+
+  await selectedToolbar.getByRole('button', { name: 'Nhân bản Nội dung' }).click()
   await expect(page.getByRole('button', { name: 'Hoàn tác' })).toBeEnabled()
   await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
 
-  await page.getByRole('button', { name: 'Ẩn section' }).click()
-  await expect(page.getByText('Đã ẩn', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Hiện section' }).click()
-  await page.getByRole('button', { name: 'Thử bố cục khác' }).click()
+  await page.getByRole('button', { name: 'Xóa Nội dung' }).click()
+  await expect(page.getByRole('dialog', { name: 'Xóa section?' })).toBeVisible()
+  await page.getByRole('button', { name: 'Xác nhận xóa section' }).click()
+  await expect(page.getByRole('button', { name: /Chọn Nội dung — Giải thích giá trị/ })).toHaveCount(1)
   await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
 
   await page.reload()
@@ -155,6 +228,15 @@ test('edits top-level sections in Simple mode and preserves the Advanced editor'
   await expect(page.getByRole('heading', { name: 'Câu chuyện trang' })).toBeVisible()
 
   await page.setViewportSize({ width: 390, height: 844 })
+  const mobileToolbar = page.locator('.node-actions.has-selection-actions:visible')
+  await expect(mobileToolbar).toHaveCount(1)
+  const mobileLayout = await mobileToolbar.evaluate(toolbar => ({
+    toolbarRight: toolbar.getBoundingClientRect().right,
+    viewportRight: document.documentElement.clientWidth,
+    documentWidth: document.documentElement.scrollWidth,
+  }))
+  expect(mobileLayout.toolbarRight).toBeLessThanOrEqual(mobileLayout.viewportRight)
+  expect(mobileLayout.documentWidth).toBeLessThanOrEqual(mobileLayout.viewportRight)
   const storyButton = page.getByRole('button', { name: 'Câu chuyện' })
   await storyButton.click()
   await expect(page.getByRole('dialog', { name: 'Câu chuyện trang' })).toBeVisible()
@@ -202,7 +284,7 @@ test('reviews, discards and accepts contextual AI proposals without silent mutat
   await page.getByRole('button', { name: 'Bỏ đề xuất' }).click()
   await expect(page.getByRole('button', { name: 'Đề xuất thay đổi' })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Viết lại' }).click()
+  await page.getByLabel('Bạn muốn cải thiện điều gì?').fill('Viết lại phần này ngắn gọn hơn')
   await page.getByRole('button', { name: 'Đề xuất thay đổi' }).click()
   await expect(page.getByRole('heading', { name: 'Kiểm tra thay đổi được đề xuất' })).toBeVisible({ timeout: 15_000 })
   await page.getByRole('button', { name: 'Chấp nhận thay đổi' }).click()
@@ -220,6 +302,17 @@ test('selects and edits directly on the Simple Canvas without relying on AI', as
 
   const canvas = page.getByLabel('Khung thiết kế')
   await canvas.getByRole('heading', { name: 'Biến ý tưởng thành website của riêng bạn' }).click()
+  const selectedHeading = canvas.locator('[data-node-id="heading-1"]')
+  const headingToolbar = selectedHeading.locator(':scope > .node-actions')
+  await expect(headingToolbar).toBeVisible()
+  expect(await headingToolbar.getByRole('button').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label')))).toEqual([
+    'Chọn Biến ý tưởng thành website của riêng bạn',
+    'Kéo Biến ý tưởng thành website của riêng bạn',
+    'Di chuyển Biến ý tưởng thành website của riêng bạn lên',
+    'Di chuyển Biến ý tưởng thành website của riêng bạn xuống',
+    'Nhân bản Biến ý tưởng thành website của riêng bạn',
+    'Xóa Biến ý tưởng thành website của riêng bạn',
+  ])
   const manualEditor = page.getByRole('region', { name: 'Chỉnh sửa trực tiếp' })
   const contentInput = manualEditor.getByRole('textbox', { name: 'Nội dung' })
   await expect(contentInput).toHaveValue('Biến ý tưởng thành website của riêng bạn')
@@ -262,6 +355,40 @@ test('selects and edits directly on the Advanced Canvas with a readable Layers p
   const contentInput = page.getByRole('textbox', { name: 'Nội dung', exact: true })
   await expect(contentInput).toHaveValue('Biến ý tưởng thành website của riêng bạn')
   await expect(page.getByRole('button', { name: 'Hoàn tác' })).toBeDisabled()
+
+  const selectedHeading = canvas.locator('[data-node-id="heading-1"]')
+  const advancedToolbar = selectedHeading.locator(':scope > .node-actions')
+  await expect(advancedToolbar).toBeVisible()
+  expect(await advancedToolbar.getByRole('button').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label')))).toEqual([
+    'Chọn Biến ý tưởng thành website của riêng bạn',
+    'Kéo Biến ý tưởng thành website của riêng bạn',
+    'Di chuyển Biến ý tưởng thành website của riêng bạn lên',
+    'Di chuyển Biến ý tưởng thành website của riêng bạn xuống',
+    'Nhân bản Biến ý tưởng thành website của riêng bạn',
+    'Xóa Biến ý tưởng thành website của riêng bạn',
+  ])
+  const advancedAttachment = await selectedHeading.evaluate(element => {
+    const toolbar = element.querySelector<HTMLElement>(':scope > .node-actions')
+    const visual = element.querySelector<HTMLElement>(':scope > .node-visual')
+    if (!toolbar || !visual) throw new Error('Missing Advanced selection toolbar')
+    return {
+      overlapsContent: toolbar.getBoundingClientRect().bottom > visual.getBoundingClientRect().top,
+      documentWidth: document.documentElement.scrollWidth,
+      viewportWidth: document.documentElement.clientWidth,
+    }
+  })
+  expect(advancedAttachment.overlapsContent).toBe(false)
+  expect(advancedAttachment.documentWidth).toBeLessThanOrEqual(advancedAttachment.viewportWidth)
+
+  await advancedToolbar.getByRole('button', { name: 'Nhân bản Biến ý tưởng thành website của riêng bạn' }).click()
+  await expect(page.getByRole('treeitem', { name: /^Tiêu đề: Biến ý tưởng thành website của riêng bạn/ })).toHaveCount(2)
+  await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
+  await page.getByRole('button', { name: 'Xóa Biến ý tưởng thành website của riêng bạn' }).click()
+  await expect(page.getByRole('dialog', { name: 'Xóa thành phần?' })).toBeVisible()
+  await page.getByRole('button', { name: 'Xác nhận xóa thành phần' }).click()
+  await expect(page.getByRole('treeitem', { name: /^Tiêu đề: Biến ý tưởng thành website của riêng bạn/ })).toHaveCount(1)
+  await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
+  await page.getByRole('treeitem', { name: /^Tiêu đề: Biến ý tưởng thành website của riêng bạn/ }).click()
 
   const layerLayout = await page.evaluate(() => {
     const sidebar = document.querySelector<HTMLElement>('.advanced-sidebar')

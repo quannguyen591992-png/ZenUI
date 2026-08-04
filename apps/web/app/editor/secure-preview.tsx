@@ -61,7 +61,13 @@ export function SecurePreview({
   }, [document, open, route, selectedNodeId, viewport])
 
   useEffect(() => {
-    if (!open) ready.current = false
+    if (open) {
+      globalThis.document.body.classList.add('is-preview-open')
+    } else {
+      ready.current = false
+      globalThis.document.body.classList.remove('is-preview-open')
+    }
+    return () => globalThis.document.body.classList.remove('is-preview-open')
   }, [open])
 
   useEffect(() => {

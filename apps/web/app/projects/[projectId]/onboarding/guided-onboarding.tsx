@@ -245,28 +245,35 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
   if (loading) return <main className="guided-onboarding-state" role="status">Đang tải bản mô tả website...</main>
 
   if (screen === 'brief') {
-    const ready = ['offer', 'audience', 'primaryGoal', 'cta', 'tone'].filter(field => brief[field as keyof WebsiteBrief]).length + (brief.brandDetails ? 1 : 0) + (brief.mustHaveSections.length > 0 ? 1 : 0)
     return (
-      <main className="guided-onboarding guided-brief-shell" aria-labelledby="guided-brief-heading">
-        <header className="guided-header"><strong>ZenUI</strong><span>Bước 1/3</span></header>
+      <main className="guided-onboarding guided-onboarding-pro guided-brief-shell" aria-labelledby="guided-brief-heading">
+        <header className="guided-header">
+          <div className="logo-badge">ZenUI</div>
+          <div className="step-badge">Bước 1/3</div>
+        </header>
         <section className="guided-intro">
           <h1 id="guided-brief-heading">Hãy cho chúng tôi biết website bạn muốn tạo</h1>
           <p>Bắt đầu bằng một câu. Bạn có thể xem lại và sửa mọi chi tiết trước khi website được tạo.</p>
         </section>
-        <section className="guided-description-card">
-          <label>
-            Mô tả doanh nghiệp hoặc ý tưởng
-            <textarea aria-label="Mô tả doanh nghiệp hoặc ý tưởng" value={brief.description} maxLength={2000} rows={4} onChange={event => update('description', event.target.value)} />
-          </label>
-          <button type="button" onClick={useDescription} disabled={!brief.description.trim()}>Dùng mô tả của tôi</button>
+        <section className="guided-description-card pro-card">
+          <div className="ai-input-wrapper">
+            <label htmlFor="ai-desc">Mô tả doanh nghiệp hoặc ý tưởng</label>
+            <div className="textarea-container">
+              <textarea id="ai-desc" aria-label="Mô tả doanh nghiệp hoặc ý tưởng" placeholder="Ví dụ: Một trang web bán cà phê rang xay tự nhiên, có phong cách vintage..." value={brief.description} maxLength={2000} rows={4} onChange={event => update('description', event.target.value)} />
+              <button className="btn-ai-generate" type="button" onClick={useDescription} disabled={!brief.description.trim()}>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l2.4 5.6L20 10l-5.6 2.4L12 18l-2.4-5.6L4 10l5.6-2.4L12 2z"/></svg>
+                Tạo tự động
+              </button>
+            </div>
+          </div>
         </section>
-        <form className="guided-brief-card" onSubmit={(event: FormEvent) => { event.preventDefault(); void start(0, false) }}>
-          <div className="guided-section-heading"><h2>Bản mô tả website</h2><span>{ready}/7 chi tiết đã sẵn sàng</span></div>
+        <form className="guided-brief-card pro-card" onSubmit={(event: FormEvent) => { event.preventDefault(); void start(0, false) }}>
+          <div className="guided-section-heading"><h2>Bản mô tả website</h2></div>
           {Object.keys(errors).length > 0 && <p className="guided-form-summary" role="alert">Hãy kiểm tra các chi tiết còn thiếu. Thông tin bạn đã nhập vẫn được giữ.</p>}
           <div className="guided-brief-grid">
             {(Object.keys(fieldLabels) as (keyof typeof fieldLabels)[]).map(field => (
               <label key={field}>
-                {fieldLabels[field]}
+                <span>{fieldLabels[field]} {field !== 'brandDetails' && <span className="required-star" style={{color: '#ef4444'}}>*</span>}</span>
                 <input
                   aria-label={fieldLabels[field]}
                   value={brief[field]}
@@ -280,9 +287,23 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
           </div>
           <fieldset className="guided-section-choices">
             <legend>Website cần có những phần nào?</legend>
-            {WEBSITE_BRIEF_SECTION_IDS.map(section => (
-              <label key={section}><input type="checkbox" checked={brief.mustHaveSections.includes(section)} onChange={() => toggleSection(section)} />{sectionLabels[section]}</label>
-            ))}
+            <div className="guided-chips">
+              {WEBSITE_BRIEF_SECTION_IDS.map(section => {
+                const isChecked = brief.mustHaveSections.includes(section)
+                return (
+                  <button
+                    key={section}
+                    type="button"
+                    className={`chip ${isChecked ? 'active' : ''}`}
+                    onClick={() => toggleSection(section)}
+                    aria-pressed={isChecked}
+                  >
+                    {isChecked && <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"></polyline></svg>}
+                    {sectionLabels[section]}
+                  </button>
+                )
+              })}
+            </div>
             {errors.mustHaveSections && <span className="guided-field-error">{errors.mustHaveSections}</span>}
           </fieldset>
           <div className="guided-primary-actions"><button className="guided-primary-button" type="submit">Tạo 3 hướng thiết kế</button></div>
@@ -292,29 +313,37 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
   }
 
   return (
-    <main className="guided-onboarding guided-gallery-shell" aria-labelledby="guided-gallery-heading">
-      <header className="guided-header"><strong>ZenUI</strong><button type="button" onClick={() => setScreen('brief')}>Điều chỉnh bản mô tả</button></header>
+    <main className="guided-onboarding guided-onboarding-pro guided-gallery-shell" aria-labelledby="guided-gallery-heading">
+      <header className="guided-header">
+        <div className="logo-badge">ZenUI</div>
+        <div className="header-actions" style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <div className="step-badge">Bước 2/3</div>
+          <button type="button" className="btn-ghost-pro" onClick={() => setScreen('brief')}>Điều chỉnh bản mô tả</button>
+        </div>
+      </header>
       <section className="guided-intro">
-        <span>Bước 2/3</span>
         <h1 id="guided-gallery-heading">Chọn một hướng thiết kế</h1>
         <p>Cả ba hướng đều giữ nguyên đối tượng, mục tiêu, hành động chính và nội dung bắt buộc.</p>
       </section>
-      <div className="guided-gallery-toolbar">
-        <fieldset><legend>Thiết bị xem trước</legend>
-          <button type="button" aria-pressed={viewport === 'desktop'} onClick={() => setViewport('desktop')}>Máy tính</button>
-          <button type="button" aria-pressed={viewport === 'mobile'} onClick={() => setViewport('mobile')}>Điện thoại</button>
+      <div className="guided-gallery-toolbar" style={{ display: 'flex', justifyContent: 'center', marginBottom: '32px' }}>
+        <fieldset className="viewport-toggle">
+          <legend className="sr-only" style={{ display: 'none' }}>Thiết bị xem trước</legend>
+          <button type="button" className={`toggle-btn ${viewport === 'desktop' ? 'active' : ''}`} aria-pressed={viewport === 'desktop'} onClick={() => setViewport('desktop')}>Máy tính</button>
+          <button type="button" className={`toggle-btn ${viewport === 'mobile' ? 'active' : ''}`} aria-pressed={viewport === 'mobile'} onClick={() => setViewport('mobile')}>Điện thoại</button>
         </fieldset>
       </div>
       {(status === 'preparing' || directions.length === 0) && status !== 'failed' ? (
-        <div className="guided-preparation-panel" role="group" aria-label="Đang chuẩn bị hướng thiết kế">
+        <div className="guided-preparation-panel pro-card loading-card" role="group" aria-label="Đang chuẩn bị hướng thiết kế">
+          <div className="loading-spinner"></div>
           <section className="guided-direction-loading" role="status">Đang tạo ba hướng thiết kế từ bản mô tả...</section>
-          <button type="button" onClick={() => void cancel()}>Hủy chuẩn bị</button>
+          <button type="button" className="btn-ghost-pro" onClick={() => void cancel()}>Hủy chuẩn bị</button>
         </div>
       ) : (
         <section className="guided-direction-grid" aria-label="Các hướng thiết kế">
           {directions.map(direction => (
-            <article key={direction.id} className="guided-direction-card" data-testid="production-direction-card">
-              <span>{direction.character}</span><h2>{direction.name}</h2>
+            <article key={direction.id} className="guided-direction-card-pro" data-testid="production-direction-card">
+              <div className="card-badge">{direction.character}</div>
+              <h2>{direction.name}</h2>
               <div className="guided-direction-preview" aria-hidden="true" inert>
                 <DesignDocumentRenderer document={direction.document} viewport={viewport} assetOrigin={assetOrigin} compact ariaLabel={`Bản xem trước ${direction.name}`} />
               </div>
@@ -322,9 +351,9 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
                 <p className="guided-image-fallback">Chưa tìm được ảnh phù hợp — bạn có thể thêm ảnh của mình sau.</p>
               )}
               <p>{direction.rationale}</p>
-              <div className="guided-card-actions">
-                <button type="button" onClick={event => { previewOpener.current = event.currentTarget; setPreview(direction) }}>Xem lớn hơn</button>
-                <button type="button" className="guided-primary-button" disabled={status !== 'idle'} onClick={() => void choose(direction)}>Chọn hướng này</button>
+              <div className="guided-card-actions" style={{ marginTop: '20px', display: 'flex', gap: '12px' }}>
+                <button type="button" className="btn-ghost-pro" onClick={event => { previewOpener.current = event.currentTarget; setPreview(direction) }}>Xem lớn hơn</button>
+                <button type="button" className="guided-primary-button" style={{ padding: '10px 20px', fontSize: '14px' }} disabled={status !== 'idle'} onClick={() => void choose(direction)}>Chọn hướng này</button>
               </div>
             </article>
           ))}
@@ -338,13 +367,13 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
         </div>
       )}
       {directions.length > 0 && (
-        <footer className="guided-gallery-footer">
-          <button type="button" onClick={() => setScreen('brief')}>Điều chỉnh bản mô tả</button>
-          {!confirmReplace ? <button type="button" onClick={() => setConfirmReplace(true)}>Thử 3 hướng khác</button> : (
-            <div role="group" aria-label="Xác nhận thay hướng">
-              <span>Ba hướng hiện tại sẽ được thay sau khi bộ mới sẵn sàng.</span>
-              <button type="button" onClick={() => setConfirmReplace(false)}>Giữ các hướng hiện tại</button>
-              <button type="button" onClick={() => void start((run?.round ?? 0) + 1, true)}>Xác nhận thay 3 hướng</button>
+        <footer className="guided-gallery-footer-pro">
+          <button type="button" className="btn-ghost-pro" onClick={() => setScreen('brief')}>Điều chỉnh bản mô tả</button>
+          {!confirmReplace ? <button type="button" className="guided-primary-button" style={{ padding: '10px 20px', fontSize: '14px' }} onClick={() => setConfirmReplace(true)}>Thử 3 hướng khác</button> : (
+            <div role="group" aria-label="Xác nhận thay hướng" style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              <span style={{ fontSize: '14px', color: '#64748b' }}>Ba hướng hiện tại sẽ được thay sau khi bộ mới sẵn sàng.</span>
+              <button type="button" className="btn-ghost-pro" onClick={() => setConfirmReplace(false)}>Giữ các hướng hiện tại</button>
+              <button type="button" className="guided-primary-button" style={{ padding: '10px 20px', fontSize: '14px' }} onClick={() => void start((run?.round ?? 0) + 1, true)}>Xác nhận thay 3 hướng</button>
             </div>
           )}
         </footer>

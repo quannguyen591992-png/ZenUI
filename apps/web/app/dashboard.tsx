@@ -1,9 +1,12 @@
 'use client'
 
+import { parseDesignDocument, type DesignDocument } from '@zenui/design-schema'
 import Link from 'next/link'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 
 import { roleLabel } from '../lib/ui-copy'
+
+import { DesignDocumentRenderer } from './components/design-document-renderer'
 
 type Role = 'owner' | 'editor' | 'viewer'
 
@@ -49,6 +52,46 @@ async function readResponse<T>(response: Response): Promise<T> {
   return body.data
 }
 
+function ProjectThumbnail({ projectId, workspaceId }: { projectId: string; workspaceId: string }) {
+  const [doc, setDoc] = useState<DesignDocument | null>(null)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    let mounted = true
+    void (async () => {
+      try {
+        const response = await fetch(`/api/v1/projects/${projectId}?workspaceId=${workspaceId}`)
+        const project = await readResponse<{ document: unknown }>(response)
+        const document = parseDesignDocument(project.document)
+        if (!mounted) return
+        if (document.success) setDoc(document.data)
+        else setError(true)
+      } catch {
+        if (mounted) setError(true)
+      }
+    })()
+    return () => { mounted = false }
+  }, [projectId, workspaceId])
+
+  if (error) return (
+    <div className="thumbnail-fallback">
+      <span></span>
+    </div>
+  )
+
+  if (!doc) return (
+    <div className="thumbnail-loading">
+      <div className="thumbnail-spinner"></div>
+    </div>
+  )
+
+  return (
+    <div className="thumbnail-render-wrapper">
+      <DesignDocumentRenderer document={doc} viewport="desktop" compact={true} />
+    </div>
+  )
+}
+
 export function Dashboard({ localAuth = false, signOutAction }: DashboardProps = {}) {
   const [session, setSession] = useState<SessionContext | null>(null)
   const [projects, setProjects] = useState<ProjectSummary[]>([])
@@ -58,6 +101,12 @@ export function Dashboard({ localAuth = false, signOutAction }: DashboardProps =
   const [renameId, setRenameId] = useState<string | null>(null)
   const [renameName, setRenameName] = useState('')
   const [pending, setPending] = useState(false)
+
+  // New UI states
+  const [searchQuery, setSearchQuery] = useState('')
+  const [activeTab, setActiveTab] = useState<'all' | 'active' | 'archived'>('all')
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [activeDropdown, setActiveDropdown] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoadState('loading')
@@ -133,72 +182,225 @@ export function Dashboard({ localAuth = false, signOutAction }: DashboardProps =
     }
   }
 
-  if (loadState === 'loading') return <main className="dashboard-state" role="status">Đang tải dự án...</main>
+  // Click outside to close dropdown
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (!(e.target as Element).closest('.project-context-menu')) {
+        setActiveDropdown(null)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  if (loadState === 'loading') return <main className="dashboard-state dashboard-pro-layout" role="status"><div className="loader">Đang tải dự án...</div></main>
   if (loadState === 'error') {
     return (
-      <main className="dashboard-state">
-        <p role="alert">{error}</p>
-        {error === 'Vui lòng đăng nhập để tiếp tục.' ? (
-          <Link href="/login?callbackUrl=%2Fdashboard">Đăng nhập lại</Link>
-        ) : (
-          <button type="button" onClick={() => void load()}>Thử lại</button>
-        )}
+      <main className="dashboard-state dashboard-pro-layout">
+        <div className="error-card">
+          <p role="alert">{error}</p>
+          {error === 'Vui lòng đăng nhập để tiếp tục.' ? (
+            <Link href="/login?callbackUrl=%2Fdashboard" className="btn-primary">Đăng nhập lại</Link>
+          ) : (
+            <button type="button" className="btn-primary" onClick={() => void load()}>Thử lại</button>
+          )}
+        </div>
       </main>
     )
   }
 
   const canManage = session?.role === 'owner'
+
+  // Filter projects
+  const filteredProjects = projects.filter(p => {
+    const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase())
+    const matchesTab = activeTab === 'all' || p.status === activeTab
+    return matchesSearch && matchesTab
+  })
+
+
   return (
-    <main className="dashboard-shell">
-      <header className="dashboard-header">
-        <div><Link href="/" className="dashboard-brand">ZenUI</Link><p>Dự án trong không gian làm việc</p></div>
-        <div className="dashboard-account">
-          {session ? <span>{roleLabel(session.role)}</span> : null}
+    <div className="dashboard-pro-layout">
+      {/* Sidebar Navigation */}
+      <aside className="dashboard-sidebar">
+        <div className="sidebar-brand">
+          <Link href="/">ZenUI</Link>
+        </div>
+        <nav className="sidebar-nav">
+          <a href="#" className="active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+            Dự án
+          </a>
+          <a href="#" className="disabled">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+            Mẫu (Templates) <span className="badge-soon">Soon</span>
+          </a>
+          <a href="#" className="disabled">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+            Tài nguyên <span className="badge-soon">Soon</span>
+          </a>
+          <a href="#" className="disabled">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+            Nhóm <span className="badge-soon">Soon</span>
+          </a>
+          <a href="#" className="disabled">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            Cài đặt <span className="badge-soon">Soon</span>
+          </a>
+        </nav>
+
+        <div className="sidebar-footer">
+          <div className="account-info">
+            <div className="avatar">{session?.role.charAt(0).toUpperCase()}</div>
+            <div className="details">
+              <span className="role">{session ? roleLabel(session.role) : 'Guest'}</span>
+              <span className="workspace">Không gian làm việc</span>
+            </div>
+          </div>
           {localAuth ? (
             <form action="/api/local/session/logout" method="post">
-              <button type="submit">Đăng xuất</button>
+              <button type="submit" className="btn-logout">Đăng xuất</button>
             </form>
           ) : signOutAction ? (
             <form action={signOutAction}>
-              <button type="submit">Đăng xuất</button>
+              <button type="submit" className="btn-logout">Đăng xuất</button>
             </form>
           ) : null}
         </div>
-      </header>
-      {error && <p role="alert">{error}</p>}
-      {canManage && (
-        <form className="project-create" onSubmit={event => void createProject(event)}>
-          <label>Tên dự án<input aria-label="Tên dự án" value={name} onChange={event => setName(event.target.value)} maxLength={100} /></label>
-          <button type="submit" disabled={pending || !name.trim()}>Tạo dự án</button>
-        </form>
-      )}
-      {projects.length === 0 ? (
-        <section className="empty-state"><h1>Chưa có dự án</h1><p>Tạo một dự án để bắt đầu thiết kế.</p></section>
-      ) : (
-        <section aria-labelledby="projects-heading">
-          <h1 id="projects-heading">Dự án</h1>
-          <ul className="project-list">
-            {projects.map(project => (
-              <li key={project.id}>
-                {renameId === project.id ? (
-                  <form onSubmit={event => { event.preventDefault(); void renameProject(project.id) }}>
-                    <label>Đổi tên dự án<input aria-label="Đổi tên dự án" value={renameName} onChange={event => setRenameName(event.target.value)} /></label>
-                    <button type="submit" disabled={pending}>Lưu tên dự án</button>
-                  </form>
-                ) : (
-                  <>
-                    <Link href={`/projects/${project.id}`} aria-label={`Mở ${project.name}`}><strong>{project.name}</strong><span>Phiên bản {project.version}</span></Link>
-                    {canManage && <div className="project-actions">
-                      <button type="button" aria-label={`Đổi tên ${project.name}`} onClick={() => { setRenameId(project.id); setRenameName(project.name) }}>Đổi tên</button>
-                      <button type="button" aria-label={`Xóa ${project.name}`} onClick={() => void archiveProject(project.id)}>Xóa</button>
-                    </div>}
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-    </main>
+      </aside>
+
+      {/* Main Content */}
+      <main className="dashboard-main">
+        {/* Top Header */}
+        <header className="main-header">
+          <div className="search-bar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input
+              type="text"
+              placeholder="Tìm kiếm dự án..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+            />
+          </div>
+
+          <div className="header-actions">
+            {canManage && (
+              <form className="create-form" onSubmit={event => void createProject(event)}>
+                <input
+                  aria-label="Tên dự án"
+                  placeholder="Tên dự án mới..."
+                  value={name}
+                  onChange={event => setName(event.target.value)}
+                  maxLength={100}
+                />
+                <button type="submit" className="btn-primary" disabled={pending || !name.trim()}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                  Tạo dự án
+                </button>
+              </form>
+            )}
+          </div>
+        </header>
+
+        {error && <div className="error-banner" role="alert"><p>{error}</p></div>}
+
+        <div className="dashboard-content">
+          {projects.length === 0 ? (
+            <section className="empty-state">
+              <div className="empty-illustration">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+              </div>
+              <h1>Chào mừng đến với ZenUI</h1>
+              <p>Không gian làm việc của bạn hiện đang trống. Hãy tạo một dự án mới để bắt đầu thiết kế.</p>
+            </section>
+          ) : (
+            <>
+              {/* Toolbar: Tabs & View Toggle */}
+              <div className="content-toolbar">
+                <div className="tabs">
+                  <button className={activeTab === 'all' ? 'active' : ''} onClick={() => setActiveTab('all')}>Tất cả</button>
+                  <button className={activeTab === 'active' ? 'active' : ''} onClick={() => setActiveTab('active')}>Hoạt động</button>
+                  <button className={activeTab === 'archived' ? 'active' : ''} onClick={() => setActiveTab('archived')}>Đã lưu trữ</button>
+                </div>
+
+                <div className="view-toggle">
+                  <button className={viewMode === 'grid' ? 'active' : ''} onClick={() => setViewMode('grid')} aria-label="Grid view">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                  </button>
+                  <button className={viewMode === 'list' ? 'active' : ''} onClick={() => setViewMode('list')} aria-label="List view">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+                  </button>
+                </div>
+              </div>
+
+              {filteredProjects.length === 0 ? (
+                <div className="empty-search">Không tìm thấy dự án nào phù hợp.</div>
+              ) : (
+                <div className={`project-${viewMode}`}>
+                  {filteredProjects.map(project => (
+                    <div key={project.id} className="project-card">
+                      {renameId === project.id ? (
+                        <form className="rename-form" onSubmit={event => { event.preventDefault(); void renameProject(project.id) }}>
+                          <div className="thumbnail">
+                            <ProjectThumbnail projectId={project.id} workspaceId={project.workspaceId} />
+                          </div>
+                          <div className="rename-inputs">
+                            <input autoFocus aria-label="Đổi tên dự án" value={renameName} onChange={event => setRenameName(event.target.value)} />
+                            <button type="submit" className="btn-primary" disabled={pending}>Lưu</button>
+                            <button type="button" className="btn-ghost" onClick={() => setRenameId(null)}>Hủy</button>
+                          </div>
+                        </form>
+                      ) : (
+                        <>
+                          <div className="project-link" style={{ position: 'relative' }}>
+                            <Link href={`/projects/${project.id}`} aria-label={`Mở ${project.name}`} style={{ position: 'absolute', inset: 0, zIndex: 10 }} />
+                            <div className="thumbnail">
+                              <ProjectThumbnail projectId={project.id} workspaceId={project.workspaceId} />
+                              <div className="thumbnail-overlay">Mở dự án</div>
+                            </div>
+                            <div className="project-info">
+                              <h3>{project.name}</h3>
+                              <span className="version">Phiên bản {project.version}</span>
+                            </div>
+                          </div>
+
+                          {canManage && (
+                            <div className="project-context-menu">
+                              <button
+                                className="btn-more"
+                                aria-label={`Tùy chọn cho ${project.name}`}
+                                aria-expanded={activeDropdown === project.id}
+                                aria-haspopup="menu"
+                                onClick={() => setActiveDropdown(activeDropdown === project.id ? null : project.id)}
+                              >
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>
+                              </button>
+
+                              {activeDropdown === project.id && (
+                                <div className="dropdown-menu" role="menu">
+                                  <button role="menuitem" aria-label={`Đổi tên ${project.name}`} onClick={() => { setRenameId(project.id); setRenameName(project.name); setActiveDropdown(null) }}>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    Đổi tên
+                                  </button>
+                                  <div className="divider"></div>
+                                  <button role="menuitem" aria-label={`Xóa ${project.name}`} className="text-danger" onClick={() => { void archiveProject(project.id); setActiveDropdown(null) }}>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                    Xóa dự án
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </main>
+    </div>
   )
 }

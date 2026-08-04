@@ -82,19 +82,19 @@ describe('SiteIntelligencePanel', () => {
     />)
 
     expect(await screen.findByRole('heading', { name: 'Đánh giá website' })).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Giải thích thiết kế này' }))
-    expect(screen.getByRole('heading', { name: 'Vì sao thiết kế này hỗ trợ bản mô tả?' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Chi tiết' }))
+    expect(screen.getByRole('heading', { name: 'Lý do thiết kế' })).toBeVisible()
     expect(screen.getByText('Thứ bậc nội dung')).toBeVisible()
 
-    const evidenceButton = screen.getAllByRole('button', { name: /Xem bằng chứng/ })[0]
+    const evidenceButton = screen.getAllByRole('button', { name: 'Xem chỗ này' })[0]
     await user.click(evidenceButton!)
     expect(onFocusEvidence).toHaveBeenCalled()
-    const aiButton = screen.queryAllByRole('button', { name: 'Cải thiện bằng AI' })[0]
+    const aiButton = screen.queryAllByRole('button', { name: 'Sửa bằng AI' })[0]
     if (aiButton) {
       await user.click(aiButton)
       expect(onSuggestion).toHaveBeenCalled()
     }
-    await user.click(screen.getByRole('button', { name: 'Thử cách trình bày khác, giữ nội dung' }))
+    await user.click(screen.getByRole('button', { name: 'Đổi cách trình bày' }))
     expect(onRemix).toHaveBeenCalledWith('section-1')
   })
 
@@ -109,10 +109,10 @@ describe('SiteIntelligencePanel', () => {
       onFocusEvidence={vi.fn()} onSuggestion={vi.fn()} onRemix={vi.fn()}
     />)
     expect(await screen.findByRole('heading', { name: 'Đánh giá website' })).toBeVisible()
-    await user.click(screen.getAllByRole('button', { name: 'Bỏ qua mục này' })[0]!)
+    await user.click(screen.getAllByRole('button', { name: 'Bỏ qua' })[0]!)
     expect(dismiss).toHaveBeenCalledWith(fingerprint)
-    await user.click(screen.getByRole('button', { name: 'Hiện mục đã bỏ qua' }))
-    await user.click(screen.getByRole('button', { name: 'Khôi phục mục này' }))
+    await user.click(screen.getByRole('button', { name: 'Hiện mục đã bỏ' }))
+    await user.click(screen.getByRole('button', { name: 'Khôi phục' }))
     expect(restore).toHaveBeenCalledWith(fingerprint)
 
     rerender(<SiteIntelligencePanel
@@ -121,7 +121,7 @@ describe('SiteIntelligencePanel', () => {
       onFocusEvidence={vi.fn()} onSuggestion={vi.fn()} onRemix={vi.fn()}
     />)
     expect(await screen.findByText('Đánh giá này đã cũ')).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Kiểm tra lại website' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Thử cách trình bày khác, giữ nội dung' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Kiểm tra lại' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Đổi cách trình bày' })).toBeDisabled()
   })
 })
