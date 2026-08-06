@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import LoginPage from '../app/login/page'
 import HomePage from '../app/page'
+import ProviderCallbackErrorPage from '../app/provider-callback-error/page'
 import { safeAuthCallbackPath } from '../lib/server/auth-navigation'
 import { isLocalAuthRuntimeEnabled } from '../lib/server/e2e-runtime'
 
@@ -32,6 +33,16 @@ describe('public access surfaces', () => {
     expect(screen.getAllByRole('link', { name: 'Yêu cầu quyền Beta' })[0]).toHaveAttribute('href', '/beta')
     expect(screen.queryByText('Đang tải dự án...')).not.toBeInTheDocument()
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('renders a redacted actionable Vercel callback configuration error', () => {
+    render(<ProviderCallbackErrorPage />)
+
+    expect(screen.getByRole('heading', { name: 'Chưa thể kết nối Vercel' })).toBeVisible()
+    expect(screen.getByRole('alert')).toHaveTextContent('Redirect URL')
+    expect(screen.getByText('/api/v1/provider-connections/vercel/callback', { exact: false })).toBeVisible()
+    expect(document.body).not.toHaveTextContent('one-time-code')
+    expect(document.body).not.toHaveTextContent('icfg_test')
   })
 
   it('renders private-beta GitHub login outside guarded local mode', async () => {

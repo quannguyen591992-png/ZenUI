@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { isMisroutedVercelCallback } from '../lib/server/provider-callback'
 import { createProviderConnectionHandlers } from '../lib/server/provider-connection-api'
 
 const workspaceId = '11111111-1111-4111-8111-111111111111'
@@ -32,7 +33,7 @@ function dependencies(overrides: Record<string, unknown> = {}) {
       exchangeCode: vi.fn().mockResolvedValue({ accessToken: 'provider-secret-token', teamId: 'team_test' }),
       getConfiguration: vi.fn().mockResolvedValue({
         id: 'icfg_test', teamId: 'team_test', status: 'ready',
-        scopes: ['deployment:read-write', 'integration-configuration:read-write'],
+        scopes: ['read-write:deployment', 'read-write:integration-configuration', 'read-write:project'],
       }),
       disconnect: vi.fn().mockResolvedValue(undefined),
     },
@@ -43,7 +44,7 @@ function dependencies(overrides: Record<string, unknown> = {}) {
       findPublic: vi.fn().mockResolvedValue(connection),
       getInternal: vi.fn().mockResolvedValue({
         ...connection, configurationId: 'icfg_test', teamId: 'team_test',
-        scopes: ['deployment:read-write', 'integration-configuration:read-write'],
+        scopes: ['read-write:deployment', 'read-write:integration-configuration', 'read-write:project'],
         encryptedCredential: { ciphertext: 'encrypted', iv: 'iv', authTag: 'tag', keyVersion: 1 },
       }),
       disconnect: vi.fn().mockResolvedValue({ ...connection, status: 'disconnected' }),
@@ -62,6 +63,17 @@ function mutation(path: string, body: unknown, method = 'POST', origin = 'http:/
 }
 
 describe('provider connection API', () => {
+  it('recognizes only complete Vercel callback parameters misrouted to the Landing page', () => {
+    expect(isMisroutedVercelCallback({
+      state: 'a'.repeat(43), code: 'one-time-code', configurationId: 'icfg_test',
+      teamId: 'team_test', source: 'external',
+    })).toBe(true)
+    expect(isMisroutedVercelCallback({ state: 'a'.repeat(43), source: 'external' })).toBe(false)
+    expect(isMisroutedVercelCallback({
+      state: 'a'.repeat(43), code: 'one-time-code', configurationId: 'icfg_test', source: 'evil',
+    })).toBe(false)
+  })
+
   it('rejects forged Origin before authentication or state creation', async () => {
     const deps = dependencies()
     const response = await createProviderConnectionHandlers(deps).AUTHORIZE(
@@ -91,8 +103,17 @@ describe('provider connection API', () => {
     expect(forbidden.status).toBe(403)
   })
 
-  it('consumes callback state once, validates scopes, encrypts the token and redirects safely', async () => {
-    const deps = dependencies()
+  it('consumes callback state once, validates current Vercel permissions, encrypts the token and redirects safely', async () => {
+    const deps = dependencies({
+      oauth: {
+        exchangeCode: vi.fn().mockResolvedValue({ accessToken: 'provider-secret-token', teamId: 'team_test' }),
+        getConfiguration: vi.fn().mockResolvedValue({
+          id: 'icfg_test', teamId: 'team_test', status: 'ready',
+          scopes: ['read-write:deployment', 'read-write:integration-configuration', 'read-write:project'],
+        }),
+        disconnect: vi.fn().mockResolvedValue(undefined),
+      },
+    })
     const response = await createProviderConnectionHandlers(deps).CALLBACK(new Request(
       `http://localhost:3000/api/v1/provider-connections/vercel/callback?state=${'a'.repeat(43)}&code=one-time-code&configurationId=icfg_test&teamId=team_test&source=external`,
     ))
@@ -107,6 +128,30 @@ describe('provider connection API', () => {
     expect(deps.connections.connect).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
       id: connectionId, configurationId: 'icfg_test', encryptedCredential: expect.objectContaining({ ciphertext: 'encrypted' }),
     }))
+  })
+
+  it('renews an existing connected record with credentials bound to its stable ID', async () => {
+    const reservedId = '55555555-5555-4555-8555-555555555555'
+    const deps = dependencies({
+      connections: {
+        reserveId: vi.fn().mockReturnValue(reservedId),
+        connect: vi.fn().mockResolvedValue({ ...connection, updatedAt: new Date('2026-08-04T14:20:00.000Z') }),
+        findPublic: vi.fn().mockResolvedValue(connection),
+        getInternal: vi.fn(),
+        disconnect: vi.fn(),
+      },
+    })
+
+    const response = await createProviderConnectionHandlers(deps).CALLBACK(new Request(
+      `http://localhost:3000/api/v1/provider-connections/vercel/callback?state=${'a'.repeat(43)}&code=fresh-code&configurationId=icfg_test&teamId=team_test&source=external`,
+    ))
+
+    expect(response.status).toBe(303)
+    expect(deps.cipher.encrypt).toHaveBeenCalledWith('provider-secret-token', expect.objectContaining({
+      connectionId,
+    }))
+    expect(deps.connections.reserveId).not.toHaveBeenCalled()
+    expect(deps.connections.connect).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ id: connectionId }))
   })
 
   it('fails closed for replay, user mismatch, malformed callback and insufficient scopes', async () => {
@@ -126,6 +171,17 @@ describe('provider connection API', () => {
         disconnect: vi.fn(),
       },
     })).CALLBACK(new Request(`http://localhost/api?state=${'a'.repeat(43)}&code=code&configurationId=icfg_test&source=external`))).status).toBe(403)
+
+    expect((await createProviderConnectionHandlers(dependencies({
+      oauth: {
+        exchangeCode: vi.fn().mockResolvedValue({ accessToken: 'secret', teamId: 'team_test' }),
+        getConfiguration: vi.fn().mockResolvedValue({
+          id: 'icfg_test', teamId: 'team_test', status: 'ready',
+          scopes: ['read-write:deployment', 'read-write:integration-configuration'],
+        }),
+        disconnect: vi.fn(),
+      },
+    })).CALLBACK(new Request(`http://localhost/api?state=${'a'.repeat(43)}&code=code&configurationId=icfg_test&teamId=team_test&source=external`))).status).toBe(403)
   })
 
   it('returns redacted status and disconnects idempotently only after provider revoke', async () => {

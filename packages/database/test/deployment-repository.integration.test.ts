@@ -186,11 +186,17 @@ describe('workspace-scoped provider connections and deployments', () => {
       scopes: ['deployment:read-write'], encryptedCredential: encrypted,
     })
     expect(reconnected).toMatchObject({ id: connection.id, status: 'connected' })
+    const renewed = await connections.connect(owner, {
+      id: connection.id, provider: 'vercel', configurationId: 'icfg_renewed', teamId: null,
+      scopes: ['read-write:deployment'], encryptedCredential: { ...encrypted, ciphertext: Buffer.from('renewed').toString('base64') },
+    })
+    expect(renewed).toMatchObject({ id: connection.id, status: 'connected' })
+    expect(renewed.updatedAt.getTime()).toBeGreaterThanOrEqual(reconnected.updatedAt.getTime())
     await expect(connections.connect(owner, {
       id: crypto.randomUUID(), provider: 'vercel', configurationId: 'icfg_conflict', teamId: null,
       scopes: ['deployment:read-write'], encryptedCredential: encrypted,
     })).rejects.toThrow('provider_connection_exists')
-    expect(await connections.disableByConfiguration('icfg_reconnected')).toMatchObject({ status: 'disabled' })
+    expect(await connections.disableByConfiguration('icfg_renewed')).toMatchObject({ status: 'disabled' })
     expect(await connections.disableByConfiguration('missing-configuration')).toBeNull()
   })
 

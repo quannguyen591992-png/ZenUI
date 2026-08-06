@@ -129,6 +129,9 @@ interface EditorAppProps {
   previewOrigin?: string
   assetOrigin?: string
   deploymentEnabled?: boolean
+  assistantStyleEnabled?: boolean
+  assistantLayoutEnabled?: boolean
+  assistantCompositionEnabled?: boolean
   initialMode?: 'simple' | 'advanced'
   proposalApi?: AiProposalApi
   assetApi?: AssetLibraryApi
@@ -759,7 +762,59 @@ function Inspector({ state, viewport, execute }: InspectorProps) {
   )
 }
 
-function EditorSurface({ projectId, projectName, workspaceId, role, initialDocument, initialVersion, api, editorOrigin, previewOrigin, assetOrigin, deploymentEnabled, initialMode, proposalApi, assetApi: suppliedAssetApi, brief }: Required<Omit<EditorAppProps, 'brief' | 'assetApi'>> & { assetApi?: AssetLibraryApi; brief: WebsiteBrief | null }) {
+interface RevisionPanelProps {
+  revisions: RevisionSummary[]
+  summary: string
+  error: string
+  canManage: boolean
+  canCreate: boolean
+  canRestore: boolean
+  onSummaryChange: (summary: string) => void
+  onCreate: () => void
+  onRestore: (revisionId: string) => void
+}
+
+function RevisionPanel({
+  revisions,
+  summary,
+  error,
+  canManage,
+  canCreate,
+  canRestore,
+  onSummaryChange,
+  onCreate,
+  onRestore,
+}: RevisionPanelProps) {
+  return (
+    <section className="revision-panel" aria-labelledby="revisions-heading">
+      <h2 id="revisions-heading">Phiên bản</h2>
+      {canManage && (
+        <>
+          <label>
+            Tên phiên bản
+            <input aria-label="Tên phiên bản" value={summary} maxLength={200} onChange={event => onSummaryChange(event.target.value)} />
+          </label>
+          <button type="button" disabled={!canCreate} onClick={onCreate}>Tạo phiên bản</button>
+        </>
+      )}
+      {error && <p role="alert">{error}</p>}
+      {revisions.length === 0 ? <p>Chưa có phiên bản nào.</p> : (
+        <ul>
+          {revisions.map(revision => (
+            <li key={revision.id}>
+              <span>{revision.summary}</span>
+              {canManage && (
+                <button type="button" aria-label={`Khôi phục ${revision.summary}`} disabled={!canRestore} onClick={() => onRestore(revision.id)}>Khôi phục</button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function EditorSurface({ projectId, projectName, workspaceId, role, initialDocument, initialVersion, api, editorOrigin, previewOrigin, assetOrigin, deploymentEnabled, assistantStyleEnabled, assistantLayoutEnabled, assistantCompositionEnabled, initialMode, proposalApi, assetApi: suppliedAssetApi, brief }: Required<Omit<EditorAppProps, 'brief' | 'assetApi'>> & { assetApi?: AssetLibraryApi; brief: WebsiteBrief | null }) {
   const [state, dispatch] = useReducer(editorReducer, initialDocument, createEditorState)
   const [announcement, setAnnouncement] = useState('Trình chỉnh sửa đã sẵn sàng')
   const [hydrated, setHydrated] = useState(false)
@@ -1056,11 +1111,11 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
     exactProposalTarget?.type === 'image'
     || (exactProposalTarget?.type === 'feature-card' && 'mediaSlot' in exactProposalTarget.props && exactProposalTarget.props.mediaSlot),
   )
-  const contextualProposalTargetId = contextualMediaTarget ? state.selectedNodeId : selectedSectionId
+  const contextualProposalTargetId = state.selectedNodeId ?? selectedSectionId
   const contextualTarget = contextualProposalTargetId ? state.document.nodes[contextualProposalTargetId] : undefined
   const contextualProposalIntent = contextualMediaTarget ? 'replace-media' as const : proposalIntent
-  const proposalScopeLabel = contextualMediaTarget && contextualTarget
-    ? nodeLabel(contextualTarget)
+  const proposalScopeLabel = contextualTarget && contextualProposalTargetId !== selectedSectionId
+    ? contextualMediaTarget ? nodeLabel(contextualTarget) : layerLabel(contextualTarget)
     : `Phần ${selectedStory?.label ?? 'website'}`
   const canMutate = role !== 'viewer'
   const proposalCanSubmit = canMutate && (autosave.status === 'idle' || autosave.status === 'saved')
@@ -1111,7 +1166,7 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
   const enterAdvanced = (): void => {
     setMode('advanced')
     setDialog(null)
-    setAnnouncement('Đã mở điều khiển nâng cao')
+    setAnnouncement('Đã mở chỉnh sửa chuyên sâu')
   }
   const returnToSimple = (): void => {
     const sectionId = findContainingSectionId(stateRef.current.document, stateRef.current.selectedNodeId, stateRef.current.activePageId)
@@ -1119,7 +1174,7 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
       ?? null
     setState(selectNode(stateRef.current, sectionId))
     setMode('simple')
-    setAnnouncement('Đã quay lại chế độ đơn giản')
+    setAnnouncement('Đã quay lại thiết kế trực quan')
   }
   const pageIds = (prefix: string): string => `${prefix}-${Date.now()}-${idCounter.current++}`
   const createPage = (input: { name: string; slug: string }): void => {
@@ -1263,9 +1318,9 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
             <button type="button" onClick={() => setPageManagerOpen(true)}>Quản lý trang</button>
           )}
           {mode === 'simple' ? (
-            <button type="button" onClick={() => setDialog('advanced')}>Mở điều khiển nâng cao</button>
+            <button type="button" onClick={() => setDialog('advanced')}>Mở chỉnh sửa chuyên sâu</button>
           ) : (
-            <button type="button" onClick={returnToSimple}>Quay lại chế độ đơn giản</button>
+            <button type="button" onClick={returnToSimple}>Quay lại thiết kế trực quan</button>
           )}
           <button type="button" aria-label="Hoàn tác" disabled={state.undoStack.length === 0} onClick={() => setState(undo(state))}>Hoàn tác</button>
           <button type="button" aria-label="Làm lại" disabled={state.redoStack.length === 0} onClick={() => setState(redo(state))}>Làm lại</button>
@@ -1382,7 +1437,7 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
             </ol>
           </nav>
         ) : (
-          <aside className="palette-panel advanced-sidebar" aria-label="Điều khiển nâng cao">
+          <aside className="palette-panel advanced-sidebar" aria-label="Chỉnh sửa chuyên sâu">
             <div className="advanced-sidebar-tabs" role="tablist" aria-label="Chọn bảng điều khiển">
               <button
                 type="button"
@@ -1488,11 +1543,28 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
         </section>
         {mode === 'simple' ? (
           <aside className="section-guide" aria-label="Chỉnh sửa section">
-            {isFixture || !canMutate ? (
+            {isFixture ? (
               <>
                 <h1>{selectedStory?.label ?? 'Section'}</h1>
                 <p>{selectedStory?.purpose ?? 'Chọn một section từ Câu chuyện trang.'}</p>
-                <p className="hint">{canMutate ? 'AI đề xuất thay đổi trước khi áp dụng.' : 'Bạn đang xem ở chế độ chỉ đọc.'}</p>
+                <p className="hint">AI đề xuất thay đổi trước khi áp dụng.</p>
+              </>
+            ) : !canMutate ? (
+              <>
+                <h1>{selectedStory?.label ?? 'Section'}</h1>
+                <p>{selectedStory?.purpose ?? 'Chọn một section từ Câu chuyện trang.'}</p>
+                <p className="hint">Bạn đang xem ở chế độ chỉ đọc.</p>
+                <RevisionPanel
+                  revisions={revisions}
+                  summary={revisionSummary}
+                  error={revisionError}
+                  canManage={false}
+                  canCreate={false}
+                  canRestore={false}
+                  onSummaryChange={setRevisionSummary}
+                  onCreate={() => void createRevision()}
+                  onRestore={revisionId => void restoreRevision(revisionId)}
+                />
               </>
             ) : (
               <>
@@ -1506,6 +1578,7 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
                   workspaceId={workspaceId}
                   expectedVersion={autosave.serverVersion}
                   selectedNodeId={contextualProposalTargetId}
+                  styleTargetNodeId={exactProposalTarget?.id ?? null}
                   scopeLabel={proposalScopeLabel}
                   acceptedDocument={state.document}
                   viewport={viewport}
@@ -1514,6 +1587,9 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
                   api={proposalApi}
                   initialPrompt={proposalPrompt}
                   initialIntent={contextualProposalIntent}
+                  styleEnabled={assistantStyleEnabled && Boolean(exactProposalTarget) && !contextualMediaTarget}
+                  layoutEnabled={assistantLayoutEnabled && contextualTarget?.type !== 'image' && contextualProposalTargetId === selectedSectionId}
+                  compositionEnabled={assistantCompositionEnabled && contextualTarget?.type === 'section' && contextualProposalTargetId === selectedSectionId}
                   initialAllowedChanges={[]}
                   onAccepted={applyAcceptedProposal}
                   onStateChange={setActiveProposal}
@@ -1532,6 +1608,17 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
                     onRemix={prepareIntelligenceRemix}
                   />
                 )}
+                <RevisionPanel
+                  revisions={revisions}
+                  summary={revisionSummary}
+                  error={revisionError}
+                  canManage={canMutate}
+                  canCreate={autosave.status === 'idle' || autosave.status === 'saved'}
+                  canRestore={autosave.status !== 'dirty' && autosave.status !== 'saving' && autosave.status !== 'conflict'}
+                  onSummaryChange={setRevisionSummary}
+                  onCreate={() => void createRevision()}
+                  onRestore={revisionId => void restoreRevision(revisionId)}
+                />
               </>
             )}
           </aside>
@@ -1547,35 +1634,31 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
                     workspaceId={workspaceId}
                     expectedVersion={autosave.serverVersion}
                     selectedNodeId={state.selectedNodeId}
+                    styleTargetNodeId={exactSelectedNode?.id ?? null}
                     scopeLabel={proposalScopeLabel}
                     acceptedDocument={state.document}
                     viewport={viewport}
                     assetOrigin={assetOrigin}
                     canSubmit={proposalCanSubmit}
                     api={proposalApi}
+                    styleEnabled={assistantStyleEnabled && Boolean(exactSelectedNode)}
+                    layoutEnabled={assistantLayoutEnabled && exactSelectedNode?.id === selectedSectionId}
+                    compositionEnabled={assistantCompositionEnabled && exactSelectedNode?.type === 'section' && exactSelectedNode.id === selectedSectionId}
                     onAccepted={applyAcceptedProposal}
                     onStateChange={setActiveProposal}
                   />
                 )}
-                <section className="revision-panel" aria-labelledby="revisions-heading">
-                  <h2 id="revisions-heading">Phiên bản</h2>
-                  <label>
-                    Tên phiên bản
-                    <input aria-label="Tên phiên bản" value={revisionSummary} maxLength={200} onChange={event => setRevisionSummary(event.target.value)} />
-                  </label>
-                  <button type="button" disabled={autosave.status === 'dirty' || autosave.status === 'saving' || autosave.status === 'conflict'} onClick={() => void createRevision()}>Tạo phiên bản</button>
-                  {revisionError && <p role="alert">{revisionError}</p>}
-                  {revisions.length === 0 ? <p>Chưa có phiên bản nào.</p> : (
-                    <ul>
-                      {revisions.map(revision => (
-                        <li key={revision.id}>
-                          <span>{revision.summary}</span>
-                          <button type="button" aria-label={`Khôi phục ${revision.summary}`} disabled={autosave.status === 'dirty' || autosave.status === 'saving'} onClick={() => void restoreRevision(revision.id)}>Khôi phục</button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </section>
+                <RevisionPanel
+                  revisions={revisions}
+                  summary={revisionSummary}
+                  error={revisionError}
+                  canManage={canMutate}
+                  canCreate={autosave.status === 'idle' || autosave.status === 'saved'}
+                  canRestore={autosave.status !== 'dirty' && autosave.status !== 'saving' && autosave.status !== 'conflict'}
+                  onSummaryChange={setRevisionSummary}
+                  onCreate={() => void createRevision()}
+                  onRestore={revisionId => void restoreRevision(revisionId)}
+                />
               </>
             )}
           </aside>
@@ -1688,6 +1771,7 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
                   workspaceId={workspaceId}
                   expectedVersion={autosave.serverVersion}
                   selectedNodeId={contextualProposalTargetId}
+                  styleTargetNodeId={exactProposalTarget?.id ?? null}
                   scopeLabel={proposalScopeLabel}
                   acceptedDocument={state.document}
                   viewport={viewport}
@@ -1696,6 +1780,9 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
                   api={proposalApi}
                   initialPrompt={proposalPrompt}
                   initialIntent={contextualProposalIntent}
+                  styleEnabled={assistantStyleEnabled && Boolean(exactProposalTarget) && !contextualMediaTarget}
+                  layoutEnabled={assistantLayoutEnabled && contextualProposalTargetId === selectedSectionId}
+                  compositionEnabled={assistantCompositionEnabled && contextualTarget?.type === 'section' && contextualProposalTargetId === selectedSectionId}
                   onAccepted={applyAcceptedProposal}
                   onStateChange={setActiveProposal}
                 />
@@ -1719,11 +1806,11 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
         {dialog === 'advanced' && (
           <div className="editor-dialog-backdrop">
             <section role="dialog" aria-modal="true" aria-labelledby="advanced-dialog-heading" className="editor-dialog">
-              <h2 id="advanced-dialog-heading">Mở điều khiển nâng cao?</h2>
-              <p>Chế độ nâng cao hiển thị thành phần, lớp và thuộc tính kỹ thuật. Website sẽ không bị thay đổi khi chuyển chế độ.</p>
+              <h2 id="advanced-dialog-heading">Mở chỉnh sửa chuyên sâu?</h2>
+              <p>Chỉnh sửa chuyên sâu hiển thị cây lớp, thành phần và các kiểm soát kỹ thuật chi tiết hơn. Website sẽ không bị thay đổi khi chuyển cách làm việc.</p>
               <div>
-                <button type="button" onClick={() => setDialog(null)}>Ở lại chế độ đơn giản</button>
-                <button type="button" autoFocus onClick={enterAdvanced}>Xác nhận mở nâng cao</button>
+                <button type="button" onClick={() => setDialog(null)}>Ở lại thiết kế trực quan</button>
+                <button type="button" autoFocus onClick={enterAdvanced}>Mở chỉnh sửa chuyên sâu</button>
               </div>
             </section>
           </div>
@@ -1759,6 +1846,9 @@ export function EditorApp({
   previewOrigin = 'http://127.0.0.1:3001',
   assetOrigin = 'http://127.0.0.1:3002',
   deploymentEnabled = true,
+  assistantStyleEnabled = false,
+  assistantLayoutEnabled = false,
+  assistantCompositionEnabled = false,
   initialMode = projectId === 'project-1' ? 'advanced' : 'simple',
   proposalApi = browserAiProposalApi,
   assetApi,
@@ -1767,6 +1857,6 @@ export function EditorApp({
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
   return mounted
-    ? <EditorSurface projectId={projectId} projectName={projectName} workspaceId={workspaceId} role={role} initialDocument={initialDocument} initialVersion={initialVersion} api={api} editorOrigin={editorOrigin} previewOrigin={previewOrigin} assetOrigin={assetOrigin} deploymentEnabled={deploymentEnabled} initialMode={initialMode} proposalApi={proposalApi} {...(assetApi ? { assetApi } : {})} brief={brief} />
+    ? <EditorSurface projectId={projectId} projectName={projectName} workspaceId={workspaceId} role={role} initialDocument={initialDocument} initialVersion={initialVersion} api={api} editorOrigin={editorOrigin} previewOrigin={previewOrigin} assetOrigin={assetOrigin} deploymentEnabled={deploymentEnabled} assistantStyleEnabled={assistantStyleEnabled} assistantLayoutEnabled={assistantLayoutEnabled} assistantCompositionEnabled={assistantCompositionEnabled} initialMode={initialMode} proposalApi={proposalApi} {...(assetApi ? { assetApi } : {})} brief={brief} />
     : <main className="editor-loading" role="status">Đang tải trình chỉnh sửa ZenUI...</main>
 }

@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 
-import { assertDevPortsAvailable, waitForDevReadiness } from './dev-runtime.mjs'
+import { assertDevPortsAvailable, assertVercelRedirectConfiguration, waitForDevReadiness } from './dev-runtime.mjs'
 
 process.loadEnvFile('.env')
+assertVercelRedirectConfiguration()
 await assertDevPortsAvailable()
 
 const instanceId = randomBytes(16).toString('hex')

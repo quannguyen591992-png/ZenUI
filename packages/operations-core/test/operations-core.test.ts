@@ -85,6 +85,23 @@ describe('operations contracts', () => {
     for (const forbidden of ['userId', 'workspaceId', 'projectId', 'jobId', 'requestId', 'slug', 'url']) {
       expect(metricLabelsSchema.safeParse({ service: 'web', [forbidden]: crypto.randomUUID() }).success).toBe(false)
     }
+    expect(metricLabelsSchema.parse({
+      service: 'worker',
+      operation: 'ai_provider_call',
+      outcome: 'completed',
+      assistantLane: 'media',
+      assistantStage: 'judge',
+      source: 'generated',
+    })).toEqual({
+      service: 'worker',
+      operation: 'ai_provider_call',
+      outcome: 'completed',
+      assistantLane: 'media',
+      assistantStage: 'judge',
+      source: 'generated',
+    })
+    expect(metricLabelsSchema.safeParse({ service: 'worker', assistantLane: 'raw-user-intent' }).success).toBe(false)
+    expect(metricLabelsSchema.safeParse({ service: 'worker', source: 'https://private.example/image' }).success).toBe(false)
     expect(metricLabelsSchema.safeParse({ service: 'worker', errorCode: 'raw provider body' }).success).toBe(false)
   })
 

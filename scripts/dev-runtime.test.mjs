@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   assertDevPortsAvailable,
+  assertVercelRedirectConfiguration,
   isExpectedWorkerInstance,
   waitForDevReadiness,
 } from './dev-runtime.mjs'
@@ -12,6 +13,22 @@ test('rejects an occupied development port before spawning services', async () =
     assertDevPortsAvailable(port => Promise.resolve(port !== 9464)),
     /9464/,
   )
+})
+
+test('requires the exact Vercel callback when deployment is enabled', () => {
+  assert.doesNotThrow(() => assertVercelRedirectConfiguration({
+    APP_ORIGIN: 'http://localhost:3000',
+    VERCEL_DEPLOYMENT_ENABLED: 'true',
+    VERCEL_REDIRECT_URI: 'http://localhost:3000/api/v1/provider-connections/vercel/callback',
+  }))
+  assert.throws(() => assertVercelRedirectConfiguration({
+    APP_ORIGIN: 'http://localhost:3000',
+    VERCEL_DEPLOYMENT_ENABLED: 'true',
+    VERCEL_REDIRECT_URI: 'http://localhost:3000/',
+  }), /VERCEL_REDIRECT_URI/)
+  assert.doesNotThrow(() => assertVercelRedirectConfiguration({
+    VERCEL_DEPLOYMENT_ENABLED: 'false',
+  }))
 })
 
 test('requires the expected generation worker instance', () => {

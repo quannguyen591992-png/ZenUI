@@ -95,6 +95,25 @@ describe('DeployPanel', () => {
     vi.useRealTimers()
   })
 
+  it('stops a misrouted Vercel callback instead of polling on the ZenUI Landing page', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const disconnected = api({ getConnection: vi.fn().mockResolvedValue(null) })
+    const popup = {
+      closed: false,
+      close: vi.fn(),
+      location: { href: 'http://localhost:3000/provider-callback-error' },
+    }
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    render(<DeployPanel projectId={projectId} workspaceId={workspaceId} revisions={[revision]} api={disconnected} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Triển khai' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Kết nối Vercel' }))
+    await act(() => vi.advanceTimersByTimeAsync(300))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Redirect URL')
+    expect(popup.close).toHaveBeenCalled()
+  })
+
   it('handles blocked popup, disconnect and deployment failures accessibly', async () => {
     vi.spyOn(window, 'open').mockReturnValue(null)
     const blocked = api({ getConnection: vi.fn().mockResolvedValue(null) })

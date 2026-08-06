@@ -78,13 +78,13 @@ describe('non-coder deterministic prototype', () => {
     expect(screen.getByTestId('accepted-document-fingerprint').textContent).not.toBe(before)
   })
 
-  it('preserves output through a Simple and Advanced mode round trip', async () => {
+  it('preserves output through a visual design and in-depth editing round trip', async () => {
     const user = await reachEditor()
     const before = screen.getByTestId('accepted-document-fingerprint').textContent
 
-    await user.click(screen.getByRole('button', { name: 'Mở điều khiển nâng cao' }))
-    expect(screen.getByRole('heading', { name: 'Điều khiển nâng cao' })).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Quay lại Đơn giản' }))
+    await user.click(screen.getByRole('button', { name: 'Mở chỉnh sửa chuyên sâu' }))
+    expect(screen.getByRole('heading', { name: 'Kiểm soát thiết kế chi tiết' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Quay lại thiết kế trực quan' }))
 
     expect(screen.getByTestId('accepted-document-fingerprint')).toHaveTextContent(before ?? '')
   })

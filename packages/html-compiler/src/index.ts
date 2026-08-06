@@ -75,6 +75,7 @@ export function compileStandaloneHtml(
     robots?: 'noindex, nofollow, noarchive'
     imagePolicy?: RemoteImagePolicy
     assetOrigin?: string
+    portableAssetPaths?: Readonly<Record<string, string>>
     pageId?: string
     route?: string
     routePrefix?: string
@@ -83,6 +84,7 @@ export function compileStandaloneHtml(
   const plan = buildRenderPlan(input, {
     ...(options.imagePolicy ? { imagePolicy: options.imagePolicy } : {}),
     ...(options.assetOrigin ? { assetOrigin: options.assetOrigin } : {}),
+    ...(options.portableAssetPaths ? { portableAssetPaths: options.portableAssetPaths } : {}),
     ...(options.pageId ? { pageId: options.pageId } : {}),
     ...(options.route ? { route: options.route } : {}),
     ...(options.routePrefix ? { routePrefix: options.routePrefix } : {}),
@@ -92,7 +94,7 @@ export function compileStandaloneHtml(
     "default-src 'none'", "base-uri 'none'", "object-src 'none'", "frame-ancestors 'none'",
     "form-action 'none'", "script-src 'none'", `style-src 'sha256-${styleHash(plan.css)}'`,
     `img-src ${[
-      ...(options.assetOrigin ? [new URL(options.assetOrigin).origin] : []),
+      ...(options.portableAssetPaths ? ["'self'"] : options.assetOrigin ? [new URL(options.assetOrigin).origin] : []),
       ...(options.imagePolicy?.sources ?? []),
     ].join(' ') || "'none'"}`, "font-src 'none'", "connect-src 'none'",
   ].join('; ')
@@ -117,6 +119,12 @@ function routePath(route: string): string {
   return route === '/' ? 'index.html' : `${route.slice(1)}/index.html`
 }
 
+function relativeAssetPaths(pagePath: string, paths: Readonly<Record<string, string>>): Record<string, string> {
+  const depth = pagePath.split('/').length - 1
+  const prefix = depth === 0 ? '' : '../'.repeat(depth)
+  return Object.fromEntries(Object.entries(paths).map(([assetId, path]) => [assetId, `${prefix}${path}`]))
+}
+
 export function compileStaticSite(
   input: unknown,
   options: {
@@ -127,12 +135,14 @@ export function compileStaticSite(
     robots?: 'noindex, nofollow, noarchive'
     imagePolicy?: RemoteImagePolicy
     assetOrigin?: string
+    portableAssetPaths?: Readonly<Record<string, string>>
     routePrefix?: string
   } = {},
 ): CompileStaticSiteResult {
   const base = buildRenderPlan(input, {
     ...(options.imagePolicy ? { imagePolicy: options.imagePolicy } : {}),
     ...(options.assetOrigin ? { assetOrigin: options.assetOrigin } : {}),
+    ...(options.portableAssetPaths ? { portableAssetPaths: options.portableAssetPaths } : {}),
   })
   if (!base.success) return base
   const pages = [...base.plan.document.pages]
@@ -142,18 +152,20 @@ export function compileStaticSite(
   }
   const files: StaticSiteFile[] = []
   for (const page of pages) {
+    const path = routePath(page.slug)
     const compiled = compileStandaloneHtml(base.plan.document, {
       maxArtifactBytes: options.maxFileBytes ?? DESIGN_LIMITS.maxCompiledFileBytes,
       title: options.title ? `${options.title} — ${page.name}` : page.name,
       ...(options.robots ? { robots: options.robots } : {}),
       ...(options.imagePolicy ? { imagePolicy: options.imagePolicy } : {}),
       ...(options.assetOrigin ? { assetOrigin: options.assetOrigin } : {}),
+      ...(options.portableAssetPaths ? { portableAssetPaths: relativeAssetPaths(path, options.portableAssetPaths) } : {}),
       ...(options.routePrefix ? { routePrefix: options.routePrefix } : {}),
       pageId: page.id,
     })
     if (!compiled.success) return compiled
     files.push({
-      path: routePath(page.slug),
+      path,
       route: page.slug,
       html: compiled.html,
       bytes: compiled.bytes,

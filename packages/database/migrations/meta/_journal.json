@@ -99,6 +99,20 @@
       "when": 1785488000000,
       "tag": "0013_generated_asset_source",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1785859200000,
+      "tag": "0014_ai_media_proposal_review",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1785945600000,
+      "tag": "0015_ai_proposal_lineage",
+      "breakpoints": true
     }
   ]
 }

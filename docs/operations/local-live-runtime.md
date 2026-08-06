@@ -9,10 +9,14 @@ ZenUI local-live mode runs the product against local PostgreSQL, Redis/BullMQ an
 - Do not enable `ZENUI_LOCAL_AUTH_ENABLED` and `ZENUI_E2E_ENABLED` together.
 - Local identity is fixed and signed with `AUTH_SECRET`; it is not a password login or production fallback.
 - Keep `VERCEL_DEPLOYMENT_ENABLED=false` until a real Vercel Integration, OAuth configuration and credential keyring are available.
-- Use `WORKER_SERVICES=generation,asset,export` for the current local stack. This starts the bounded asset normalizer but no Vercel deployment or reconciliation worker.
+- Khi bật Vercel, trường **Redirect URL** trong Vercel Integration và `VERCEL_REDIRECT_URI` phải cùng là exact URL `http://localhost:3000/api/v1/provider-connections/vercel/callback`; không dùng homepage `http://localhost:3000/`. Root `pnpm dev` fail sớm nếu callback khác `APP_ORIGIN` hoặc sai path.
+- Vercel Integration phải yêu cầu tối thiểu **Integration Configuration**, **Deployments** và **Projects** ở mức `Read/Write`. First publish dùng tên project xác định và có thể tạo Vercel Project mới; chỉ cấp Deployment Read/Write sẽ kết nối được nhưng Vercel từ chối lần publish đầu.
+- Use `WORKER_SERVICES=generation,asset,export` for the current local stack. Add `deployment` only after Vercel OAuth and encryption keyring are configured; connection chỉ cấp quyền, còn deploy vẫn yêu cầu owner xác nhận immutable revision + target.
 - Set `ASSET_ORIGIN=http://127.0.0.1:3002` and keep it isolated from the `localhost` editor hostname. Owned normalized assets are resolved from this cookie-free origin in Canvas, Preview, Share, Export and Deploy.
 - Set `PEXELS_API_KEY` only in the server/worker environment. Search returns redacted result IDs and previews; import jobs carry only local IDs and the worker re-resolves the fixed provider result.
 - `REMOTE_IMAGE_HOST_ALLOWLIST` remains a migration-only exact-host policy for legacy documents. New image and logo references use owned asset IDs rather than remote URLs.
+- AI Co-designer v2 requires an explicit rollout mode. `AI_ASSISTANT_ROLLOUT_MODE=disabled` is the default kill switch. `shadow` may run deterministic percentage sampling from `AI_ASSISTANT_SHADOW_SAMPLE_PERCENT` while v1 remains authoritative and the UI stays hidden. `opt-in` is the only mode that may enable `AI_ASSISTANT_V2_ENABLED` and the planner, media judge, multiple-candidate, style, layout or composition lane flags. Invalid combinations fail Worker startup; Web exposes v2 controls only in `opt-in` mode.
+- Worker `/metrics` exposes bounded aggregate AI counters for proposal outcome, planner/judge calls, image generations, candidate source, semantic gate, token totals and repair count. Labels are fixed enums only; prompts, image bytes, provider bodies, tenant/resource IDs, object keys and credentials are forbidden.
 
 ## Local endpoints
 
@@ -59,9 +63,10 @@ Despite the compatibility route name, local-live mode uses PostgreSQL and real i
 - Asset jobs read private uploads or fixed Pexels result IDs, validate MIME/magic and decoded limits, normalize deterministic WebP, then publish immutable bytes through the exact asset host.
 - The fixed-provider download policy is no-redirect and fail-closed. Any 3xx response becomes a safe import failure; do not enable automatic redirect following without a new per-hop DNS/address-pinning/SNI security review.
 - Brand Kit save/apply is owner-only and versioned. Applying requires the current saved draft version; optional logos must be ready workspace assets.
-- Export compiles in the worker, uploads privately to MinIO and downloads through the authenticated BFF.
-- Share pins an immutable revision and renders with noindex/no-store/CSP on the isolated local share host.
-- Deploy UI reports that Vercel is not configured; it does not silently use a mock provider.
+- Export compiles in the worker, authorizes and integrity-checks every owned image, packages exact WebP bytes under relative `assets/<assetId>.webp` paths, uploads privately to MinIO and downloads through the authenticated BFF.
+- Share pins an immutable revision and renders with noindex/no-store/CSP on the isolated local share host; unlike portable Export/Deploy artifacts, runtime Share resolves owned images through exact cookie-free `ASSET_ORIGIN`.
+- Deploy packages the same integrity-checked owned bytes and submits HTML as UTF-8 plus WebP as base64 to Vercel. A published artifact must contain no `localhost`, `127.0.0.1` or private object key. Với production, ZenUI lưu exact canonical `${providerProjectName}.vercel.app` alias do Vercel xác nhận, không lưu generated deployment URL có hậu tố hash vì URL đó có thể bị Standard Deployment Protection chặn. Previously published deployments remain immutable and require an explicit owner-confirmed republish; ZenUI never replaces them automatically.
+- Deploy UI reports that Vercel is not configured when disabled; it does not silently use a mock provider.
 
 ## Current cost note
 

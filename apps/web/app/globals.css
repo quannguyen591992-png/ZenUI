@@ -287,12 +287,15 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .inspector-fields label { display: grid; gap: 6px; color: #344054; font-size: 13px; font-weight: 600; }
 .inspector-fields input { width: 100%; padding: 9px; border: 1px solid #d0d5dd; border-radius: 7px; }
 .inspector-fields input[type='color'] { height: 42px; padding: 4px; }
-.revision-panel { display: grid; gap: 10px; margin-top: 28px; padding-top: 18px; border-top: 1px solid #d0d5dd; }
-.revision-panel label { display: grid; gap: 6px; font-size: 13px; font-weight: 600; }
-.revision-panel input { width: 100%; padding: 9px; border: 1px solid #d0d5dd; border-radius: 7px; }
-.revision-panel ul { display: grid; gap: 8px; padding: 0; list-style: none; }
-.revision-panel li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.revision-panel button { padding: 7px 9px; border: 1px solid #155eef; border-radius: 7px; color: #155eef; background: #fff; }
+.revision-panel { min-width: 0; display: grid; gap: 10px; margin-top: 28px; padding-top: 18px; border-top: 1px solid #d0d5dd; }
+.revision-panel h2, .revision-panel p { margin: 0; }
+.revision-panel label { min-width: 0; display: grid; gap: 6px; font-size: 13px; font-weight: 600; }
+.revision-panel input { width: 100%; min-width: 0; padding: 9px; border: 1px solid #d0d5dd; border-radius: 7px; }
+.revision-panel ul { min-width: 0; max-height: 240px; display: grid; gap: 8px; margin: 0; padding: 0 4px 0 0; overflow-y: auto; overflow-wrap: anywhere; list-style: none; scrollbar-gutter: stable; }
+.revision-panel li { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.revision-panel li span { min-width: 0; overflow-wrap: anywhere; }
+.revision-panel button { min-height: 40px; padding: 7px 9px; border: 1px solid #155eef; border-radius: 7px; color: #155eef; background: #fff; }
+.revision-panel button:disabled { color: #667085; border-color: #d0d5dd; background: #f2f4f7; }
 .asset-brand-panel { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); align-items: start; gap: 16px; min-width: 0; padding: 16px; overflow: visible; border-top: 1px solid #d0d5dd; background: #f9fafb; }
 .asset-library-panel, .brand-kit-panel { display: grid; align-content: start; gap: 12px; min-width: 0; padding: 16px; border: 1px solid #d0d5dd; border-radius: 12px; background: #fff; }
 .asset-library-panel h2, .brand-kit-panel h2 { margin: 0; }

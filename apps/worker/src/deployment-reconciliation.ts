@@ -8,6 +8,7 @@ interface ReconciliationInput {
   projectId: string
   workspaceId: string
   status: 'queued' | 'uploading' | 'building' | 'ready' | 'failed'
+  target: 'preview' | 'production'
   errorCode?: DeploymentErrorCode | null
   providerProjectName: string | null
   providerDeploymentId: string | null
@@ -27,9 +28,12 @@ interface ReconciliationRepository {
 }
 
 interface ReconciliationProvider {
-  getDeployment(accessToken: string, providerDeploymentId: string, teamId: string | null): Promise<
-    { state: 'building' } | { state: 'ready'; url: string } | { state: 'failed' }
-  >
+  getDeployment(
+    accessToken: string,
+    providerDeploymentId: string,
+    teamId: string | null,
+    context: { projectName: string; target: 'preview' | 'production' },
+  ): Promise<{ state: 'building' } | { state: 'ready'; url: string } | { state: 'failed' }>
   findDeploymentByCorrelation(accessToken: string, input: {
     teamId: string | null
     projectName: string
@@ -69,7 +73,13 @@ export function createDeploymentReconciler(dependencies: {
 
     try {
       if (input.providerDeploymentId) {
-        const state = await dependencies.provider.getDeployment(token, input.providerDeploymentId, input.connection.teamId)
+        if (!input.providerProjectName) return { outcome: 'manual_review' }
+        const state = await dependencies.provider.getDeployment(
+          token,
+          input.providerDeploymentId,
+          input.connection.teamId,
+          { projectName: input.providerProjectName, target: input.target },
+        )
         if (state.state === 'ready') {
           await dependencies.repository.completeReady(context, input.id, state.url)
           return { outcome: 'completed' }

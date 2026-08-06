@@ -5,6 +5,7 @@ import {
   routeProposalIntent,
   type GenerationErrorCode,
   type ProposalAction,
+  type ProposalFeedbackCode,
   type ProposalIntent,
   type ProposalScope,
   type RemixAllowedChange,
@@ -50,6 +51,7 @@ interface InternalGenerationProposal {
   proposedDocument: DesignDocument | null
   proposalSummary: string | null
   errorCode: GenerationErrorCode | null
+  originalRequest?: string | null
   createdAt: Date
   updatedAt: Date
 }
@@ -60,6 +62,7 @@ export interface ProposalRepository {
     action: ProposalAction
     intent?: ProposalIntent
     allowedChanges?: RemixAllowedChange[]
+    feedbackCodes?: ProposalFeedbackCode[]
     prompt: string
     expectedVersion: number
     selectedNodeId?: string
@@ -157,7 +160,11 @@ function parseListQuery(request: Request) {
 }
 
 function publicProposal(input: InternalGenerationProposal | ProposalApiRun): ProposalApiRun | null {
-  if ('action' in input && 'status' in input) return input
+  if ('action' in input && 'status' in input) {
+    const visible = { ...input } as ProposalApiRun & { originalRequest?: string }
+    delete visible.originalRequest
+    return visible
+  }
   if (input.delivery !== 'proposal' || !input.proposalAction || !input.proposalStatus || !input.scope) return null
   return {
     id: input.id,
@@ -214,7 +221,11 @@ export function createProposalCollectionHandlers(dependencies: ProposalApiDepend
           requestedIntent: parsed.data.intent,
           prompt: parsed.data.prompt ?? '',
         })
-        if (!routed.accepted) throw new ApiError('invalid_scope', 'The selected content is not valid for this proposal', 422)
+        if (!routed.accepted) {
+          throw routed.code === 'forbidden_action'
+            ? new ApiError('forbidden_action', 'This request is outside AI authority', 422)
+            : new ApiError('invalid_scope', 'The selected content is not valid for this proposal', 422)
+        }
         const scope = deriveProposalScope(project.document, routed.targetNodeId)
         if (!scope) throw new ApiError('invalid_scope', 'The selected content is no longer available', 422)
         if (routed.intent === 'remix-section' && scope.kind !== 'section') {
@@ -222,6 +233,15 @@ export function createProposalCollectionHandlers(dependencies: ProposalApiDepend
         }
         if (routed.intent === 'replace-media' && scope.kind !== 'element') {
           throw new ApiError('invalid_scope', 'Media replacement requires an exact image target', 422)
+        }
+        if (routed.intent === 'style' && scope.kind !== 'element') {
+          throw new ApiError('invalid_scope', 'Style changes require an exact element target', 422)
+        }
+        if (routed.intent === 'layout' && scope.kind !== 'section') {
+          throw new ApiError('invalid_scope', 'Layout changes require a selected section', 422)
+        }
+        if (routed.intent === 'composition' && (scope.kind !== 'section' || project.document.nodes[scope.rootNodeId]?.type !== 'section')) {
+          throw new ApiError('invalid_scope', 'Composition changes require an exact top-level section', 422)
         }
         const admission = await dependencies.admission.acquire({
           userId: context.userId,
@@ -240,13 +260,20 @@ export function createProposalCollectionHandlers(dependencies: ProposalApiDepend
           if (!visible || visible.projectId !== projectId || visible.status !== 'ready') {
             throw new ApiError('proposal_not_replaceable', 'Proposal cannot be replaced', 409)
           }
-          prompt = 'Prepare another bounded option for the same request and scope'
+          const originalRequest = previous && 'originalRequest' in previous
+            ? previous.originalRequest
+            : undefined
+          if (!originalRequest) {
+            throw new ApiError('proposal_not_replaceable', 'Proposal cannot be replaced', 409)
+          }
+          prompt = originalRequest
         }
         const created = await dependencies.proposals.createProposal(context, projectId, {
           requestId: parsed.data.requestId,
           action: parsed.data.action,
           intent: routed.intent,
           allowedChanges: parsed.data.allowedChanges,
+          ...(parsed.data.feedbackCodes ? { feedbackCodes: parsed.data.feedbackCodes } : {}),
           prompt,
           expectedVersion: parsed.data.expectedVersion,
           ...(routed.targetNodeId ? { selectedNodeId: routed.targetNodeId } : {}),

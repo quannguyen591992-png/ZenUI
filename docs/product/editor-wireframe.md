@@ -604,34 +604,37 @@ Rules:
 7. At 390px, Page Manager and Navigation become keyboard-accessible sheets. Modal impact confirmation traps/restores focus, supports Escape where safe and keeps primary controls at least 44px.
 8. Viewer is read-only. Empty/loading/error/offline/conflict states preserve the active valid page or fall back to Home with a plain-language announcement.
 
-## 8. Simple and Advanced modes
+## 8. Visual Design and In-depth Editing
+
+The implementation values remain `simple | advanced`; the product-facing names describe the working style rather than the user's technical background.
 
 ### 8.1. Surface matrix
 
-| Capability | Simple mode | Advanced mode |
+| Capability | Visual Design (`simple`) | In-depth Editing (`advanced`) |
 |---|---|---|
 | Default navigation | Guided journey and Page Story Map | Components and Layers |
 | Editing unit | Website section or visible content | Design node/component |
 | Properties | Common content and section actions | Full Inspector metadata and responsive overrides |
 | AI entry | One contextual composer | Technical generate/edit scope may remain available |
 | Responsive behavior | Automatic plus device preview | Explicit responsive controls |
-| History | Undo/Redo and plain-language saved status | Revisions and technical versions |
+| History | Undo/Redo, saved status, named immutable revisions and restore | The same immutable revisions plus technical document-version context |
 | Publish | Latest saved website | Immutable revision and provider target details |
-| Intended user | Non-coder primary user | Developer/agency secondary user |
+| Intended workflow | Visual, section-first website editing | Detailed component and hierarchy control |
 
 ### 8.2. Transition contract
 
 ```text
-Simple mode -- “Open advanced controls” confirmation --> Advanced mode
-Advanced mode ---------------- “Return to Simple” -----> Simple mode
+Visual Design -- “Open in-depth editing” confirmation --> In-depth Editing
+In-depth Editing -------- “Return to Visual Design” -----> Visual Design
 ```
 
-1. The first entry to Advanced mode explains that it exposes components, hierarchy and detailed responsive controls; it does not imply data loss.
+1. The first entry to In-depth Editing explains that it exposes components, hierarchy and detailed responsive controls; it does not imply data loss.
 2. Transition creates no command, history entry or autosave.
-3. Current viewport and valid selection are preserved. A primitive-only selection maps to its containing section when returning to Simple mode.
+3. Current viewport and valid selection are preserved. A primitive-only selection maps to its containing section when returning to Visual Design.
 4. Any open proposal must be accepted or discarded before changing mode; mode switch never silently accepts it.
-5. Focus moves to the destination mode heading and can return to the mode switch.
+5. Focus moves to the destination experience heading and can return to the switch.
 6. Output before and after an immediate round trip must be identical.
+7. Named immutable revisions are available in both experiences and use the same server API, authorization and restore semantics.
 
 ## 9. Plain-language vocabulary
 

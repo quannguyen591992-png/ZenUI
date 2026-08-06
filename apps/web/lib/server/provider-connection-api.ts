@@ -70,7 +70,7 @@ const callbackSchema = z.object({
   source: z.literal('external'),
 }).strict()
 
-const requiredScopes = new Set(['deployment:read-write', 'integration-configuration:read-write'])
+const requiredScopes = new Set(['read-write:deployment', 'read-write:integration-configuration', 'read-write:project'])
 
 function trustedOrigin(request: Request, expected: string): void {
   const origin = request.headers.get('origin')
@@ -176,7 +176,8 @@ export function createProviderConnectionHandlers(deps: ProviderConnectionDepende
         if ((configuration.teamId ?? null) !== (teamId ?? null) || ![...requiredScopes].every(scope => configuration.scopes.includes(scope))) {
           throw new ApiError('provider_scope_insufficient', 'Provider permissions are insufficient', 403)
         }
-        const connectionId = deps.connections.reserveId()
+        const existing = await deps.connections.findPublic(context, 'vercel')
+        const connectionId = existing?.id ?? deps.connections.reserveId()
         const encryptedCredential = deps.cipher.encrypt(exchanged.accessToken, {
           provider: 'vercel', workspaceId: context.workspaceId, connectionId, configurationId: input.configurationId,
         })

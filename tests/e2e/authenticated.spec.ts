@@ -11,26 +11,26 @@ test.beforeEach(async ({ page, request }) => {
 test('creates a project, autosaves, reloads and restores an immutable revision', async ({ page }) => {
   const projectId = await createProject(page)
   await page.goto(`/projects/${projectId}`)
-  await openAdvancedEditor(page)
-  await page.getByRole('treeitem', { name: /^Tiêu đề: Biến ý tưởng thành website của riêng bạn/ }).click()
-  await page.getByRole('textbox', { name: 'Nội dung', exact: true }).fill('Persisted heading')
+  const canvas = page.getByLabel('Khung thiết kế')
+  await canvas.getByRole('heading', { name: 'Biến ý tưởng thành website của riêng bạn' }).click()
+  await page.getByRole('region', { name: 'Chỉnh sửa trực tiếp' }).getByRole('textbox', { name: 'Nội dung', exact: true }).fill('Persisted heading')
   await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
 
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Persisted heading' })).toBeVisible()
-  await openAdvancedEditor(page)
-  await page.getByLabel('Tên phiên bản').fill('Đã lưu baseline')
-  await page.getByRole('button', { name: 'Tạo phiên bản' }).click()
-  await expect(page.getByText('Đã lưu baseline')).toBeVisible({ timeout: 15_000 })
+  const revisions = page.getByRole('region', { name: 'Phiên bản' })
+  await revisions.getByLabel('Tên phiên bản').fill('Đã lưu baseline')
+  await revisions.getByRole('button', { name: 'Tạo phiên bản' }).click()
+  await expect(revisions.getByText('Đã lưu baseline')).toBeVisible({ timeout: 15_000 })
 
-  await page.getByRole('treeitem', { name: /^Tiêu đề: Persisted heading/ }).click()
-  await page.getByRole('textbox', { name: 'Nội dung', exact: true }).fill('Changed after revision')
+  await canvas.getByRole('heading', { name: 'Persisted heading' }).click()
+  await page.getByRole('region', { name: 'Chỉnh sửa trực tiếp' }).getByRole('textbox', { name: 'Nội dung', exact: true }).fill('Changed after revision')
   await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
   await expect.poll(async () => {
     const response = await page.request.get(`/api/v1/projects/${projectId}?workspaceId=${workspaceId}`)
     return (await response.json()).data.document.nodes['heading-1'].props.text as string
   }).toBe('Changed after revision')
-  await page.getByRole('button', { name: 'Khôi phục Đã lưu baseline' }).click()
+  await page.getByRole('region', { name: 'Phiên bản' }).getByRole('button', { name: 'Khôi phục Đã lưu baseline' }).click()
   await expect(page.getByRole('heading', { name: 'Persisted heading' })).toBeVisible()
 })
 

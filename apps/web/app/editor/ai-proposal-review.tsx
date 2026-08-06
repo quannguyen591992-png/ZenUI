@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { componentLabel, generationErrorLabel } from '../../lib/ui-copy'
 import { DesignDocumentRenderer } from '../components/design-document-renderer'
 
-import type { ProposalAction, ProposalIntent, ProposalScope, RemixAllowedChange } from '@zenui/ai-core'
+import type { ProposalAction, ProposalIntent, ProposalScope, PublicMediaProposalReview, RemixAllowedChange } from '@zenui/ai-core'
 import type { DesignDocument } from '@zenui/design-schema'
 import type { RenderViewport } from '@zenui/html-compiler/render'
 
@@ -23,6 +23,7 @@ export interface AiProposalSummary {
   scope: ProposalScope
   summary: string | null
   proposedDocument: DesignDocument | null
+  mediaReview?: PublicMediaProposalReview | null
   errorCode: string | null
 }
 
@@ -37,6 +38,7 @@ export interface AiProposalApi {
     expectedVersion: number
     selectedNodeId?: string
     previousProposalId?: string
+    feedbackCodes?: ('wrong_topic' | 'style_mismatch' | 'layout_mismatch' | 'unwanted_detail' | 'copy_mismatch' | 'other')[]
   }): Promise<AiProposalSummary>
   subscribe(
     projectId: string,
@@ -210,6 +212,8 @@ interface ContextualAiProps {
   workspaceId: string
   expectedVersion: number
   selectedNodeId: string | null
+  styleTargetNodeId?: string | null
+  styleScopeLabel?: string
   scopeLabel: string
   acceptedDocument: DesignDocument
   viewport: RenderViewport
@@ -218,6 +222,9 @@ interface ContextualAiProps {
   api: AiProposalApi
   initialPrompt?: string
   initialIntent?: ProposalIntent
+  styleEnabled?: boolean
+  layoutEnabled?: boolean
+  compositionEnabled?: boolean
   initialAllowedChanges?: RemixAllowedChange[]
   onAccepted: (result: { version: number; revisionId: string; document: DesignDocument }) => Promise<void> | void
   onStateChange?: (proposal: AiProposalSummary | null) => void
@@ -228,6 +235,8 @@ export function ContextualAi({
   workspaceId,
   expectedVersion,
   selectedNodeId,
+  styleTargetNodeId,
+  styleScopeLabel,
   scopeLabel,
   acceptedDocument,
   viewport,
@@ -236,28 +245,40 @@ export function ContextualAi({
   api,
   initialPrompt = '',
   initialIntent = 'standard',
+  styleEnabled = false,
+  layoutEnabled = false,
+  compositionEnabled = false,
   initialAllowedChanges = [],
   onAccepted,
   onStateChange,
 }: ContextualAiProps) {
   const [prompt, setPrompt] = useState(initialPrompt)
+  const [requestedIntent, setRequestedIntent] = useState(initialIntent)
   const [proposal, setProposal] = useState<AiProposalSummary | null>(null)
   const [error, setError] = useState('')
   const [refining, setRefining] = useState(false)
   const [refinement, setRefinement] = useState('')
+  const [feedbackCodes, setFeedbackCodes] = useState<('wrong_topic' | 'style_mismatch' | 'layout_mismatch' | 'unwanted_detail' | 'copy_mismatch' | 'other')[]>([])
   const [applying, setApplying] = useState(false)
   const [previewChoice, setPreviewChoice] = useState<'current' | 'proposed'>('proposed')
   const [comparisonOpen, setComparisonOpen] = useState(false)
+  const [selectedMediaCandidateId, setSelectedMediaCandidateId] = useState<string | null>(null)
   const [pollFailure, setPollFailure] = useState<'connection' | 'timeout' | null>(null)
   const closeRef = useRef<(() => void) | null>(null)
   const compareButtonRef = useRef<HTMLButtonElement | null>(null)
   const dialogRef = useRef<HTMLDivElement | null>(null)
+  const currentPreviewPaneRef = useRef<HTMLElement | null>(null)
+  const proposedPreviewPaneRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => () => closeRef.current?.(), [])
   useEffect(() => {
     if (initialPrompt) setPrompt(initialPrompt)
   }, [initialPrompt])
+  useEffect(() => setRequestedIntent(initialIntent), [initialIntent])
   useEffect(() => onStateChange?.(proposal), [onStateChange, proposal])
+  useEffect(() => {
+    setSelectedMediaCandidateId(proposal?.mediaReview?.selectedCandidateId ?? null)
+  }, [proposal?.id, proposal?.mediaReview?.selectedCandidateId])
   useEffect(() => {
     if (!comparisonOpen) return
     const previousOverflow = document.body.style.overflow
@@ -285,8 +306,16 @@ export function ContextualAi({
         first.focus()
       }
     }
+    const centerPreviewPane = (pane: HTMLElement | null): void => {
+      if (!pane) return
+      pane.scrollLeft = Math.max(0, (pane.scrollWidth - pane.clientWidth) / 2)
+    }
     document.addEventListener('keydown', onKeyDown)
-    requestAnimationFrame(() => focusable()[0]?.focus())
+    requestAnimationFrame(() => {
+      centerPreviewPane(currentPreviewPaneRef.current)
+      centerPreviewPane(proposedPreviewPaneRef.current)
+      focusable()[0]?.focus()
+    })
     return () => {
       document.body.style.overflow = previousOverflow
       document.removeEventListener('keydown', onKeyDown)
@@ -315,19 +344,24 @@ export function ContextualAi({
     try {
       const next = await api.create(projectId, {
         workspaceId, requestId: crypto.randomUUID(), action,
-        intent: initialIntent,
+        intent: requestedIntent,
         allowedChanges: initialAllowedChanges,
         ...(action !== 'try-another' ? { prompt: request } : {}),
         expectedVersion,
-        ...(selectedNodeId ? { selectedNodeId } : {}),
+        ...(activeSelectedNodeId ? { selectedNodeId: activeSelectedNodeId } : {}),
         ...(previousProposalId ? { previousProposalId } : {}),
+        ...(action === 'refine' && feedbackCodes.length > 0 ? { feedbackCodes } : {}),
       })
       subscribe(next)
       setPreviewChoice('proposed')
       setRefining(false)
       setRefinement('')
-    } catch {
-      setError('Không thể chuẩn bị đề xuất. Website của bạn vẫn giữ nguyên.')
+      setFeedbackCodes([])
+    } catch (value) {
+      const code = (value as { code?: string }).code
+      setError(code === 'forbidden_action'
+        ? 'Yêu cầu này nằm ngoài quyền của AI. ZenUI không chạy mã, chèn CSS tùy ý hoặc tự xuất bản. Website của bạn vẫn giữ nguyên.'
+        : 'Không thể chuẩn bị đề xuất. Website của bạn vẫn giữ nguyên.')
     }
   }
 
@@ -385,10 +419,21 @@ export function ContextualAi({
     }
   }
 
-  const mediaIntent = initialIntent === 'replace-media'
+  const mediaIntent = requestedIntent === 'replace-media'
+  const styleIntent = requestedIntent === 'style'
+  const layoutIntent = requestedIntent === 'layout'
+  const compositionIntent = requestedIntent === 'composition'
+  const activeSelectedNodeId = styleIntent ? styleTargetNodeId ?? selectedNodeId : selectedNodeId
+  const activeScopeLabel = styleIntent ? styleScopeLabel ?? scopeLabel : scopeLabel
   const suggestions = mediaIntent
     ? ['Tạo ảnh phù hợp bằng AI', 'Đổi hình cho giống nội dung trang hơn', 'Tìm ảnh phù hợp từ thư viện']
-    : ['Ngắn gọn hơn', 'Cao cấp hơn', 'Cải thiện hành động chính']
+    : styleIntent
+      ? ['Nhấn mạnh và căn giữa', 'Khoảng cách thoáng hơn', 'Xếp dọc trên điện thoại']
+      : layoutIntent
+        ? ['Căn giữa và thoáng hơn', 'Tạo bề mặt nhẹ', 'Tối ưu cho điện thoại']
+        : compositionIntent
+          ? ['Bố cục chia đôi', 'Xếp nội dung theo chiều dọc', 'Trình bày dạng thẻ']
+          : ['Ngắn gọn hơn', 'Cao cấp hơn', 'Cải thiện hành động chính']
   if (!proposal) {
     return (
       <section className="contextual-ai-pro" aria-labelledby="contextual-ai-heading">
@@ -396,7 +441,49 @@ export function ContextualAi({
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#ai-gradient)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><defs><linearGradient id="ai-gradient" x1="0%" y1="0%" x2="100%" y2="100%"><stop stopColor="#4f46e5" offset="0%"/><stop stopColor="#a855f7" offset="100%"/></linearGradient></defs><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
           Trợ lý thiết kế AI
         </h2>
-        <p className="ai-scope">Đang chỉnh: <strong>{scopeLabel}</strong></p>
+        <p className="ai-scope">Đang chỉnh: <strong>{activeScopeLabel}</strong></p>
+        {(styleEnabled || layoutEnabled || compositionEnabled) && !mediaIntent && (
+          <div className="ai-intent-switch" role="group" aria-label="Loại thay đổi AI">
+            <button
+              type="button"
+              aria-pressed={!styleIntent && !layoutIntent && !compositionIntent}
+              onClick={() => {
+                setRequestedIntent('standard')
+                setPrompt('')
+              }}
+            >Nội dung</button>
+            {styleEnabled && (
+              <button
+                type="button"
+                aria-pressed={styleIntent}
+                onClick={() => {
+                  setRequestedIntent('style')
+                  setPrompt('Nhấn mạnh và căn giữa thành phần đã chọn')
+                }}
+              >Phong cách</button>
+            )}
+            {layoutEnabled && (
+              <button
+                type="button"
+                aria-pressed={layoutIntent}
+                onClick={() => {
+                  setRequestedIntent('layout')
+                  setPrompt('Trình bày section cân giữa, thoáng và tối ưu cho điện thoại')
+                }}
+              >Bố cục</button>
+            )}
+            {compositionEnabled && (
+              <button
+                type="button"
+                aria-pressed={compositionIntent}
+                onClick={() => {
+                  setRequestedIntent('composition')
+                  setPrompt('Sắp xếp lại section theo bố cục chia đôi, giữ nguyên nội dung và hình ảnh')
+                }}
+              >Sắp xếp lại</button>
+            )}
+          </div>
+        )}
         <div className="ai-command-bar">
           <textarea
             aria-label="Bạn muốn cải thiện điều gì?"
@@ -451,6 +538,7 @@ export function ContextualAi({
     proposal.scope.rootNodeId,
   )
   const changes = proposalChanges(acceptedDocument, proposal.proposedDocument, proposal.scope.rootNodeId)
+  const mediaReview = proposal.mediaReview
 
   return (
     <section className="ai-proposal-review" aria-labelledby="proposal-review-heading">
@@ -487,6 +575,49 @@ export function ContextualAi({
         }}
       >So sánh nội dung cũ và mới</button>
       <p><strong>Tóm tắt:</strong> {proposal.summary}</p>
+      {mediaReview && (
+        <section className="ai-media-candidates" aria-labelledby="media-candidates-heading">
+          <h3 id="media-candidates-heading">Phương án hình ảnh</h3>
+          <p>Loại hình: {mediaReview.representation}.</p>
+          <div role="list" aria-label="Các phương án hình ảnh">
+            {mediaReview.candidates.map((candidate, index) => {
+              const selected = candidate.candidateId === selectedMediaCandidateId
+              return (
+                <article
+                  key={candidate.candidateId}
+                  role="listitem"
+                  data-selected={selected}
+                >
+                  <img
+                    src={`${assetOrigin.replace(/\/$/, '')}/a/${candidate.assetId}`}
+                    alt={mediaReview.alt}
+                    loading="lazy"
+                    decoding="async"
+                    referrerPolicy="no-referrer"
+                  />
+                  <strong>{candidate.source === 'generated' ? 'AI' : 'Thư viện'}</strong>
+                  <span>{candidate.safeReason}</span>
+                  <small>Điểm phù hợp {Math.round(candidate.score * 100)}%</small>
+                  <button
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setSelectedMediaCandidateId(candidate.candidateId)}
+                  >Chọn phương án {index + 1}</button>
+                  {candidate.candidateId === mediaReview.selectedCandidateId && <span>Đang được đề xuất</span>}
+                </article>
+              )
+            })}
+          </div>
+          <button
+            type="button"
+            disabled={!selectedMediaCandidateId}
+            onClick={() => {
+              setRefining(true)
+              setRefinement('Giữ ý tưởng và phong cách của phương án đang chọn, tạo một bố cục khác nhưng vẫn tuân thủ yêu cầu ban đầu.')
+            }}
+          >Tạo thêm giống phương án đang chọn</button>
+        </section>
+      )}
       {comparisonOpen && (
         <div className="ai-comparison-backdrop" data-testid="comparison-backdrop" onMouseDown={event => {
           if (event.target === event.currentTarget) setComparisonOpen(false)
@@ -523,10 +654,12 @@ export function ContextualAi({
             </div>
             <div className="ai-proposal-comparison">
               <section
+                ref={currentPreviewPaneRef}
                 id="current-proposal-panel"
                 role="tabpanel"
                 aria-labelledby="current-proposal-heading"
                 data-active={previewChoice === 'current'}
+                data-centered="true"
               >
                 <h3 id="current-proposal-heading">Hiện tại</h3>
                 <DesignDocumentRenderer
@@ -539,10 +672,12 @@ export function ContextualAi({
                 />
               </section>
               <section
+                ref={proposedPreviewPaneRef}
                 id="proposed-proposal-panel"
                 role="tabpanel"
                 aria-labelledby="proposed-proposal-heading"
                 data-active={previewChoice === 'proposed'}
+                data-centered="true"
               >
                 <h3 id="proposed-proposal-heading">Đề xuất</h3>
                 <DesignDocumentRenderer
@@ -574,6 +709,26 @@ export function ContextualAi({
       )}
       {refining && (
         <div className="proposal-refine">
+          <fieldset>
+            <legend>Điều gì chưa phù hợp?</legend>
+            {([
+              ['wrong_topic', 'Sai chủ đề'],
+              ['style_mismatch', 'Không đúng phong cách'],
+              ['layout_mismatch', 'Bố cục chưa phù hợp'],
+              ['unwanted_detail', 'Có chi tiết không mong muốn'],
+            ] as const).map(([code, label]) => (
+              <label key={code}>
+                <input
+                  type="checkbox"
+                  checked={feedbackCodes.includes(code)}
+                  onChange={event => setFeedbackCodes(current => event.target.checked
+                    ? [...current, code].slice(0, 3)
+                    : current.filter(value => value !== code))}
+                />
+                {label}
+              </label>
+            ))}
+          </fieldset>
           <label>Điều chỉnh đề xuất<textarea aria-label="Điều chỉnh đề xuất" value={refinement} onChange={event => setRefinement(event.target.value)} /></label>
           <button type="button" disabled={refinement.trim().length < 3} onClick={() => void create('refine', refinement.trim(), proposal.id)}>Tạo đề xuất tinh chỉnh</button>
         </div>

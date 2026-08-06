@@ -121,6 +121,34 @@ describe('PublishPanel', () => {
     expect(screen.getByText('Vercel')).toBeVisible()
   })
 
+  it('stops a misrouted Vercel callback instead of polling on the ZenUI Landing page', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const disconnected = api({ getConnection: vi.fn().mockResolvedValue(null) })
+    const popup = {
+      closed: false,
+      close: vi.fn(),
+      location: { href: 'http://localhost:3000/provider-callback-error' },
+    }
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    render(<PublishPanel
+      projectId={projectId}
+      workspaceId={workspaceId}
+      projectName="NovaFlow website"
+      primaryAction="Đặt lịch tư vấn"
+      canPublish
+      enabled
+      ensureLatestSavedRevision={() => Promise.resolve(revision)}
+      api={disconnected}
+    />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Xuất bản' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Kết nối dịch vụ xuất bản' }))
+    await act(() => vi.advanceTimersByTimeAsync(300))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Redirect URL')
+    expect(popup.close).toHaveBeenCalled()
+  })
+
   it('renders unavailable, popup and status recovery states without technical leaks', async () => {
     const user = userEvent.setup()
     const unavailable = render(<PublishPanel
@@ -203,7 +231,7 @@ describe('PublishPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Xuất bản' }))
     await user.click(screen.getByRole('checkbox', { name: 'Tôi hiểu website này sẽ trở thành công khai' }))
     await user.click(screen.getByRole('button', { name: 'Xuất bản website' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Website của bạn chưa được công khai')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Vercel không thể hoàn tất lần xuất bản này')
     terminal.unmount()
 
     vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('blocked'))
@@ -220,6 +248,48 @@ describe('PublishPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Xuất bản' }))
     await user.click(await screen.findByRole('button', { name: 'Sao chép địa chỉ' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Không thể sao chép địa chỉ website')
+  })
+
+  it('offers an actionable reconnect after provider authentication fails', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const failed = { ...queued, status: 'failed' as const, errorCode: 'provider_auth' as const }
+    const reconnected = { ...connection, updatedAt: '2026-08-04T14:09:00.000Z' }
+    const getConnection = vi.fn()
+      .mockResolvedValueOnce(connection)
+      .mockResolvedValueOnce(connection)
+      .mockResolvedValueOnce(reconnected)
+    const authorize = vi.fn().mockResolvedValue({ url: 'http://localhost:3000/api/e2e/provider-connect' })
+    const publishApi = api({ authorize, getConnection, list: vi.fn().mockResolvedValue([]), get: vi.fn().mockResolvedValue(failed) })
+    const popup = { closed: false, close: vi.fn() }
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    render(<PublishPanel
+      projectId={projectId}
+      workspaceId={workspaceId}
+      projectName="NovaFlow website"
+      primaryAction="Đặt lịch tư vấn"
+      canPublish
+      enabled
+      ensureLatestSavedRevision={() => Promise.resolve(revision)}
+      api={publishApi}
+    />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Xuất bản' }))
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Tôi hiểu website này sẽ trở thành công khai' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Xuất bản website' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Kết nối Vercel cần được xác thực lại')
+    const reconnect = screen.getByRole('button', { name: 'Kết nối lại Vercel' })
+    expect(reconnect).toBeEnabled()
+
+    await userEvent.click(reconnect)
+    expect(authorize).toHaveBeenCalledWith({ workspaceId, returnPath: `/projects/${projectId}` })
+    expect(window.open).toHaveBeenCalled()
+    await act(() => vi.advanceTimersByTimeAsync(300))
+    expect(popup.close).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Kết nối lại Vercel' })).toBeDisabled()
+    await act(() => vi.advanceTimersByTimeAsync(300))
+    expect(await screen.findByText('Dịch vụ xuất bản đã sẵn sàng')).toBeVisible()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Kết nối lại Vercel' })).not.toBeInTheDocument()
   })
 
   it('restores the latest ready public URL and reports safe retry copy', async () => {

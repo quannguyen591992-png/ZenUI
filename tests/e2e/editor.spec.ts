@@ -224,7 +224,7 @@ test('edits top-level sections in Simple mode and preserves the Advanced editor'
   await expect(page.getByRole('heading', { name: 'Câu chuyện trang' })).toBeVisible()
   await openAdvancedEditor(page)
   await expect(page.getByRole('tree', { name: 'Lớp' })).toBeVisible()
-  await page.getByRole('button', { name: 'Quay lại chế độ đơn giản' }).click()
+  await page.getByRole('button', { name: 'Quay lại thiết kế trực quan' }).click()
   await expect(page.getByRole('heading', { name: 'Câu chuyện trang' })).toBeVisible()
 
   await page.setViewportSize({ width: 390, height: 844 })

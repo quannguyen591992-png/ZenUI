@@ -70,7 +70,7 @@ export function createProviderConnectionRouteDependencies(): ProviderConnectionD
         id: configurationId,
         teamId: 'team_e2e',
         status: 'ready',
-        scopes: ['deployment:read-write', 'integration-configuration:read-write'],
+        scopes: ['read-write:deployment', 'read-write:integration-configuration', 'read-write:project'],
       }),
       disconnect: () => Promise.resolve(),
     }

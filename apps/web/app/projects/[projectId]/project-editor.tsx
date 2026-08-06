@@ -16,6 +16,9 @@ interface ProjectEditorProps {
   assetOrigin: string
   remoteImageHostAllowlist: string
   deploymentEnabled: boolean
+  assistantStyleEnabled?: boolean
+  assistantLayoutEnabled?: boolean
+  assistantCompositionEnabled?: boolean
 }
 
 interface SessionContext { workspaceId: string; role: 'owner' | 'editor' | 'viewer' }
@@ -44,7 +47,7 @@ async function readData<T>(response: Response): Promise<T> {
   return body.data
 }
 
-export function ProjectEditor({ projectId, editorOrigin, previewOrigin, assetOrigin, remoteImageHostAllowlist, deploymentEnabled }: ProjectEditorProps) {
+export function ProjectEditor({ projectId, editorOrigin, previewOrigin, assetOrigin, remoteImageHostAllowlist, deploymentEnabled, assistantStyleEnabled, assistantLayoutEnabled, assistantCompositionEnabled }: ProjectEditorProps) {
   const [loaded, setLoaded] = useState<LoadedProject | null>(null)
   const [error, setError] = useState('')
   const [attempt, setAttempt] = useState(0)
@@ -130,6 +133,9 @@ export function ProjectEditor({ projectId, editorOrigin, previewOrigin, assetOri
       previewOrigin={previewOrigin}
       assetOrigin={assetOrigin}
       deploymentEnabled={deploymentEnabled}
+      assistantStyleEnabled={assistantStyleEnabled ?? false}
+      assistantLayoutEnabled={assistantLayoutEnabled ?? false}
+      assistantCompositionEnabled={assistantCompositionEnabled ?? false}
       brief={loaded.brief}
     />
   )

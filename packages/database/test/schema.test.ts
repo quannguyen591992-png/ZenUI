@@ -103,6 +103,7 @@ describe('database schema', () => {
       'lease_expires_at', 'last_heartbeat_at', 'attempt_count', 'retained_cleanup_at',
       'delivery', 'proposal_action', 'proposal_status', 'previous_proposal_id',
       'proposal_scope', 'proposal_commands', 'proposed_document', 'proposal_summary',
+      'proposal_feedback_codes', 'proposal_lineage',
       'proposal_accepted_at', 'proposal_discarded_at',
     ]))
     expect(getTableConfig(generationRuns).indexes.map(index => index.config.name)).toContain(

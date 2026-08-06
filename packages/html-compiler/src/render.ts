@@ -104,6 +104,7 @@ export interface RenderPlan {
 export interface RenderAssetOptions {
   imagePolicy?: RemoteImagePolicy
   assetOrigin?: string
+  portableAssetPaths?: Readonly<Record<string, string>>
   pageId?: string
   route?: string
   routePrefix?: string
@@ -182,9 +183,11 @@ export function nodeStyleToCss(style: NodeStyle): string {
     .join(';')
 }
 
-function assetUrl(assetOrigin: string | undefined, assetId: string): string | null {
-  if (!assetOrigin) return null
-  try { return `${new URL(assetOrigin).origin}/a/${assetId}` } catch { return null }
+function assetUrl(options: RenderAssetOptions, assetId: string): string | null {
+  const portablePath = options.portableAssetPaths?.[assetId]
+  if (portablePath) return portablePath
+  if (!options.assetOrigin) return null
+  try { return `${new URL(options.assetOrigin).origin}/a/${assetId}` } catch { return null }
 }
 
 function pageHref(document: DesignDocument, pageId: string, fragment: string | undefined, prefix = ''): string | null {
@@ -199,7 +202,7 @@ function nodeAttributes(document: DesignDocument, node: DesignNode, options: Ren
   if (node.type === 'image' && 'alt' in node.props) {
     if ('src' in node.props) attributes.src = node.props.src
     if ('assetId' in node.props) {
-      const resolved = assetUrl(options.assetOrigin, node.props.assetId)
+      const resolved = assetUrl(options,node.props.assetId)
       if (resolved) attributes.src = resolved
     }
     attributes.alt = node.props.alt
@@ -224,7 +227,7 @@ function nodeAttributes(document: DesignDocument, node: DesignNode, options: Ren
 
 function brandLogoChild(node: DesignNode, options: RenderAssetOptions): RenderPlanNode | null {
   if (node.type !== 'link' || !('logoAssetId' in node.props) || !node.props.logoAssetId || !node.props.logoAlt) return null
-  const src = assetUrl(options.assetOrigin, node.props.logoAssetId)
+  const src = assetUrl(options,node.props.logoAssetId)
   if (!src) return null
   return {
     tag: 'img',

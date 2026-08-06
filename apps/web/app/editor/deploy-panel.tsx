@@ -10,6 +10,8 @@ import { useEffect, useRef, useState } from 'react'
 
 import { deploymentErrorLabel } from '../../lib/ui-copy'
 
+import { inspectProviderPopup, PROVIDER_POPUP_MAX_ATTEMPTS, PROVIDER_POPUP_POLL_INTERVAL_MS } from './provider-popup-monitor'
+
 interface RevisionSummary {
   id: string
   summary: string
@@ -117,24 +119,42 @@ export function DeployPanel({ projectId, workspaceId, revisions, api = browserDe
       const result = await api.authorize({ workspaceId, returnPath: `/projects/${projectId}` })
       popup.current = window.open(result.url, 'zenui-vercel-connect', 'popup,width=720,height=720')
       if (!popup.current) throw new Error('popup_blocked')
+      let attempts = 0
+      const returnPath = `/projects/${projectId}`
       const poll = async (): Promise<void> => {
+        const activePopup = popup.current
+        if (!activePopup) return
+        const state = inspectProviderPopup(activePopup, window.location.origin, returnPath)
+        if (state === 'misconfigured') {
+          activePopup.close()
+          setBusy(false)
+          setError('Redirect URL của Vercel chưa trỏ đến callback của ZenUI. Hãy cập nhật cấu hình rồi kết nối lại.')
+          return
+        }
+        if (state === 'closed') {
+          setBusy(false)
+          return
+        }
         try {
           const current = await loadConnection()
           if (current?.status === 'connected') {
             setBusy(false)
-            popup.current?.close()
+            activePopup.close()
             return
           }
         } catch {
-          // Callback có thể vẫn đang hoàn tất; giữ vòng kiểm tra popup có giới hạn.
+          // Callback có thể vẫn đang hoàn tất; giữ vòng kiểm tra có giới hạn.
         }
-        if (popup.current?.closed) {
+        attempts += 1
+        if (attempts >= PROVIDER_POPUP_MAX_ATTEMPTS) {
+          activePopup.close()
           setBusy(false)
+          setError('Kết nối Vercel mất quá nhiều thời gian. Hãy kiểm tra Redirect URL rồi thử lại.')
           return
         }
-        timer.current = window.setTimeout(() => void poll(), 250)
+        timer.current = window.setTimeout(() => void poll(), PROVIDER_POPUP_POLL_INTERVAL_MS)
       }
-      timer.current = window.setTimeout(() => void poll(), 250)
+      timer.current = window.setTimeout(() => void poll(), PROVIDER_POPUP_POLL_INTERVAL_MS)
     } catch (failure) {
       setBusy(false)
       setError(failure instanceof Error && failure.message === 'popup_blocked' ? 'Trình duyệt đã chặn cửa sổ bật lên. Hãy cho phép rồi thử lại.' : 'Không thể kết nối Vercel.')

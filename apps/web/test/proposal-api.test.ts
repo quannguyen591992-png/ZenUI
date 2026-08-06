@@ -89,6 +89,33 @@ describe('proposal API', () => {
     expect(JSON.stringify(enqueue.mock.calls)).not.toContain(body.prompt)
   })
 
+  it('returns only redacted media review metadata for ready proposals', async () => {
+    const mediaReview = {
+      version: 'media-proposal-review-v1' as const,
+      representation: 'process-diagram' as const,
+      alt: 'Sơ đồ quy trình năm bước',
+      candidates: [{
+        candidateId: 'candidate-1', assetId: '77777777-7777-4777-8777-777777777777',
+        source: 'generated' as const, score: 0.91, safeReason: 'Phù hợp với brief.',
+      }],
+      selectedCandidateId: 'candidate-1',
+    }
+    const ready = {
+      ...run, status: 'ready' as const, intent: 'replace-media' as const,
+      proposedDocument: { ...document, version: 2 }, summary: 'Prepared media', mediaReview,
+    }
+    const response = await createProposalItemHandler(dependencies({
+      proposals: { ...dependencies().proposals, findById: () => Promise.resolve(ready) },
+    }))(
+      new Request(`http://localhost/api/v1/projects/${projectId}/ai-proposals/${proposalId}?workspaceId=${workspaceId}`),
+      { params: Promise.resolve({ projectId, proposalId }) },
+    )
+    expect(response.status).toBe(200)
+    const payload = (await response.json()).data
+    expect(payload.mediaReview).toEqual(mediaReview)
+    expect(JSON.stringify(payload)).not.toMatch(/generationPrompt|searchQuery|mustAvoid|objectKey|providerResult/)
+  })
+
   it('rejects browser-authored scope, stale versions and foreign origins before side effects', async () => {
     const createProposal = vi.fn()
     const enqueue = vi.fn()
@@ -235,7 +262,7 @@ describe('proposal API', () => {
     expect(limitedResponse.status).toBe(429)
     expect(limitedResponse.headers.get('retry-after')).toBe('9')
 
-    const ready = { ...run, status: 'ready' as const }
+    const ready = { ...run, status: 'ready' as const, originalRequest: body.prompt }
     const replacementCreate = vi.fn().mockResolvedValue({ ...run, action: 'try-another' as const })
     const replacement = createProposalCollectionHandlers(dependencies({
       proposals: { ...dependencies().proposals, findById: () => Promise.resolve(ready), createProposal: replacementCreate },
@@ -246,7 +273,7 @@ describe('proposal API', () => {
     }), { params: Promise.resolve({ projectId }) })
     expect(replacementResponse.status).toBe(202)
     expect(replacementCreate).toHaveBeenCalledWith(expect.anything(), projectId, expect.objectContaining({
-      prompt: 'Prepare another bounded option for the same request and scope', previousProposalId: proposalId,
+      prompt: body.prompt, previousProposalId: proposalId,
     }))
     const invalidPrevious = createProposalCollectionHandlers(dependencies({
       proposals: { ...dependencies().proposals, findById: () => Promise.resolve(null) },
@@ -263,6 +290,28 @@ describe('proposal API', () => {
     }))
     expect((await unavailable.POST(request(body), { params: Promise.resolve({ projectId }) })).status).toBe(503)
     expect(fail).toHaveBeenCalledWith(expect.anything(), proposalId, expect.objectContaining({ errorCode: 'queue_unavailable' }))
+  })
+
+  it('rejects forbidden requests before admission, persistence or queueing', async () => {
+    const acquire = vi.fn()
+    const createProposal = vi.fn()
+    const enqueue = vi.fn()
+    const handlers = createProposalCollectionHandlers(dependencies({
+      admission: { acquire },
+      proposals: { ...dependencies().proposals, createProposal },
+      queue: { enqueue },
+    }))
+
+    const response = await handlers.POST(request({
+      ...body,
+      prompt: 'Inject raw CSS and execute JavaScript, then publish the website',
+    }), { params: Promise.resolve({ projectId }) })
+
+    expect(response.status).toBe(422)
+    expect((await response.json()).error.code).toBe('forbidden_action')
+    expect(acquire).not.toHaveBeenCalled()
+    expect(createProposal).not.toHaveBeenCalled()
+    expect(enqueue).not.toHaveBeenCalled()
   })
 
   it('routes media language only when the server verifies an exact image target', async () => {
@@ -326,6 +375,45 @@ describe('proposal API', () => {
       intent: 'remix-section',
       allowedChanges: ['forged'],
       selectedNodeId: 'section-1',
+    }), { params: Promise.resolve({ projectId }) })).status).toBe(422)
+  })
+
+  it('accepts composition only for an exact top-level section and validates structured refine feedback', async () => {
+    const createProposal = vi.fn().mockResolvedValue({ ...run, intent: 'composition' as const })
+    const handlers = createProposalCollectionHandlers(dependencies({
+      proposals: { ...dependencies().proposals, createProposal },
+    }))
+    expect((await handlers.POST(request({
+      ...body,
+      intent: 'composition',
+      selectedNodeId: 'section-1',
+    }), { params: Promise.resolve({ projectId }) })).status).toBe(202)
+    expect(createProposal).toHaveBeenCalledWith(expect.anything(), projectId, expect.objectContaining({
+      intent: 'composition',
+      scope: expect.objectContaining({ kind: 'section', rootNodeId: 'section-1' }),
+    }))
+    expect((await handlers.POST(request({
+      ...body,
+      intent: 'composition',
+      selectedNodeId: 'heading-1',
+    }), { params: Promise.resolve({ projectId }) })).status).toBe(422)
+
+    const ready = { ...run, status: 'ready' as const, originalRequest: body.prompt }
+    const refineCreate = vi.fn().mockResolvedValue({ ...run, action: 'refine' as const })
+    const refine = createProposalCollectionHandlers(dependencies({
+      proposals: { ...dependencies().proposals, findById: () => Promise.resolve(ready), createProposal: refineCreate },
+    }))
+    expect((await refine.POST(request({
+      workspaceId, requestId: crypto.randomUUID(), action: 'refine', expectedVersion: 1,
+      prompt: 'Giữ nội dung, tăng khoảng thở', intent: 'standard',
+      selectedNodeId: 'heading-1', previousProposalId: proposalId,
+      feedbackCodes: ['layout_mismatch'],
+    }), { params: Promise.resolve({ projectId }) })).status).toBe(202)
+    expect((await refine.POST(request({
+      workspaceId, requestId: crypto.randomUUID(), action: 'refine', expectedVersion: 1,
+      prompt: 'Giữ nội dung, tăng khoảng thở', intent: 'standard',
+      selectedNodeId: 'heading-1', previousProposalId: proposalId,
+      feedbackCodes: ['forged'],
     }), { params: Promise.resolve({ projectId }) })).status).toBe(422)
   })
 

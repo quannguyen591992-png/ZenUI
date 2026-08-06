@@ -1,11 +1,26 @@
 import { pathToFileURL } from 'node:url'
 
 import {
+  loadAssistantV2EvalDataset,
   loadEvalDataset,
   loadSiteIntelligenceEvalDataset,
+  runAssistantV2Eval,
   runDeterministicEval,
   runSiteIntelligenceEval,
 } from '../packages/ai-core/dist/eval.js'
+
+export function parseAssistantRolloutConfig(environment = process.env) {
+  const mode = environment.AI_ASSISTANT_ROLLOUT_MODE ?? 'disabled'
+  if (!['disabled', 'shadow', 'opt-in'].includes(mode)) throw new Error('AI_ASSISTANT_ROLLOUT_MODE is invalid')
+  const samplePercent = Number(environment.AI_ASSISTANT_SHADOW_SAMPLE_PERCENT ?? '0')
+  if (!Number.isInteger(samplePercent) || samplePercent < 0 || samplePercent > 100) {
+    throw new Error('AI_ASSISTANT_SHADOW_SAMPLE_PERCENT is invalid')
+  }
+  if (mode !== 'shadow' && samplePercent !== 0) {
+    throw new Error('AI_ASSISTANT_SHADOW_SAMPLE_PERCENT requires shadow rollout mode')
+  }
+  return { mode, samplePercent }
+}
 
 export function parseLiveEvalConfig(environment = process.env) {
   if (environment.AI_EVAL_LIVE !== 'true') return { live: false }
@@ -47,6 +62,21 @@ async function main(environment = process.env) {
     accepted: siteIntelligenceReport.accepted,
   }))
   if (!siteIntelligenceReport.accepted) process.exitCode = 1
+
+  const assistantV2Dataset = await loadAssistantV2EvalDataset(
+    new URL('../packages/ai-core/test/fixtures/assistant-v2-eval-v1.json', import.meta.url),
+  )
+  const assistantV2Report = await runAssistantV2Eval(assistantV2Dataset)
+  console.log(JSON.stringify({
+    version: assistantV2Report.version,
+    mode: 'deterministic',
+    total: assistantV2Report.total,
+    passed: assistantV2Report.passed,
+    failed: assistantV2Report.failed,
+    metrics: assistantV2Report.metrics,
+    accepted: assistantV2Report.accepted,
+  }))
+  if (!assistantV2Report.accepted) process.exitCode = 1
 
   const live = parseLiveEvalConfig(environment)
   if (!live.live) {

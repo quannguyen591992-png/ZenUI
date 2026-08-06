@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { createSafeWorkerFailureEvent, loadWorkerRuntimeConfig } from '../src/runtime.js'
+import {
+  createSafeWorkerFailureEvent,
+  loadWorkerRuntimeConfig,
+  shouldSampleAssistantShadow,
+} from '../src/runtime.js'
 
 const environment = {
   DATABASE_URL: 'postgresql://example.test/zenui',
@@ -77,6 +81,40 @@ describe('worker runtime configuration', () => {
     expect(() => loadWorkerRuntimeConfig()).toThrow('WORKER_QUEUE_RESUME_AT_OLDEST_AGE_SECONDS must be below WORKER_QUEUE_PAUSE_AT_OLDEST_AGE_SECONDS')
   })
 
+  it('loads explicit rollout modes and deterministic bounded shadow sampling', () => {
+    process.env = {
+      ...previous,
+      ...environment,
+      AI_ASSISTANT_ROLLOUT_MODE: 'shadow',
+      AI_ASSISTANT_SHADOW_SAMPLE_PERCENT: '25',
+    }
+    expect(loadWorkerRuntimeConfig().generation).toMatchObject({
+      assistantRolloutMode: 'shadow',
+      assistantShadowSamplePercent: 25,
+    })
+    const first = shouldSampleAssistantShadow('00000000-0000-4000-8000-000000000001', 25)
+    expect(shouldSampleAssistantShadow('00000000-0000-4000-8000-000000000001', 25)).toBe(first)
+    expect(shouldSampleAssistantShadow('run', 0)).toBe(false)
+    expect(shouldSampleAssistantShadow('run', 100)).toBe(true)
+
+    process.env = { ...previous, ...environment, AI_ASSISTANT_ROLLOUT_MODE: 'default' }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('AI_ASSISTANT_ROLLOUT_MODE is invalid')
+    process.env = {
+      ...previous,
+      ...environment,
+      AI_ASSISTANT_ROLLOUT_MODE: 'opt-in',
+      AI_ASSISTANT_SHADOW_SAMPLE_PERCENT: '1',
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('AI_ASSISTANT_SHADOW_SAMPLE_PERCENT requires shadow rollout mode')
+    process.env = {
+      ...previous,
+      ...environment,
+      AI_ASSISTANT_ROLLOUT_MODE: 'disabled',
+      AI_ASSISTANT_V2_ENABLED: 'true',
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('AI_ASSISTANT_V2_ENABLED requires opt-in rollout mode')
+  })
+
   it('loads generation, asset and export services without Vercel configuration', () => {
     process.env = {
       ...previous,
@@ -97,6 +135,12 @@ describe('worker runtime configuration', () => {
       imageGenerationEnabled: true,
       imageModel: 'imagen-test',
       maxImagesPerRun: 4,
+      assistantV2Enabled: false,
+      assistantPlannerEnabled: false,
+      assistantMediaJudgeEnabled: false,
+      assistantMultiCandidateEnabled: false,
+      assistantStyleEnabled: false,
+      assistantLayoutEnabled: false,
       generateMaxOutputTokens: 4096,
       editMaxOutputTokens: 2048,
       generateMaxTotalTokens: 12_000,
@@ -107,6 +151,112 @@ describe('worker runtime configuration', () => {
       maxTransientRetries: 1,
     })
     expect(config.export).toMatchObject({ bucket: 'zenui' })
+  })
+
+  it('rejects dependent assistant lanes unless the master and prerequisite flags are enabled', () => {
+    process.env = {
+      ...previous,
+      ...environment,
+      AI_ASSISTANT_PLANNER_ENABLED: 'true',
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('AI_ASSISTANT_PLANNER_ENABLED requires AI_ASSISTANT_V2_ENABLED')
+
+    process.env = {
+      ...previous,
+      ...environment,
+      AI_ASSISTANT_ROLLOUT_MODE: 'opt-in',
+      AI_ASSISTANT_V2_ENABLED: 'true',
+      AI_ASSISTANT_MEDIA_JUDGE_ENABLED: 'true',
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('AI_ASSISTANT_MEDIA_JUDGE_ENABLED requires AI_ASSISTANT_PLANNER_ENABLED')
+
+    process.env = {
+      ...previous,
+      ...environment,
+      AI_ASSISTANT_ROLLOUT_MODE: 'opt-in',
+      AI_ASSISTANT_V2_ENABLED: 'true',
+      AI_ASSISTANT_STYLE_ENABLED: 'true',
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('AI_ASSISTANT_STYLE_ENABLED requires AI_ASSISTANT_PLANNER_ENABLED')
+
+    process.env = {
+      ...previous,
+      ...environment,
+      AI_ASSISTANT_ROLLOUT_MODE: 'opt-in',
+      AI_ASSISTANT_V2_ENABLED: 'true',
+      AI_ASSISTANT_LAYOUT_ENABLED: 'true',
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('AI_ASSISTANT_LAYOUT_ENABLED requires AI_ASSISTANT_PLANNER_ENABLED')
+
+    process.env = {
+      ...previous,
+      ...environment,
+      AI_ASSISTANT_ROLLOUT_MODE: 'opt-in',
+      AI_ASSISTANT_V2_ENABLED: 'true',
+      AI_ASSISTANT_COMPOSITION_ENABLED: 'true',
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('AI_ASSISTANT_COMPOSITION_ENABLED requires AI_ASSISTANT_PLANNER_ENABLED')
+
+    process.env = {
+      ...previous,
+      ...environment,
+      AI_ASSISTANT_ROLLOUT_MODE: 'opt-in',
+      AI_ASSISTANT_V2_ENABLED: 'true',
+      AI_ASSISTANT_PLANNER_ENABLED: 'true',
+      AI_ASSISTANT_MEDIA_JUDGE_ENABLED: 'true',
+      GOOGLE_IMAGE_GENERATION_ENABLED: 'false',
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('AI_ASSISTANT_MEDIA_JUDGE_ENABLED requires GOOGLE_IMAGE_GENERATION_ENABLED')
+
+    process.env = {
+      ...previous,
+      ...environment,
+      AI_ASSISTANT_ROLLOUT_MODE: 'opt-in',
+      AI_ASSISTANT_V2_ENABLED: 'true',
+      AI_ASSISTANT_PLANNER_ENABLED: 'true',
+      AI_ASSISTANT_MULTI_CANDIDATE_ENABLED: 'true',
+      AI_IMAGE_MAX_PER_RUN: '1',
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('AI_ASSISTANT_MULTI_CANDIDATE_ENABLED requires AI_IMAGE_MAX_PER_RUN of at least 2')
+  })
+
+  it('loads generation-only and export-only optional service branches', () => {
+    process.env = {
+      ...previous,
+      ...environment,
+      WORKER_SERVICES: 'generation',
+      GOOGLE_IMAGE_GENERATION_ENABLED: 'false',
+    }
+    const generation = loadWorkerRuntimeConfig()
+    expect(generation).toMatchObject({ asset: null, export: null, deployment: null, storage: null })
+    expect(generation.generation).toMatchObject({ imageGenerationEnabled: false, imageModel: null })
+
+    process.env = {
+      ...previous,
+      ...environment,
+      WORKER_SERVICES: 'export',
+      GOOGLE_GENERATIVE_AI_API_KEY: '',
+      GEMINI_MODEL: '',
+    }
+    const exportOnly = loadWorkerRuntimeConfig()
+    expect(exportOnly).toMatchObject({ generation: null, asset: null, deployment: null })
+    expect(exportOnly.export).toMatchObject({ bucket: 'zenui', concurrency: 2 })
+    expect(exportOnly.storage).toMatchObject({ bucket: 'zenui' })
+  })
+
+  it('loads deployment storage without generation or asset services', () => {
+    process.env = {
+      ...previous,
+      ...environment,
+      WORKER_SERVICES: 'deployment',
+      GOOGLE_GENERATIVE_AI_API_KEY: '',
+      GEMINI_MODEL: '',
+      PEXELS_API_KEY: '',
+    }
+    const config = loadWorkerRuntimeConfig()
+    expect(config).toMatchObject({ generation: null, asset: null, export: null })
+    expect(config.deployment).toMatchObject({ clientId: 'client-id' })
+    expect(config.storage).toMatchObject({ bucket: 'zenui' })
   })
 
   it('rejects unknown or empty worker service selections', () => {
@@ -129,6 +279,14 @@ describe('worker runtime configuration', () => {
       AI_EDIT_MAX_OUTPUT_TOKENS: '1500',
       AI_GENERATE_MAX_TOTAL_TOKENS: '9000',
       AI_EDIT_MAX_TOTAL_TOKENS: '5000',
+      AI_ASSISTANT_ROLLOUT_MODE: 'opt-in',
+      AI_ASSISTANT_V2_ENABLED: 'true',
+      AI_ASSISTANT_PLANNER_ENABLED: 'true',
+      AI_ASSISTANT_MEDIA_JUDGE_ENABLED: 'true',
+      AI_ASSISTANT_MULTI_CANDIDATE_ENABLED: 'true',
+      AI_ASSISTANT_STYLE_ENABLED: 'true',
+      AI_ASSISTANT_LAYOUT_ENABLED: 'true',
+      AI_ASSISTANT_COMPOSITION_ENABLED: 'true',
       AI_GENERATE_MAX_REPAIR_ATTEMPTS: '0',
       AI_EDIT_MAX_REPAIR_ATTEMPTS: '1',
       AI_PROVIDER_HTTP_ATTEMPTS: '1',
@@ -142,6 +300,13 @@ describe('worker runtime configuration', () => {
       queuePauseAtOldestAgeSeconds: 180,
       queueResumeAtOldestAgeSeconds: 90,
       generation: {
+        assistantV2Enabled: true,
+        assistantPlannerEnabled: true,
+        assistantMediaJudgeEnabled: true,
+        assistantMultiCandidateEnabled: true,
+        assistantStyleEnabled: true,
+        assistantLayoutEnabled: true,
+        assistantCompositionEnabled: true,
         generateMaxOutputTokens: 3000,
         editMaxOutputTokens: 1500,
         generateMaxTotalTokens: 9000,

@@ -49,6 +49,29 @@ describe('worker operations server', () => {
     expect(await metrics.text()).toContain('zenui_service_up')
   })
 
+  it('reports ready when every configured dependency probe succeeds', async () => {
+    const server = createWorkerOperationsServer({
+      host: '127.0.0.1', port: 0, metricsSecret: 'secret',
+      instanceId: '33333333333333333333333333333333', services: ['generation'],
+      probes: {
+        postgres: vi.fn().mockResolvedValue(true),
+        redis: vi.fn().mockResolvedValue(true),
+      },
+      renderMetrics: () => '',
+    })
+    servers.push(server)
+    const address = await server.start()
+    const response = await fetch(`http://127.0.0.1:${address.port}/health/ready`)
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      service: 'worker', status: 'ready',
+      dependencies: [
+        { name: 'postgres', status: 'ready' },
+        { name: 'redis', status: 'ready' },
+      ],
+    })
+  })
+
   it('rejects invalid configuration and duplicate starts', async () => {
     expect(() => createWorkerOperationsServer({
       host: '127.0.0.1', port: 0, metricsSecret: '', instanceId: '22222222222222222222222222222222', services: [], probes: {}, renderMetrics: () => '',
