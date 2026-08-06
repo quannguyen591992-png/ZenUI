@@ -1,4 +1,6 @@
-import { AI_PROMPT_VERSION } from '@zenui/ai-core'
+import { createHash } from 'node:crypto'
+
+import { AI_PROMPT_VERSION, type AssistantContextPack, type VisualBrief } from '@zenui/ai-core'
 import { DEPLOYMENT_CONTENT_TYPE } from '@zenui/deployment-core'
 import { createRemoteImagePolicy, createValidDesignFixture, migrateDesignDocumentV1ToV2 } from '@zenui/design-schema'
 import { describe, expect, it, vi } from 'vitest'
@@ -8,9 +10,14 @@ import {
   createExportProcessor,
   createDesignDirectionProcessor,
   createGenerationProcessor,
+  createMediaProposalV2Resolver,
   createGeminiImageGenerator,
   createGeminiProvider,
+  createGeminiMediaIntelligenceProvider,
   createHybridMediaResolver,
+  createLayoutProposalV2Resolver,
+  createSectionCompositionV2Resolver,
+  createStyleProposalV2Resolver,
   createMockWorkerProvider,
   workerBoundary,
 } from '../src/index.js'
@@ -104,6 +111,33 @@ describe('AI worker boundary', () => {
     expect(projectedSchema).toContain('"footerTagline"')
     expect(JSON.stringify(generateContent.mock.calls[0]?.[0])).not.toContain('additionalProperties')
     expect(JSON.stringify(generateContent.mock.calls[0]?.[0]).length).toBeLessThan(50_000)
+  })
+
+  it('uses zero token fallbacks and bounded image-host guidance for sparse Gemini responses', async () => {
+    const generateContent = vi.fn().mockResolvedValue({ text: JSON.stringify(blueprint) })
+    const provider = createGeminiProvider({ model: 'gemini-test', generateContent })
+    const result = await provider.generateLandingPageBlueprint({
+      promptVersion: AI_PROMPT_VERSION,
+      prompt: 'Build with approved images',
+      context: {
+        mode: 'generate', request: 'Build with approved images', registry: [],
+        theme: createValidDesignFixture().theme,
+        imageHosts: ['images.example.com'],
+      },
+      signal: new AbortController().signal,
+    })
+    expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0, totalTokens: 0 })
+    const contents = JSON.parse(generateContent.mock.calls[0]?.[0].contents) as { imageGuidance?: string }
+    expect(contents.imageGuidance).toContain('images.example.com')
+
+    const missingText = createGeminiProvider({
+      model: 'gemini-test', generateContent: vi.fn().mockResolvedValue({ text: undefined }),
+    })
+    await expect(missingText.generateLandingPageBlueprint({
+      promptVersion: AI_PROMPT_VERSION, prompt: 'Build',
+      context: { mode: 'generate', request: 'Build', registry: [], theme: createValidDesignFixture().theme },
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: 'provider_error' })
   })
 
   it('generates one transient direction set with exactly one Gemini request and no document apply', async () => {
@@ -242,6 +276,89 @@ describe('AI worker boundary', () => {
     expect(JSON.stringify(generateContent.mock.calls[0]?.[0])).not.toMatch(/providerResultId|assetId/i)
   })
 
+  it('uses enforced Gemini schemas for visual briefs and batch candidate judgments', async () => {
+    const visualBrief: VisualBrief = {
+      version: 'visual-brief-v1', subject: 'Product development workflow', message: 'Five stages',
+      representation: 'process-diagram', composition: 'Five columns linked by arrows',
+      mustInclude: ['five stages', 'arrows'], mustAvoid: ['people'], peoplePolicy: 'forbidden',
+      textPolicy: 'symbolic-only', style: 'editorial diagram', palette: ['#2563eb'],
+      aspectRatio: 'wide', focalArea: 'center',
+      generationPrompt: 'Five stage product process diagram without people or readable text',
+      searchQuery: null, alt: 'Five-stage product development process diagram',
+    }
+    const evaluations = [{
+      candidateId: 'candidate-0', semanticRelevance: 0.9, representationMatch: 0.95,
+      mustIncludeCoverage: 0.9, compositionFit: 0.85, websiteUsability: 0.88,
+      confidence: 0.9, violations: [], safeReason: 'Matches the process brief.',
+    }]
+    const generateContent = vi.fn()
+      .mockResolvedValueOnce({
+        text: JSON.stringify(visualBrief),
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 20, totalTokenCount: 30 },
+      })
+      .mockResolvedValueOnce({
+        text: JSON.stringify(evaluations),
+        usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 7, totalTokenCount: 12 },
+      })
+    const provider = createGeminiMediaIntelligenceProvider({ model: 'gemini-test', generateContent })
+    const contextPack: AssistantContextPack = {
+      version: 'assistant-context-v1', request: 'Create a five-step process board without people', locale: 'en',
+      documentVersion: 1, scope: { kind: 'element', rootNodeId: 'image-1', sectionNodeId: 'section-1' },
+      selectedNode: { id: 'image-1', type: 'image', props: { alt: 'Current image' } },
+      section: { id: 'section-1', type: 'section', label: 'Features', text: 'Product workflow' },
+      surroundings: [], websiteBrief: null, theme: createValidDesignFixture().theme,
+      mediaSlot: { kind: 'image', aspectRatio: 'wide', alt: 'Current image' },
+    }
+
+    await expect(provider.planVisualBrief({ context: contextPack, signal: new AbortController().signal })).resolves.toEqual({
+      output: visualBrief, usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+    })
+    await expect(provider.evaluateBatch({
+      brief: visualBrief,
+      candidates: [{ candidateId: 'candidate-0', source: 'generated', bytes: new Uint8Array([1, 2, 3]) }],
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ output: evaluations, usage: { inputTokens: 5, outputTokens: 7, totalTokens: 12 } })
+    expect(generateContent).toHaveBeenCalledTimes(2)
+    expect(generateContent.mock.calls[0]?.[0].config).toMatchObject({
+      responseMimeType: 'application/json', responseJsonSchema: expect.objectContaining({ type: 'object' }),
+    })
+    expect(generateContent.mock.calls[1]?.[0].contents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ inlineData: { mimeType: 'image/webp', data: Buffer.from([1, 2, 3]).toString('base64') } }),
+    ]))
+    expect(JSON.stringify(generateContent.mock.calls)).not.toMatch(/assetId|objectKey|providerResultId/)
+  })
+
+  it('uses the enforced semantic style schema without exposing raw style values', async () => {
+    const styleSpec = {
+      version: 'style-edit-spec-v1', emphasis: 'strong', spacingDensity: 'comfortable',
+      alignment: 'center', surface: 'none', mobileStack: 'preserve',
+    }
+    const generateContent = vi.fn().mockResolvedValue({
+      text: JSON.stringify(styleSpec),
+      usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 4, totalTokenCount: 7 },
+    })
+    const provider = createGeminiMediaIntelligenceProvider({ model: 'gemini-test', generateContent })
+    const contextPack: AssistantContextPack = {
+      version: 'assistant-context-v1', request: 'Center and emphasize this heading', locale: 'en',
+      documentVersion: 1, scope: { kind: 'element', rootNodeId: 'heading-1', sectionNodeId: 'section-1' },
+      selectedNode: { id: 'heading-1', type: 'heading', props: { text: 'Heading' } },
+      section: { id: 'section-1', type: 'section', label: 'Features', text: 'Heading' },
+      surroundings: [], websiteBrief: null, theme: createValidDesignFixture().theme, mediaSlot: null,
+    }
+
+    await expect(provider.planStyleEdit({
+      context: contextPack, signal: new AbortController().signal,
+    })).resolves.toEqual({
+      output: styleSpec, usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+    })
+    expect(generateContent.mock.calls[0]?.[0].config.responseJsonSchema).toMatchObject({
+      type: 'object', properties: {
+        emphasis: expect.objectContaining({ enum: ['preserve', 'subtle', 'strong'] }),
+      },
+    })
+    expect(JSON.stringify(generateContent.mock.calls[0]?.[0])).not.toMatch(/rawCss|backgroundColor|fontFamily|https?:/)
+  })
+
   it('generates bounded image bytes through Gemini generateContent and falls back to Pexels on safe failure', async () => {
     const generateContent = vi.fn().mockResolvedValue({
       candidates: [{ content: { parts: [{ inlineData: {
@@ -290,6 +407,7 @@ describe('AI worker boundary', () => {
       { candidates: [] },
       { candidates: [{ content: { parts: [{ text: 'No image available' }] } }] },
       { candidates: [{ content: { parts: [{ inlineData: { data: 'aW1hZ2U=', mimeType: 'image/gif' } }] } }] },
+      { candidates: [{ content: { parts: [{ inlineData: { data: undefined, mimeType: 'image/png' } }] } }] },
       { candidates: [{ content: { parts: [
         { inlineData: { data: 'aW1hZ2U=', mimeType: 'image/png' } },
         { inlineData: { data: 'aW1hZ2U=', mimeType: 'image/png' } },
@@ -483,22 +601,27 @@ describe('AI worker boundary', () => {
     }))
   })
 
-  it('compiles owned asset references into immutable export URLs and CSP', async () => {
+  it('bundles integrity-checked owned assets into portable export artifacts', async () => {
+    const assetId = '66666666-6666-4666-8666-666666666666'
+    const bytes = Uint8Array.from([0x52, 0x49, 0x46, 0x46])
     const document = createValidDesignFixture()
-    document.nodes['image-1']!.props = {
-      assetId: '66666666-6666-4666-8666-666666666666', alt: 'Product dashboard', decorative: false,
-    }
+    document.nodes['image-1']!.props = { assetId, alt: 'Product dashboard', decorative: false }
     const repository = {
       getWorkerInput: vi.fn().mockResolvedValue({
         id: '55555555-5555-4555-8555-555555555555', projectId: job.projectId,
         workspaceId: job.workspaceId, createdBy: job.userId, document,
       }),
+      getPublicationAssets: vi.fn().mockResolvedValue([{
+        id: assetId, objectKey: `private/${assetId}/image.webp`, contentType: 'image/webp', bytes: bytes.byteLength,
+        checksum: createHash('sha256').update(bytes).digest('hex'),
+      }]),
       claim: vi.fn().mockResolvedValue({ status: 'running' }),
       complete: vi.fn().mockResolvedValue({ status: 'completed' }),
       fail: vi.fn(),
     }
+    const assetStore = { get: vi.fn().mockResolvedValue(bytes) }
     const store = { put: vi.fn().mockResolvedValue(undefined), get: vi.fn() }
-    const processor = createExportProcessor({ repository, store, assetOrigin: 'https://assets.example.com' })
+    const processor = createExportProcessor({ repository, store, assetStore })
 
     await expect(processor({ data: {
       exportRunId: '55555555-5555-4555-8555-555555555555', projectId: job.projectId,
@@ -506,8 +629,41 @@ describe('AI worker boundary', () => {
     } })).resolves.toMatchObject({ status: 'completed' })
     const uploaded = store.put.mock.calls[0]?.[0] as { content: Uint8Array } | undefined
     const archive = new TextDecoder().decode(uploaded?.content)
-    expect(archive).toContain('src="https://assets.example.com/a/66666666-6666-4666-8666-666666666666"')
-    expect(archive).toContain('img-src https://assets.example.com')
+    expect(repository.getPublicationAssets).toHaveBeenCalledWith(context, job.projectId, [assetId])
+    expect(assetStore.get).toHaveBeenCalledWith(`private/${assetId}/image.webp`)
+    expect(archive).toContain(`assets/${assetId}.webp`)
+    expect(archive).toContain(`src="assets/${assetId}.webp"`)
+    expect(archive).toContain("img-src 'self'")
+    expect(archive).not.toMatch(/localhost|127\.0\.0\.1|private\//)
+  })
+
+  it('fails portable export when an owned asset is corrupt before artifact storage', async () => {
+    const assetId = '66666666-6666-4666-8666-666666666666'
+    const document = createValidDesignFixture()
+    document.nodes['image-1']!.props = { assetId, alt: 'Product dashboard', decorative: false }
+    const repository = {
+      getWorkerInput: vi.fn().mockResolvedValue({
+        id: '55555555-5555-4555-8555-555555555555', projectId: job.projectId,
+        workspaceId: job.workspaceId, createdBy: job.userId, document,
+      }),
+      getPublicationAssets: vi.fn().mockResolvedValue([{
+        id: assetId, objectKey: 'private/image.webp', contentType: 'image/webp', bytes: 4, checksum: 'a'.repeat(64),
+      }]),
+      claim: vi.fn().mockResolvedValue({ status: 'running' }),
+      complete: vi.fn(),
+      fail: vi.fn().mockResolvedValue({ status: 'failed' }),
+    }
+    const store = { put: vi.fn(), get: vi.fn() }
+    const processor = createExportProcessor({
+      repository, store, assetStore: { get: vi.fn().mockResolvedValue(Uint8Array.from([1, 2, 3, 4])) },
+    })
+
+    await expect(processor({ data: {
+      exportRunId: '55555555-5555-4555-8555-555555555555', projectId: job.projectId,
+      workspaceId: job.workspaceId, userId: job.userId,
+    } })).resolves.toMatchObject({ status: 'failed' })
+    expect(store.put).not.toHaveBeenCalled()
+    expect(repository.fail).toHaveBeenCalledWith(context, expect.any(String), 'invalid_document')
   })
 
   it('rejects export images outside the shared policy before storage', async () => {
@@ -662,14 +818,18 @@ describe('AI worker boundary', () => {
     expect(repository.recordArtifact).toHaveBeenCalledWith(expect.any(Object), deploymentId, expect.objectContaining({
       providerDeploymentId: 'dpl_test', checksum: expect.stringMatching(/^[a-f0-9]{64}$/),
     }))
+    expect(provider.getDeployment).toHaveBeenCalledWith(
+      'provider-secret-token', 'dpl_test', 'team_test',
+      { projectName: expect.stringMatching(/^zenui-[a-f0-9]{16}$/), target: 'preview' },
+    )
   })
 
-  it('compiles owned asset references into immutable deployment artifacts', async () => {
+  it('bundles integrity-checked owned assets into portable deployment artifacts', async () => {
     const deploymentId = '77777777-7777-4777-8777-777777777777'
+    const assetId = '66666666-6666-4666-8666-666666666666'
+    const bytes = Uint8Array.from([0x52, 0x49, 0x46, 0x46])
     const document = createValidDesignFixture()
-    document.nodes['image-1']!.props = {
-      assetId: '66666666-6666-4666-8666-666666666666', alt: 'Product dashboard', decorative: false,
-    }
+    document.nodes['image-1']!.props = { assetId, alt: 'Product dashboard', decorative: false }
     const repository = {
       getWorkerInput: vi.fn().mockResolvedValue({
         id: deploymentId, projectId: job.projectId, workspaceId: job.workspaceId,
@@ -680,6 +840,10 @@ describe('AI worker boundary', () => {
           configurationId: 'icfg_test', teamId: null, encryptedCredential: {},
         },
       }),
+      getPublicationAssets: vi.fn().mockResolvedValue([{
+        id: assetId, objectKey: `private/${assetId}/image.webp`, contentType: 'image/webp', bytes: bytes.byteLength,
+        checksum: createHash('sha256').update(bytes).digest('hex'),
+      }]),
       claimUploading: vi.fn().mockResolvedValue({ id: deploymentId, status: 'uploading' }),
       recordArtifact: vi.fn().mockResolvedValue({ id: deploymentId, status: 'building' }),
       completeReady: vi.fn().mockResolvedValue({ id: deploymentId, status: 'ready', url: 'https://zenui-test.vercel.app' }),
@@ -691,21 +855,25 @@ describe('AI worker boundary', () => {
       }),
       getDeployment: vi.fn(),
     }
+    const assetStore = { get: vi.fn().mockResolvedValue(bytes) }
     const processor = createDeploymentProcessor({
-      repository, store: { put: vi.fn().mockResolvedValue(undefined), get: vi.fn() }, provider,
+      repository, store: { put: vi.fn().mockResolvedValue(undefined), get: vi.fn() }, provider, assetStore,
       decryptCredential: vi.fn().mockReturnValue('token'), projectNameSecret: 'secret',
-      assetOrigin: 'https://assets.example.com',
     })
 
     await expect(processor({ data: {
       deploymentId, projectId: job.projectId, workspaceId: job.workspaceId, userId: job.userId,
     } })).resolves.toMatchObject({ status: 'ready' })
+    expect(repository.getPublicationAssets).toHaveBeenCalledWith(context, job.projectId, [assetId])
     expect(provider.createDeployment).toHaveBeenCalledWith('token', expect.objectContaining({
-      files: [expect.objectContaining({
-        path: 'index.html',
-        content: expect.stringContaining('src="https://assets.example.com/a/66666666-6666-4666-8666-666666666666"'),
-      })],
+      files: [
+        { path: `assets/${assetId}.webp`, content: bytes },
+        expect.objectContaining({
+          path: 'index.html', content: expect.stringContaining(`src="assets/${assetId}.webp"`),
+        }),
+      ],
     }))
+    expect(JSON.stringify(provider.createDeployment.mock.calls)).not.toMatch(/localhost|127\.0\.0\.1|private\//)
   })
 
   it('handles direct-ready, failed, timeout and provider exceptions safely', async () => {
@@ -918,6 +1086,530 @@ describe('AI worker boundary', () => {
     expect(repository.complete).not.toHaveBeenCalled()
   })
 
+  it('orchestrates one server-owned layout recipe for the exact selected section', async () => {
+    const document = createValidDesignFixture()
+    const planner = { planLayoutRecipe: vi.fn().mockResolvedValue({
+      output: {
+        version: 'layout-recipe-selection-v1', recipeId: 'section-centered',
+        density: 'comfortable', mobileStack: 'column',
+      },
+      usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+    }) }
+    const resolver = createLayoutProposalV2Resolver({ planner })
+    await expect(resolver({
+      context, projectId: job.projectId, runId: job.generationRunId,
+      targetNodeId: 'section-1', prompt: 'Trình bày section cân giữa và thoáng hơn', document,
+    })).resolves.toMatchObject({
+      usage: { totalTokens: 5 },
+      commands: [
+        { type: 'UPDATE_STYLE', nodeId: 'section-1' },
+        { type: 'UPDATE_RESPONSIVE_STYLE', nodeId: 'section-1', breakpoint: 'mobile' },
+      ],
+      document: { version: 2 },
+    })
+    expect(planner.planLayoutRecipe).toHaveBeenCalledOnce()
+  })
+
+  it('orchestrates one server-owned composition for the exact selected top-level section', async () => {
+    const document = createValidDesignFixture()
+    const planner = { planSectionComposition: vi.fn().mockResolvedValue({
+      output: {
+        version: 'section-composition-spec-v1', templateId: 'section-split', density: 'comfortable',
+        preservation: { copy: 'preserve', cta: 'preserve', brand: 'preserve', media: 'preserve', order: 'preserve', responsive: 'preserve' },
+      },
+      usage: { inputTokens: 6, outputTokens: 7, totalTokens: 13 },
+    }) }
+    const resolver = createSectionCompositionV2Resolver({ planner })
+    await expect(resolver({
+      context, projectId: job.projectId, runId: job.generationRunId,
+      targetNodeId: 'section-1', prompt: 'Chuyển section thành bố cục chia đôi', document,
+    })).resolves.toMatchObject({
+      usage: { totalTokens: 13 },
+      commands: [{ type: 'REPLACE_SUBTREE', nodeId: 'section-1', rootNodeId: 'section-1' }],
+      document: { version: 2 },
+    })
+    expect(planner.planSectionComposition).toHaveBeenCalledOnce()
+
+    const compositionRun = {
+      ...job, id: job.generationRunId, status: 'queued', mode: 'edit-selection' as const,
+      delivery: 'proposal' as const, proposalIntent: 'composition' as const, proposalStatus: 'preparing' as const,
+      selectedNodeId: 'section-1', prompt: 'Chuyển section thành bố cục chia đôi', document,
+    }
+    const repository = {
+      getWorkerInput: vi.fn().mockResolvedValue(compositionRun),
+      claim: vi.fn().mockResolvedValue({ id: job.generationRunId, status: 'running' }),
+      markRepairing: vi.fn(), complete: vi.fn(),
+      completeProposal: vi.fn().mockResolvedValue({
+        accepted: true, run: { id: job.generationRunId, status: 'completed', proposalStatus: 'ready' },
+      }),
+      fail: vi.fn(),
+    }
+    const textProvider = createMockWorkerProvider([])
+    const textOperations = vi.spyOn(textProvider, 'generateOperations')
+    await expect(createGenerationProcessor({
+      provider: textProvider,
+      repository,
+      resolveCompositionProposalV2: resolver,
+      assistantCompositionV2Enabled: true,
+    })({ data: {
+      generationRunId: job.generationRunId, projectId: job.projectId,
+      workspaceId: job.workspaceId, userId: job.userId,
+    } })).resolves.toMatchObject({ proposalStatus: 'ready' })
+    expect(textOperations).not.toHaveBeenCalled()
+    expect(repository.completeProposal).toHaveBeenCalledWith(context, job.generationRunId, expect.objectContaining({
+      commands: [expect.objectContaining({ type: 'REPLACE_SUBTREE', nodeId: 'section-1' })],
+      usage: { inputTokens: 6, outputTokens: 7, totalTokens: 13 },
+    }))
+  })
+
+  it('orchestrates one semantic style plan into exact-element commands without using the text editor path', async () => {
+    const document = createValidDesignFixture()
+    const planner = { planStyleEdit: vi.fn().mockResolvedValue({
+      output: {
+        version: 'style-edit-spec-v1', emphasis: 'strong', spacingDensity: 'comfortable',
+        alignment: 'center', surface: 'none', mobileStack: 'preserve',
+      },
+      usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+    }) }
+    const resolver = createStyleProposalV2Resolver({ planner })
+
+    await expect(resolver({
+      context, projectId: job.projectId, runId: job.generationRunId,
+      targetNodeId: 'heading-1', prompt: 'Căn giữa và nhấn mạnh tiêu đề', document,
+    })).resolves.toMatchObject({
+      usage: { totalTokens: 10 },
+      commands: [{
+        type: 'UPDATE_STYLE', nodeId: 'heading-1',
+        patch: { fontWeight: '700', textAlign: 'center', marginBottom: 16 },
+      }],
+      document: { version: 2 },
+    })
+    expect(planner.planStyleEdit).toHaveBeenCalledOnce()
+
+    const styleRun = {
+      ...job, id: job.generationRunId, status: 'queued', mode: 'edit-selection' as const,
+      delivery: 'proposal' as const, proposalIntent: 'style' as const, proposalStatus: 'preparing' as const,
+      selectedNodeId: 'heading-1', prompt: 'Căn giữa và nhấn mạnh tiêu đề', document,
+    }
+    const repository = {
+      getWorkerInput: vi.fn().mockResolvedValue(styleRun),
+      claim: vi.fn().mockResolvedValue({ id: job.generationRunId, status: 'running' }),
+      markRepairing: vi.fn(), complete: vi.fn(),
+      completeProposal: vi.fn().mockResolvedValue({
+        accepted: true, run: { id: job.generationRunId, status: 'completed', proposalStatus: 'ready' },
+      }),
+      fail: vi.fn(),
+    }
+    const textProvider = createMockWorkerProvider([])
+    const textOperations = vi.spyOn(textProvider, 'generateOperations')
+    await expect(createGenerationProcessor({
+      provider: textProvider,
+      repository,
+      resolveStyleProposalV2: resolver,
+      assistantStyleV2Enabled: true,
+    })({ data: {
+      generationRunId: job.generationRunId, projectId: job.projectId,
+      workspaceId: job.workspaceId, userId: job.userId,
+    } })).resolves.toMatchObject({ proposalStatus: 'ready' })
+    expect(textOperations).not.toHaveBeenCalled()
+    expect(repository.completeProposal).toHaveBeenCalledWith(context, job.generationRunId, expect.objectContaining({
+      commands: [expect.objectContaining({ type: 'UPDATE_STYLE', nodeId: 'heading-1' })],
+      usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+    }))
+  })
+
+  it('uses the v2 media resolver only when explicitly enabled and preserves fail-soft semantics', async () => {
+    const document = createValidDesignFixture()
+    document.nodes['image-1']!.props = {
+      assetId: '55555555-5555-4555-8555-555555555555', alt: 'Current view', decorative: false,
+    }
+    const proposalRun = {
+      ...job, mode: 'edit-selection' as const, delivery: 'proposal' as const,
+      proposalIntent: 'replace-media' as const, proposalStatus: 'preparing' as const,
+      selectedNodeId: 'image-1', prompt: 'Thay bằng bảng quy trình năm bước, không có người',
+      id: job.generationRunId, status: 'queued', document,
+    }
+    const makeRepository = () => ({
+      getWorkerInput: vi.fn().mockResolvedValue(proposalRun),
+      claim: vi.fn().mockResolvedValue({ id: job.generationRunId, status: 'running' }),
+      markRepairing: vi.fn(), complete: vi.fn(),
+      completeProposal: vi.fn().mockResolvedValue({
+        accepted: true, run: { id: job.generationRunId, status: 'completed', proposalStatus: 'ready' },
+      }),
+      fail: vi.fn().mockResolvedValue({ id: job.generationRunId, status: 'failed', proposalStatus: 'failed' }),
+    })
+    const legacy = vi.fn().mockResolvedValue({
+      assetId: '66666666-6666-4666-8666-666666666666', alt: 'Legacy option', decorative: false as const,
+    })
+    const mediaReview = {
+      version: 'media-proposal-review-v1' as const,
+      visualBrief: {
+        version: 'visual-brief-v1' as const, subject: 'Quy trình phát triển', message: 'Năm bước',
+        representation: 'process-diagram' as const, composition: 'Năm cột có mũi tên',
+        mustInclude: ['5 bước'], mustAvoid: ['người'], peoplePolicy: 'forbidden' as const,
+        textPolicy: 'symbolic-only' as const, style: 'editorial diagram', palette: ['#2563eb'],
+        aspectRatio: 'wide' as const, focalArea: 'center' as const,
+        generationPrompt: 'Five step process diagram without people or readable text',
+        searchQuery: null, alt: 'Sơ đồ quy trình phát triển năm bước',
+      },
+      candidates: [{
+        candidateId: 'candidate-1', assetId: '77777777-7777-4777-8777-777777777777',
+        source: 'generated' as const, score: 0.91, passed: true, safeReason: 'Phù hợp với brief.',
+      }],
+      selectedCandidateId: 'candidate-1', rootRequestId: job.generationRunId,
+      previousProposalId: null, rejectedCandidateIds: [],
+    }
+    const mediaV2 = vi.fn().mockResolvedValue({
+      assetId: '77777777-7777-4777-8777-777777777777',
+      alt: 'Sơ đồ quy trình phát triển năm bước', decorative: false as const,
+      usage: { inputTokens: 8, outputTokens: 12, totalTokens: 20 },
+      mediaReview,
+    })
+    const repository = makeRepository()
+    const processor = createGenerationProcessor({
+      provider: createMockWorkerProvider([]), repository,
+      resolveProposalMedia: legacy, resolveProposalMediaV2: mediaV2, assistantMediaV2Enabled: true,
+    })
+    await expect(processor({ data: {
+      generationRunId: job.generationRunId, projectId: job.projectId,
+      workspaceId: job.workspaceId, userId: job.userId,
+    } })).resolves.toMatchObject({ proposalStatus: 'ready' })
+    expect(mediaV2).toHaveBeenCalledWith(expect.objectContaining({
+      targetNodeId: 'image-1', prompt: proposalRun.prompt,
+    }))
+    expect(legacy).not.toHaveBeenCalled()
+    expect(repository.completeProposal).toHaveBeenCalledWith(context, job.generationRunId, expect.objectContaining({
+      usage: { inputTokens: 8, outputTokens: 12, totalTokens: 20 },
+      mediaReview,
+      commands: [expect.objectContaining({ patch: expect.objectContaining({
+        assetId: '77777777-7777-4777-8777-777777777777',
+        alt: 'Sơ đồ quy trình phát triển năm bước',
+      }) })],
+    }))
+
+    const failedRepository = makeRepository()
+    const noMatch = createGenerationProcessor({
+      provider: createMockWorkerProvider([]), repository: failedRepository,
+      resolveProposalMedia: legacy,
+      resolveProposalMediaV2: vi.fn().mockResolvedValue(null),
+      assistantMediaV2Enabled: true,
+    })
+    await expect(noMatch({ data: {
+      generationRunId: job.generationRunId, projectId: job.projectId,
+      workspaceId: job.workspaceId, userId: job.userId,
+    } })).resolves.toMatchObject({ status: 'failed' })
+    expect(legacy).not.toHaveBeenCalled()
+    expect(failedRepository.completeProposal).not.toHaveBeenCalled()
+    expect(failedRepository.fail).toHaveBeenCalledWith(context, job.generationRunId, expect.objectContaining({
+      errorCode: 'provider_error',
+    }))
+
+    const legacyOnlyRepository = makeRepository()
+    const v2ConfiguredButDisabled = vi.fn().mockRejectedValue(new Error('v2_must_not_be_called'))
+    const legacyOnly = createGenerationProcessor({
+      provider: createMockWorkerProvider([]), repository: legacyOnlyRepository,
+      resolveProposalMedia: legacy, resolveProposalMediaV2: v2ConfiguredButDisabled,
+      assistantMediaV2Enabled: false,
+    })
+    await expect(legacyOnly({ data: {
+      generationRunId: job.generationRunId, projectId: job.projectId,
+      workspaceId: job.workspaceId, userId: job.userId,
+    } })).resolves.toMatchObject({ proposalStatus: 'ready' })
+    expect(v2ConfiguredButDisabled).not.toHaveBeenCalled()
+    expect(legacy).toHaveBeenCalled()
+  })
+
+  it('orchestrates a bounded visual brief, two normalized candidates and one batch judge', async () => {
+    const document = createValidDesignFixture()
+    document.nodes['image-1']!.props = {
+      assetId: '55555555-5555-4555-8555-555555555555', alt: 'Current view', decorative: false,
+    }
+    const brief: VisualBrief = {
+      version: 'visual-brief-v1', subject: 'Product development workflow', message: 'Five stages',
+      representation: 'process-diagram', composition: 'Five columns linked by arrows',
+      mustInclude: ['five stages', 'arrows'], mustAvoid: ['people'], peoplePolicy: 'forbidden',
+      textPolicy: 'symbolic-only', style: 'editorial diagram', palette: ['#2563eb'],
+      aspectRatio: 'wide', focalArea: 'center',
+      generationPrompt: 'Five stage product process diagram without people or readable text',
+      searchQuery: null, alt: 'Five-stage product development process diagram',
+    }
+    const planner = { planVisualBrief: vi.fn().mockResolvedValue({
+      output: brief, usage: { inputTokens: 10, outputTokens: 12, totalTokens: 22 },
+    }) }
+    const generator = { generate: vi.fn()
+      .mockResolvedValueOnce({ bytes: new Uint8Array([1]), mimeType: 'image/png', provider: 'google', model: 'image' })
+      .mockResolvedValueOnce({ bytes: new Uint8Array([2]), mimeType: 'image/png', provider: 'google', model: 'image' }) }
+    const judge = { evaluateBatch: vi.fn().mockResolvedValue({
+      output: [
+        { candidateId: 'candidate-0', semanticRelevance: 0.88, representationMatch: 0.9, mustIncludeCoverage: 0.84, compositionFit: 0.82, websiteUsability: 0.86, confidence: 0.9, violations: [], safeReason: 'Relevant option.' },
+        { candidateId: 'candidate-1', semanticRelevance: 0.96, representationMatch: 0.97, mustIncludeCoverage: 0.94, compositionFit: 0.93, websiteUsability: 0.91, confidence: 0.95, violations: [], safeReason: 'Best fit.' },
+      ],
+      usage: { inputTokens: 8, outputTokens: 9, totalTokens: 17 },
+    }) }
+    const imported = [
+      { assetId: '66666666-6666-4666-8666-666666666666', bytes: new Uint8Array([11]), source: 'generated' as const },
+      { assetId: '77777777-7777-4777-8777-777777777777', bytes: new Uint8Array([22]), source: 'generated' as const },
+    ]
+    const importCandidate = vi.fn()
+      .mockResolvedValueOnce(imported[0])
+      .mockResolvedValueOnce(imported[1])
+    const resolver = createMediaProposalV2Resolver({
+      planner, generator, judge, importCandidate,
+      maxImagesPerRun: 2, multiCandidateEnabled: true,
+    })
+
+    await expect(resolver({
+      context, projectId: job.projectId, runId: job.generationRunId,
+      targetNodeId: 'image-1', prompt: 'Tạo bảng quy trình năm bước, không có người', document,
+    })).resolves.toMatchObject({
+      assetId: imported[1]!.assetId,
+      usage: { inputTokens: 18, outputTokens: 21, totalTokens: 39 },
+      mediaReview: {
+        selectedCandidateId: 'candidate-1',
+        candidates: [
+          { candidateId: 'candidate-0', assetId: imported[0]!.assetId },
+          { candidateId: 'candidate-1', assetId: imported[1]!.assetId },
+        ],
+      },
+    })
+    expect(generator.generate).toHaveBeenCalledTimes(2)
+    expect(importCandidate).toHaveBeenNthCalledWith(1, expect.objectContaining({ candidateIndex: 0 }))
+    expect(importCandidate).toHaveBeenNthCalledWith(2, expect.objectContaining({ candidateIndex: 1 }))
+    expect(judge.evaluateBatch).toHaveBeenCalledOnce()
+  })
+
+  it('reports bounded media accounting without resource identifiers or user content', async () => {
+    const document = createValidDesignFixture()
+    document.nodes['image-1']!.props = {
+      assetId: '55555555-5555-4555-8555-555555555555', alt: 'Current view', decorative: false,
+    }
+    const observe = vi.fn()
+    const resolver = createMediaProposalV2Resolver({
+      planner: { planVisualBrief: vi.fn().mockResolvedValue({
+        output: {
+          version: 'visual-brief-v1', subject: 'Product workflow', message: 'Five stages',
+          representation: 'process-diagram', composition: 'Five columns', mustInclude: ['five stages'],
+          mustAvoid: ['people'], peoplePolicy: 'forbidden', textPolicy: 'symbolic-only',
+          style: 'editorial diagram', palette: [], aspectRatio: 'wide', focalArea: 'center',
+          generationPrompt: 'Five stage process diagram without people or readable text', searchQuery: null,
+          alt: 'Five-stage process diagram',
+        },
+        usage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 },
+      }) },
+      generator: { generate: vi.fn().mockResolvedValue({
+        bytes: new Uint8Array([1]), mimeType: 'image/png', provider: 'google', model: 'image',
+      }) },
+      judge: { evaluateBatch: vi.fn().mockResolvedValue({
+        output: [{
+          candidateId: 'candidate-0', semanticRelevance: 0.95, representationMatch: 0.95,
+          mustIncludeCoverage: 0.9, compositionFit: 0.9, websiteUsability: 0.9,
+          confidence: 0.95, violations: [], safeReason: 'Relevant.',
+        }],
+        usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+      }) },
+      importCandidate: vi.fn().mockResolvedValue({
+        assetId: '66666666-6666-4666-8666-666666666666', bytes: new Uint8Array([11]), source: 'generated',
+      }),
+      maxImagesPerRun: 1,
+      observe,
+    })
+
+    await resolver({
+      context, projectId: job.projectId, runId: job.generationRunId,
+      targetNodeId: 'image-1', prompt: 'private user request', document,
+    })
+
+    expect(observe.mock.calls).toEqual([
+      [{ stage: 'planner', outcome: 'completed', count: 1 }],
+      [{ stage: 'image_generation', outcome: 'completed', count: 1 }],
+      [{ stage: 'candidate', outcome: 'completed', count: 1, source: 'generated' }],
+      [{ stage: 'judge', outcome: 'completed', count: 1 }],
+      [{ stage: 'semantic_gate', outcome: 'accepted', count: 1 }],
+    ])
+    expect(JSON.stringify(observe.mock.calls)).not.toContain(job.generationRunId)
+    expect(JSON.stringify(observe.mock.calls)).not.toContain(job.workspaceId)
+    expect(JSON.stringify(observe.mock.calls)).not.toContain('private user request')
+  })
+
+  it('reports semantic media rejection and never reports a stock fallback for non-photo briefs', async () => {
+    const document = createValidDesignFixture()
+    document.nodes['image-1']!.props = {
+      assetId: '55555555-5555-4555-8555-555555555555', alt: 'Current view', decorative: false,
+    }
+    const observe = vi.fn()
+    const resolver = createMediaProposalV2Resolver({
+      planner: { planVisualBrief: vi.fn().mockResolvedValue({
+        output: {
+          version: 'visual-brief-v1', subject: 'Product workflow', message: 'Five stages',
+          representation: 'process-diagram', composition: 'Five columns', mustInclude: ['five stages'],
+          mustAvoid: ['people'], peoplePolicy: 'forbidden', textPolicy: 'symbolic-only',
+          style: 'editorial diagram', palette: [], aspectRatio: 'wide', focalArea: 'center',
+          generationPrompt: 'Five stage process diagram without people or readable text', searchQuery: null,
+          alt: 'Five-stage process diagram',
+        },
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      }) },
+      generator: { generate: vi.fn().mockResolvedValue({
+        bytes: new Uint8Array([1]), mimeType: 'image/png', provider: 'google', model: 'image',
+      }) },
+      judge: { evaluateBatch: vi.fn().mockResolvedValue({
+        output: [{
+          candidateId: 'candidate-0', semanticRelevance: 0.2, representationMatch: 0.1,
+          mustIncludeCoverage: 0.1, compositionFit: 0.2, websiteUsability: 0.3,
+          confidence: 0.9, violations: ['wrong_representation'], safeReason: 'Wrong representation.',
+        }],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      }) },
+      importCandidate: vi.fn().mockResolvedValue({
+        assetId: '66666666-6666-4666-8666-666666666666', bytes: new Uint8Array([11]), source: 'generated',
+      }),
+      searchStock: vi.fn(), maxImagesPerRun: 1, observe,
+    })
+
+    await expect(resolver({
+      context, projectId: job.projectId, runId: job.generationRunId,
+      targetNodeId: 'image-1', prompt: 'private user request', document,
+    })).resolves.toBeNull()
+    expect(observe).toHaveBeenCalledWith({ stage: 'semantic_gate', outcome: 'rejected', count: 1 })
+    expect(observe).not.toHaveBeenCalledWith(expect.objectContaining({ source: 'stock' }))
+  })
+
+  it('never falls back a non-photo brief to stock and fails soft when every candidate is rejected', async () => {
+    const document = createValidDesignFixture()
+    document.nodes['image-1']!.props = {
+      assetId: '55555555-5555-4555-8555-555555555555', alt: 'Current view', decorative: false,
+    }
+    const brief: VisualBrief = {
+      version: 'visual-brief-v1', subject: 'Product workflow', message: 'Five stages',
+      representation: 'process-diagram', composition: 'Five columns', mustInclude: ['five stages'],
+      mustAvoid: ['people'], peoplePolicy: 'forbidden', textPolicy: 'symbolic-only',
+      style: 'editorial diagram', palette: [], aspectRatio: 'wide', focalArea: 'center',
+      generationPrompt: 'Five stage process diagram without people or readable text', searchQuery: null,
+      alt: 'Five-stage process diagram',
+    }
+    const stockSearch = vi.fn()
+    const resolver = createMediaProposalV2Resolver({
+      planner: { planVisualBrief: vi.fn().mockResolvedValue({ output: brief, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }) },
+      generator: { generate: vi.fn().mockResolvedValue({ bytes: new Uint8Array([1]), mimeType: 'image/png', provider: 'google', model: 'image' }) },
+      judge: { evaluateBatch: vi.fn().mockResolvedValue({
+        output: [{ candidateId: 'candidate-0', semanticRelevance: 0.2, representationMatch: 0.1, mustIncludeCoverage: 0.1, compositionFit: 0.2, websiteUsability: 0.3, confidence: 0.9, violations: ['wrong_representation'], safeReason: 'Wrong representation.' }],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      }) },
+      importCandidate: vi.fn().mockResolvedValue({
+        assetId: '66666666-6666-4666-8666-666666666666', bytes: new Uint8Array([11]), source: 'generated',
+      }),
+      searchStock: stockSearch, maxImagesPerRun: 1,
+    })
+
+    await expect(resolver({
+      context, projectId: job.projectId, runId: job.generationRunId,
+      targetNodeId: 'image-1', prompt: 'Tạo bảng quy trình năm bước, không có người', document,
+    })).resolves.toBeNull()
+    expect(stockSearch).not.toHaveBeenCalled()
+  })
+
+  it('fails invalid media materialization with preserved usage and a safe code', async () => {
+    const document = createValidDesignFixture()
+    document.nodes['image-1']!.props = {
+      assetId: '55555555-5555-4555-8555-555555555555', alt: 'Current view', decorative: false,
+    }
+    const proposalRun = {
+      ...job, mode: 'edit-selection' as const, delivery: 'proposal' as const,
+      proposalIntent: 'replace-media' as const, proposalStatus: 'preparing' as const,
+      selectedNodeId: 'image-1', prompt: 'Thay hình', id: job.generationRunId,
+      expectedVersion: 2, status: 'queued', document,
+    }
+    const repository = {
+      getWorkerInput: vi.fn().mockResolvedValue(proposalRun),
+      claim: vi.fn().mockResolvedValue({ id: job.generationRunId, status: 'running' }),
+      markRepairing: vi.fn(), complete: vi.fn(), completeProposal: vi.fn(),
+      fail: vi.fn().mockResolvedValue({ id: job.generationRunId, status: 'failed' }),
+    }
+    const processor = createGenerationProcessor({
+      provider: createMockWorkerProvider([]), repository,
+      resolveProposalMediaV2: vi.fn().mockResolvedValue({
+        assetId: '77777777-7777-4777-8777-777777777777', alt: 'New view', decorative: false,
+        usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+        mediaReview: {
+          version: 'media-proposal-review-v1',
+          visualBrief: {
+            version: 'visual-brief-v1', subject: 'New view', message: 'New view',
+            representation: 'abstract', composition: 'Centered abstract form', mustInclude: [], mustAvoid: [],
+            peoplePolicy: 'forbidden', textPolicy: 'none', style: 'abstract', palette: [],
+            aspectRatio: 'wide', focalArea: 'center', generationPrompt: 'Abstract website visual without text',
+            searchQuery: null, alt: 'New view',
+          },
+          candidates: [{
+            candidateId: 'candidate-1', assetId: '77777777-7777-4777-8777-777777777777',
+            source: 'generated', score: 0.9, passed: true, safeReason: 'Relevant.',
+          }],
+          selectedCandidateId: 'candidate-1', rootRequestId: job.generationRunId,
+          previousProposalId: null, rejectedCandidateIds: [],
+        },
+      }),
+      assistantMediaV2Enabled: true,
+    })
+    await expect(processor({ data: {
+      generationRunId: job.generationRunId, projectId: job.projectId,
+      workspaceId: job.workspaceId, userId: job.userId,
+    } })).resolves.toMatchObject({ status: 'failed' })
+    expect(repository.fail).toHaveBeenCalledWith(context, job.generationRunId, {
+      errorCode: 'stale_document_version',
+      usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+      repairCount: 0,
+    })
+    expect(repository.completeProposal).not.toHaveBeenCalled()
+  })
+
+  it('passes bounded durable refinement context to semantic resolvers', async () => {
+    const proposalRun = {
+      ...job,
+      mode: 'edit-selection' as const,
+      delivery: 'proposal' as const,
+      proposalIntent: 'style' as const,
+      proposalStatus: 'preparing' as const,
+      selectedNodeId: 'heading-1',
+      id: job.generationRunId,
+      status: 'queued',
+      prompt: 'Make it shorter',
+      originalRequest: 'Improve heading',
+      feedbackCodes: ['copy_mismatch'] as const,
+      lineage: null,
+      document: createValidDesignFixture(),
+    }
+    const repository = {
+      getWorkerInput: vi.fn().mockResolvedValue(proposalRun),
+      claim: vi.fn().mockResolvedValue({ id: job.generationRunId, status: 'running' }),
+      markRepairing: vi.fn(), complete: vi.fn(),
+      completeProposal: vi.fn().mockResolvedValue({
+        accepted: true,
+        run: { id: job.generationRunId, status: 'completed', proposalStatus: 'ready' },
+      }),
+      fail: vi.fn(),
+    }
+    const resolveStyleProposalV2 = vi.fn().mockResolvedValue({
+      document: { ...proposalRun.document, version: 2 }, commands: [], summary: 'Bounded style',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    })
+    const processor = createGenerationProcessor({
+      provider: createMockWorkerProvider([]), repository,
+      resolveStyleProposalV2, assistantStyleV2Enabled: true,
+    })
+
+    await processor({ data: {
+      generationRunId: job.generationRunId, projectId: job.projectId,
+      workspaceId: job.workspaceId, userId: job.userId,
+    } })
+
+    expect(resolveStyleProposalV2).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: 'Make it shorter',
+      refinement: {
+        originalRequest: 'Improve heading',
+        feedbackCodes: ['copy_mismatch'],
+      },
+    }))
+  })
+
   it('completes proposal jobs without invoking the document-applying completion path', async () => {
     const proposalRun = {
       ...job,
@@ -960,6 +1652,135 @@ describe('AI worker boundary', () => {
       summary: 'Clearer heading proposal',
     }))
     expect(repository.complete).not.toHaveBeenCalled()
+  })
+
+  it('runs sampled shadow planning without changing the legacy proposal result', async () => {
+    const proposalRun = {
+      ...job,
+      mode: 'edit-selection' as const,
+      delivery: 'proposal' as const,
+      proposalStatus: 'preparing' as const,
+      selectedNodeId: 'heading-1',
+      id: job.generationRunId,
+      status: 'queued',
+      document: createValidDesignFixture(),
+    }
+    const repository = {
+      getWorkerInput: vi.fn().mockResolvedValue(proposalRun),
+      claim: vi.fn().mockResolvedValue({ id: job.generationRunId, status: 'running' }),
+      markRepairing: vi.fn(), complete: vi.fn(),
+      completeProposal: vi.fn().mockResolvedValue({
+        accepted: true,
+        run: { id: job.generationRunId, status: 'completed', proposalStatus: 'ready' },
+      }),
+      fail: vi.fn(),
+    }
+    const runAssistantShadow = vi.fn().mockResolvedValue(undefined)
+    const processor = createGenerationProcessor({
+      provider: createMockWorkerProvider([{ output: {
+        summary: 'Legacy proposal remains authoritative',
+        operations: [{ type: 'UPDATE_PROPS', nodeId: 'heading-1', patch: { text: 'Legacy output' } }],
+      } }]),
+      repository,
+      runAssistantShadow,
+    })
+
+    await processor({ data: {
+      generationRunId: job.generationRunId, projectId: job.projectId,
+      workspaceId: job.workspaceId, userId: job.userId,
+    } })
+
+    expect(runAssistantShadow).toHaveBeenCalledWith(expect.objectContaining({
+      runId: job.generationRunId,
+      targetNodeId: 'heading-1',
+    }))
+    expect(repository.completeProposal).toHaveBeenCalledWith(context, job.generationRunId, expect.objectContaining({
+      summary: 'Legacy proposal remains authoritative',
+      commands: [expect.objectContaining({ nodeId: 'heading-1' })],
+    }))
+  })
+
+  it('fails shadow planning soft and still completes the legacy proposal', async () => {
+    const proposalRun = {
+      ...job,
+      mode: 'edit-selection' as const,
+      delivery: 'proposal' as const,
+      proposalStatus: 'preparing' as const,
+      selectedNodeId: 'heading-1',
+      id: job.generationRunId,
+      status: 'queued',
+      document: createValidDesignFixture(),
+    }
+    const repository = {
+      getWorkerInput: vi.fn().mockResolvedValue(proposalRun),
+      claim: vi.fn().mockResolvedValue({ id: job.generationRunId, status: 'running' }),
+      markRepairing: vi.fn(), complete: vi.fn(),
+      completeProposal: vi.fn().mockResolvedValue({
+        accepted: true,
+        run: { id: job.generationRunId, status: 'completed', proposalStatus: 'ready' },
+      }),
+      fail: vi.fn(),
+    }
+    const processor = createGenerationProcessor({
+      provider: createMockWorkerProvider([{ output: {
+        summary: 'Legacy proposal',
+        operations: [{ type: 'UPDATE_PROPS', nodeId: 'heading-1', patch: { text: 'Legacy output' } }],
+      } }]),
+      repository,
+      runAssistantShadow: vi.fn().mockRejectedValue(new Error('shadow_provider_failed')),
+    })
+
+    await expect(processor({ data: {
+      generationRunId: job.generationRunId, projectId: job.projectId,
+      workspaceId: job.workspaceId, userId: job.userId,
+    } })).resolves.toMatchObject({ proposalStatus: 'ready' })
+  })
+
+  it('reports bounded proposal outcomes and token totals without run metadata', async () => {
+    const proposalRun = {
+      ...job,
+      mode: 'edit-selection' as const,
+      delivery: 'proposal' as const,
+      proposalIntent: 'style' as const,
+      proposalStatus: 'preparing' as const,
+      selectedNodeId: 'heading-1',
+      id: job.generationRunId,
+      status: 'queued',
+      document: createValidDesignFixture(),
+    }
+    const repository = {
+      getWorkerInput: vi.fn().mockResolvedValue(proposalRun),
+      claim: vi.fn().mockResolvedValue({ id: job.generationRunId, status: 'running' }),
+      markRepairing: vi.fn(), complete: vi.fn(),
+      completeProposal: vi.fn().mockResolvedValue({
+        accepted: true,
+        run: { id: job.generationRunId, status: 'completed', proposalStatus: 'ready' },
+      }),
+      fail: vi.fn(),
+    }
+    const observe = vi.fn()
+    const processor = createGenerationProcessor({
+      provider: createMockWorkerProvider([]), repository,
+      assistantStyleV2Enabled: true,
+      resolveStyleProposalV2: vi.fn().mockResolvedValue({
+        document: { ...proposalRun.document, version: 2 }, commands: [], summary: 'Bounded style',
+        usage: { inputTokens: 7, outputTokens: 5, totalTokens: 12 },
+      }),
+      observe,
+    })
+
+    await processor({ data: {
+      generationRunId: job.generationRunId, projectId: job.projectId,
+      workspaceId: job.workspaceId, userId: job.userId,
+    } })
+
+    expect(observe.mock.calls).toEqual([
+      [{ lane: 'style', stage: 'proposal', outcome: 'started', count: 1 }],
+      [{ lane: 'style', stage: 'text_tokens', outcome: 'completed', count: 12 }],
+      [{ lane: 'style', stage: 'proposal', outcome: 'accepted', count: 1 }],
+    ])
+    expect(JSON.stringify(observe.mock.calls)).not.toContain(job.generationRunId)
+    expect(JSON.stringify(observe.mock.calls)).not.toContain(job.workspaceId)
   })
 
   it('preserves proposal completion failure semantics', async () => {

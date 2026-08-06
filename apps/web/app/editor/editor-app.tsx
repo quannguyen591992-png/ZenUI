@@ -21,14 +21,14 @@ import {
   loadDraft,
   planInsert,
   planMove,
+  planNodeDelete,
+  planNodeDuplicate,
   planPageCreate,
   planPageDelete,
   planPageDuplicate,
   planSectionDelete,
   planSectionDuplicate,
-  planSectionLayoutReplacement,
   planSectionMove,
-  planSectionVisibility,
   queueAutosave,
   redo,
   resolveAutosave,
@@ -41,7 +41,7 @@ import {
   type AutosaveState,
   type EditorState,
 } from '@zenui/editor-core'
-import { isNodeHidden, nodeToBrowserStyle, resolveNodeStyle, resolveNodeTag } from '@zenui/html-compiler'
+import { nodeToBrowserStyle, resolveNodeStyle, resolveNodeTag } from '@zenui/html-compiler'
 import {
   createElement,
   useEffect,
@@ -129,6 +129,9 @@ interface EditorAppProps {
   previewOrigin?: string
   assetOrigin?: string
   deploymentEnabled?: boolean
+  assistantStyleEnabled?: boolean
+  assistantLayoutEnabled?: boolean
+  assistantCompositionEnabled?: boolean
   initialMode?: 'simple' | 'advanced'
   proposalApi?: AiProposalApi
   assetApi?: AssetLibraryApi
@@ -235,19 +238,73 @@ function PaletteItem({ type, onAdd }: { type: ComponentType; onAdd: () => void }
   )
 }
 
+interface SelectionActions {
+  targetId: string
+  label: string
+  canDrag: boolean
+  canMoveUp: boolean
+  canMoveDown: boolean
+  canDuplicate: boolean
+  canDelete: boolean
+  onMoveUp: () => void
+  onMoveDown: () => void
+  onDuplicate: () => void
+  onDelete: () => void
+}
+
 interface CanvasNodeProps {
   document: DesignDocument
   nodeId: string
   selectedNodeId: string | null
   viewport: Viewport
   onSelect: (nodeId: string) => void
-  onMove: (nodeId: string, direction: -1 | 1) => void
   onChooseImage: (nodeId: string) => void
   canMutate: boolean
   assetOrigin: string
+  selectionActions: SelectionActions | null
 }
 
-function CanvasNode({ document, nodeId, selectedNodeId, viewport, onSelect, onMove, onChooseImage, canMutate, assetOrigin }: CanvasNodeProps) {
+interface SelectionActionToolbarProps extends Omit<SelectionActions, 'targetId' | 'canDrag'> {
+  dragHandle: ReactNode
+  onSelect: () => void
+}
+
+function SelectionActionToolbar({
+  label,
+  dragHandle,
+  canMoveUp,
+  canMoveDown,
+  canDuplicate,
+  canDelete,
+  onSelect,
+  onMoveUp,
+  onMoveDown,
+  onDuplicate,
+  onDelete,
+}: SelectionActionToolbarProps) {
+  return (
+    <>
+      <button type="button" className="node-select selection-action-label" aria-label={`Chọn ${label}`} data-selected="true" onClick={onSelect}>{label}</button>
+      {dragHandle}
+      <button type="button" aria-label={`Di chuyển ${label} lên`} disabled={!canMoveUp} onClick={onMoveUp}>↑</button>
+      <button type="button" aria-label={`Di chuyển ${label} xuống`} disabled={!canMoveDown} onClick={onMoveDown}>↓</button>
+      <button type="button" aria-label={`Nhân bản ${label}`} disabled={!canDuplicate} onClick={onDuplicate}>Nhân bản</button>
+      <button type="button" aria-label={`Xóa ${label}`} disabled={!canDelete} onClick={onDelete}>Xóa</button>
+    </>
+  )
+}
+
+function CanvasNode({
+  document,
+  nodeId,
+  selectedNodeId,
+  viewport,
+  onSelect,
+  onChooseImage,
+  canMutate,
+  assetOrigin,
+  selectionActions,
+}: CanvasNodeProps) {
   const node = document.nodes[nodeId]!
   const { setNodeRef: setDroppableNodeRef, isOver } = useDroppable({
     id: `node:${node.id}`,
@@ -255,7 +312,7 @@ function CanvasNode({ document, nodeId, selectedNodeId, viewport, onSelect, onMo
   })
   const { attributes, listeners, setNodeRef: setDraggableNodeRef, transform } = useDraggable({
     id: `move:${node.id}`,
-    disabled: node.parentId === null,
+    disabled: node.parentId === null || !canMutate,
     data: { kind: 'move', nodeId: node.id },
   })
   const setRef = (element: HTMLElement | null): void => {
@@ -304,10 +361,10 @@ function CanvasNode({ document, nodeId, selectedNodeId, viewport, onSelect, onMo
         selectedNodeId={selectedNodeId}
         viewport={viewport}
         onSelect={onSelect}
-        onMove={onMove}
         onChooseImage={onChooseImage}
         canMutate={canMutate}
         assetOrigin={assetOrigin}
+        selectionActions={selectionActions}
       />
     ))
   }
@@ -319,31 +376,45 @@ function CanvasNode({ document, nodeId, selectedNodeId, viewport, onSelect, onMo
       style={{ transform: transform ? `translate3d(${transform.x}px,${transform.y}px,0)` : undefined }}
       data-node-id={node.id}
     >
-      <div className="node-actions" data-selected={selectedNodeId === node.id}>
-        <button
-          type="button"
-          className="node-select"
-          aria-label={`Chọn ${nodeLabel(node)}`}
-          data-selected={selectedNodeId === node.id}
-          onClick={event => {
-            event.stopPropagation()
-            onSelect(node.id)
-          }}
-          onKeyDown={(event: KeyboardEvent<HTMLButtonElement>) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault()
+      <div
+        className={`node-actions${selectionActions?.targetId === node.id ? ' has-selection-actions' : ''}`}
+        data-selected={selectedNodeId === node.id}
+        onClick={event => event.stopPropagation()}
+      >
+        {selectionActions?.targetId === node.id ? (
+          <SelectionActionToolbar
+            {...selectionActions}
+            onSelect={() => onSelect(node.id)}
+            dragHandle={(
+              <button
+                type="button"
+                className="drag-handle"
+                aria-label={`Kéo ${selectionActions.label}`}
+                disabled={!selectionActions.canDrag}
+                {...listeners}
+                {...attributes}
+              >⋮⋮</button>
+            )}
+          />
+        ) : (
+          <button
+            type="button"
+            className="node-select"
+            aria-label={`Chọn ${nodeLabel(node)}`}
+            data-selected={selectedNodeId === node.id}
+            onClick={event => {
+              event.stopPropagation()
               onSelect(node.id)
-            }
-          }}
-        >
-          {componentLabel(node.type)}
-        </button>
-        {node.parentId && (
-          <>
-            <button type="button" className="drag-handle" aria-label={`Kéo ${nodeLabel(node)}`} {...listeners} {...attributes}>⋮⋮</button>
-            <button type="button" aria-label={`Di chuyển ${nodeLabel(node)} lên`} onClick={event => { event.stopPropagation(); onMove(node.id, -1) }}>↑</button>
-            <button type="button" aria-label={`Di chuyển ${nodeLabel(node)} xuống`} onClick={event => { event.stopPropagation(); onMove(node.id, 1) }}>↓</button>
-          </>
+            }}
+            onKeyDown={(event: KeyboardEvent<HTMLButtonElement>) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                onSelect(node.id)
+              }
+            }}
+          >
+            {componentLabel(node.type)}
+          </button>
         )}
       </div>
       {canMutate && node.type === 'image' && (
@@ -579,14 +650,21 @@ function Inspector({ state, viewport, execute }: InspectorProps) {
     updateStyle(key, number)
   }
 
+  const PRESET_COLORS = ['#ffffff', '#f8fafc', '#e2e8f0', '#0f172a', '#4f46e5', '#a855f7', '#ec4899', '#10b981', '#f59e0b']
+
   return (
-    <div className="inspector-fields">
-      <h2>{componentLabel(node.type)}</h2>
+    <div className="inspector-pro-panel">
+      <div className="inspector-header">
+        <h2>{componentLabel(node.type)}</h2>
+      </div>
+
       {'text' in node.props && (
-        <label>
-          Nội dung
-          <input
+        <div className="inspector-field-group">
+          <label>Nội dung</label>
+          <textarea
             aria-label="Nội dung"
+            className="pro-input"
+            rows={3}
             value={text}
             onChange={event => {
               const next = event.target.value
@@ -602,43 +680,141 @@ function Inspector({ state, viewport, execute }: InspectorProps) {
               })
             }}
           />
-        </label>
+        </div>
       )}
-      <label>
-        Cỡ chữ
-        <input
-          aria-label="Cỡ chữ"
-          inputMode="numeric"
-          value={fontSize}
-          onChange={event => setFontSize(event.target.value)}
-          onBlur={() => commitNumber('fontSize', fontSize)}
-        />
-      </label>
-      <label>
-        Khoảng cách
-        <input
-          aria-label="Khoảng cách"
-          inputMode="numeric"
-          value={gap}
-          onChange={event => setGap(event.target.value)}
-          onBlur={() => commitNumber('gap', gap)}
-        />
-      </label>
-      <label>
-        Màu chữ
-        <input
-          aria-label="Màu chữ"
-          type="color"
-          value={currentStyle.color ?? '#0f172a'}
-          onChange={event => updateStyle('color', event.target.value)}
-        />
-      </label>
-      {error && <p role="alert">{error}</p>}
+
+      <div className="inspector-field-group">
+        <label>Cỡ chữ</label>
+        <div className="pro-slider-group">
+          <input
+            type="range"
+            aria-label="Điều chỉnh cỡ chữ"
+            min="10"
+            max="160"
+            value={fontSize || 16}
+            onChange={event => {
+              setFontSize(event.target.value)
+              updateStyle('fontSize', Number(event.target.value))
+            }}
+          />
+          <input
+            aria-label="Cỡ chữ"
+            inputMode="numeric"
+            className="pro-input pro-input-small"
+            value={fontSize}
+            onChange={event => setFontSize(event.target.value)}
+            onBlur={() => commitNumber('fontSize', fontSize)}
+          />
+        </div>
+      </div>
+
+      <div className="inspector-field-group">
+        <label>Khoảng cách</label>
+        <div className="pro-slider-group">
+          <input
+            type="range"
+            aria-label="Điều chỉnh khoảng cách"
+            min="0"
+            max="200"
+            value={gap || 0}
+            onChange={event => {
+              setGap(event.target.value)
+              updateStyle('gap', Number(event.target.value))
+            }}
+          />
+          <input
+            aria-label="Khoảng cách"
+            inputMode="numeric"
+            className="pro-input pro-input-small"
+            value={gap}
+            onChange={event => setGap(event.target.value)}
+            onBlur={() => commitNumber('gap', gap)}
+          />
+        </div>
+      </div>
+
+      <div className="inspector-field-group">
+        <label>Màu sắc</label>
+        <div className="pro-color-swatches">
+          {PRESET_COLORS.map(color => (
+            <button
+              key={color}
+              className={`color-swatch ${currentStyle.color === color ? 'active' : ''}`}
+              style={{ backgroundColor: color }}
+              onClick={() => updateStyle('color', color)}
+              title={color}
+              aria-label={`Chọn màu ${color}`}
+            />
+          ))}
+          <div className="color-picker-wrapper">
+            <input
+              aria-label="Tùy chỉnh màu chữ"
+              type="color"
+              value={currentStyle.color ?? '#0f172a'}
+              onChange={event => updateStyle('color', event.target.value)}
+            />
+          </div>
+        </div>
+      </div>
+
+      {error && <p role="alert" className="inspector-error">{error}</p>}
     </div>
   )
 }
 
-function EditorSurface({ projectId, projectName, workspaceId, role, initialDocument, initialVersion, api, editorOrigin, previewOrigin, assetOrigin, deploymentEnabled, initialMode, proposalApi, assetApi: suppliedAssetApi, brief }: Required<Omit<EditorAppProps, 'brief' | 'assetApi'>> & { assetApi?: AssetLibraryApi; brief: WebsiteBrief | null }) {
+interface RevisionPanelProps {
+  revisions: RevisionSummary[]
+  summary: string
+  error: string
+  canManage: boolean
+  canCreate: boolean
+  canRestore: boolean
+  onSummaryChange: (summary: string) => void
+  onCreate: () => void
+  onRestore: (revisionId: string) => void
+}
+
+function RevisionPanel({
+  revisions,
+  summary,
+  error,
+  canManage,
+  canCreate,
+  canRestore,
+  onSummaryChange,
+  onCreate,
+  onRestore,
+}: RevisionPanelProps) {
+  return (
+    <section className="revision-panel" aria-labelledby="revisions-heading">
+      <h2 id="revisions-heading">Phiên bản</h2>
+      {canManage && (
+        <>
+          <label>
+            Tên phiên bản
+            <input aria-label="Tên phiên bản" value={summary} maxLength={200} onChange={event => onSummaryChange(event.target.value)} />
+          </label>
+          <button type="button" disabled={!canCreate} onClick={onCreate}>Tạo phiên bản</button>
+        </>
+      )}
+      {error && <p role="alert">{error}</p>}
+      {revisions.length === 0 ? <p>Chưa có phiên bản nào.</p> : (
+        <ul>
+          {revisions.map(revision => (
+            <li key={revision.id}>
+              <span>{revision.summary}</span>
+              {canManage && (
+                <button type="button" aria-label={`Khôi phục ${revision.summary}`} disabled={!canRestore} onClick={() => onRestore(revision.id)}>Khôi phục</button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function EditorSurface({ projectId, projectName, workspaceId, role, initialDocument, initialVersion, api, editorOrigin, previewOrigin, assetOrigin, deploymentEnabled, assistantStyleEnabled, assistantLayoutEnabled, assistantCompositionEnabled, initialMode, proposalApi, assetApi: suppliedAssetApi, brief }: Required<Omit<EditorAppProps, 'brief' | 'assetApi'>> & { assetApi?: AssetLibraryApi; brief: WebsiteBrief | null }) {
   const [state, dispatch] = useReducer(editorReducer, initialDocument, createEditorState)
   const [announcement, setAnnouncement] = useState('Trình chỉnh sửa đã sẵn sàng')
   const [hydrated, setHydrated] = useState(false)
@@ -646,8 +822,9 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
   const [viewport, setViewport] = useState<Viewport>('desktop')
   const [mode, setMode] = useState<'simple' | 'advanced'>(initialMode)
   const [advancedPanel, setAdvancedPanel] = useState<'layers' | 'components'>('layers')
-  const [dialog, setDialog] = useState<'advanced' | 'delete' | null>(null)
+  const [dialog, setDialog] = useState<'advanced' | 'delete-section' | 'delete-node' | null>(null)
   const [sheet, setSheet] = useState<'story' | 'edit' | 'ask' | 'more' | null>(null)
+  const [isPageManagerOpen, setPageManagerOpen] = useState(false)
   const [proposalPrompt, setProposalPrompt] = useState('')
   const [proposalIntent, setProposalIntent] = useState<'standard' | 'remix-section'>('standard')
   const [activeProposal, setActiveProposal] = useState<AiProposalSummary | null>(null)
@@ -928,18 +1105,17 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
   const selectedSectionId = findContainingSectionId(state.document, state.selectedNodeId, state.activePageId)
     ?? story[0]?.nodeId
     ?? null
-  const selectedSection = selectedSectionId ? state.document.nodes[selectedSectionId] : undefined
   const selectedStory = story.find(item => item.nodeId === selectedSectionId)
   const exactProposalTarget = state.selectedNodeId ? state.document.nodes[state.selectedNodeId] : undefined
   const contextualMediaTarget = Boolean(
     exactProposalTarget?.type === 'image'
     || (exactProposalTarget?.type === 'feature-card' && 'mediaSlot' in exactProposalTarget.props && exactProposalTarget.props.mediaSlot),
   )
-  const contextualProposalTargetId = contextualMediaTarget ? state.selectedNodeId : selectedSectionId
+  const contextualProposalTargetId = state.selectedNodeId ?? selectedSectionId
   const contextualTarget = contextualProposalTargetId ? state.document.nodes[contextualProposalTargetId] : undefined
   const contextualProposalIntent = contextualMediaTarget ? 'replace-media' as const : proposalIntent
-  const proposalScopeLabel = contextualMediaTarget && contextualTarget
-    ? nodeLabel(contextualTarget)
+  const proposalScopeLabel = contextualTarget && contextualProposalTargetId !== selectedSectionId
+    ? contextualMediaTarget ? nodeLabel(contextualTarget) : layerLabel(contextualTarget)
     : `Phần ${selectedStory?.label ?? 'website'}`
   const canMutate = role !== 'viewer'
   const proposalCanSubmit = canMutate && (autosave.status === 'idle' || autosave.status === 'saved')
@@ -951,7 +1127,6 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
   const applySectionPlan = (
     plan: ReturnType<typeof planSectionMove>
       | ReturnType<typeof planSectionDuplicate>
-      | ReturnType<typeof planSectionVisibility>
       | ReturnType<typeof planSectionDelete>,
     success: string,
     selection = selectedSectionId ?? undefined,
@@ -991,7 +1166,7 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
   const enterAdvanced = (): void => {
     setMode('advanced')
     setDialog(null)
-    setAnnouncement('Đã mở điều khiển nâng cao')
+    setAnnouncement('Đã mở chỉnh sửa chuyên sâu')
   }
   const returnToSimple = (): void => {
     const sectionId = findContainingSectionId(stateRef.current.document, stateRef.current.selectedNodeId, stateRef.current.activePageId)
@@ -999,7 +1174,7 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
       ?? null
     setState(selectNode(stateRef.current, sectionId))
     setMode('simple')
-    setAnnouncement('Đã quay lại chế độ đơn giản')
+    setAnnouncement('Đã quay lại thiết kế trực quan')
   }
   const pageIds = (prefix: string): string => `${prefix}-${Date.now()}-${idCounter.current++}`
   const createPage = (input: { name: string; slug: string }): void => {
@@ -1064,24 +1239,88 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
     }])
   }
   const confirmDelete = (): void => {
-    if (!selectedSectionId) return
-    applySectionPlan(
-      planSectionDelete(stateRef.current.document, selectedSectionId),
-      'Đã xóa section',
-      getPageStory(stateRef.current.document, stateRef.current.activePageId).find(item => item.nodeId !== selectedSectionId)?.nodeId,
-    )
+    if (dialog === 'delete-section') {
+      if (!selectedSectionId) return
+      applySectionPlan(
+        planSectionDelete(stateRef.current.document, selectedSectionId),
+        'Đã xóa section',
+        getPageStory(stateRef.current.document, stateRef.current.activePageId).find(item => item.nodeId !== selectedSectionId)?.nodeId,
+      )
+    } else if (dialog === 'delete-node') {
+      const nodeId = stateRef.current.selectedNodeId
+      if (!nodeId) return
+      const node = stateRef.current.document.nodes[nodeId]
+      const parent = node?.parentId ? stateRef.current.document.nodes[node.parentId] : undefined
+      const index = parent?.children.indexOf(nodeId) ?? -1
+      const nextSelection = parent
+        ? parent.children[index + 1] ?? parent.children[index - 1] ?? parent.id
+        : undefined
+      const plan = planNodeDelete(stateRef.current.document, nodeId)
+      if (!plan.accepted) setAnnouncement(commandErrorLabel(plan.code))
+      else {
+        applyCommands([plan.command], nextSelection)
+        setAnnouncement('Đã xóa thành phần')
+      }
+    }
     setDialog(null)
   }
+  const selectedSectionIndex = story.findIndex(item => item.nodeId === selectedSectionId)
+  const exactSelectedNode = state.selectedNodeId ? state.document.nodes[state.selectedNodeId] : undefined
+  const explicitSectionSelection = Boolean(exactSelectedNode && exactSelectedNode.id === selectedSectionId)
+  const actionTargetId = exactSelectedNode?.id ?? selectedSectionId
+  const actionTarget = actionTargetId ? state.document.nodes[actionTargetId] : undefined
+  const actionParent = actionTarget?.parentId ? state.document.nodes[actionTarget.parentId] : undefined
+  const actionIndex = actionParent?.children.indexOf(actionTargetId ?? '') ?? -1
+  const actionIsTopLevelSection = mode === 'simple' && actionTargetId === selectedSectionId
+  const actionLabel = actionIsTopLevelSection && explicitSectionSelection
+    ? selectedStory?.label ?? componentLabel(actionTarget?.type ?? 'section')
+    : exactSelectedNode
+      ? nodeLabel(exactSelectedNode)
+      : selectedStory?.label ?? (actionTarget ? componentLabel(actionTarget.type) : '')
+  const selectionActions: SelectionActions | null = actionTargetId && actionTarget ? {
+    targetId: actionTargetId,
+    label: actionLabel,
+    canDrag: canMutate && Boolean(actionTarget.parentId),
+    canMoveUp: canMutate && (actionIsTopLevelSection ? selectedSectionIndex > 0 : actionIndex > 0),
+    canMoveDown: canMutate && (actionIsTopLevelSection
+      ? selectedSectionIndex >= 0 && selectedSectionIndex < story.length - 1
+      : actionIndex >= 0 && actionIndex < (actionParent?.children.length ?? 0) - 1),
+    canDuplicate: canMutate && Boolean(actionTarget.parentId),
+    canDelete: canMutate && Boolean(actionTarget.parentId) && (!actionIsTopLevelSection || story.length > 1),
+    onMoveUp: () => {
+      if (actionIsTopLevelSection) applySectionPlan(planSectionMove(stateRef.current.document, actionTargetId, -1), 'Đã di chuyển section')
+      else move(actionTargetId, -1)
+    },
+    onMoveDown: () => {
+      if (actionIsTopLevelSection) applySectionPlan(planSectionMove(stateRef.current.document, actionTargetId, 1), 'Đã di chuyển section')
+      else move(actionTargetId, 1)
+    },
+    onDuplicate: () => {
+      if (actionIsTopLevelSection) {
+        const plan = planSectionDuplicate(stateRef.current.document, actionTargetId, duplicateSectionId)
+        applySectionPlan(plan, 'Đã nhân bản section', plan.accepted ? plan.command.rootNodeId : undefined)
+        return
+      }
+      const plan = planNodeDuplicate(stateRef.current.document, actionTargetId, duplicateSectionId)
+      if (!plan.accepted) return setAnnouncement(commandErrorLabel(plan.code))
+      applyCommands([plan.command], plan.rootNodeId)
+      setAnnouncement('Đã nhân bản thành phần')
+    },
+    onDelete: () => setDialog(actionIsTopLevelSection ? 'delete-section' : 'delete-node'),
+  } : null
 
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
       <main className="editor-shell">
         <header className="editor-toolbar">
           <strong>ZenUI</strong>
+          {mode === 'simple' && (
+            <button type="button" onClick={() => setPageManagerOpen(true)}>Quản lý trang</button>
+          )}
           {mode === 'simple' ? (
-            <button type="button" onClick={() => setDialog('advanced')}>Mở điều khiển nâng cao</button>
+            <button type="button" onClick={() => setDialog('advanced')}>Mở chỉnh sửa chuyên sâu</button>
           ) : (
-            <button type="button" onClick={returnToSimple}>Quay lại chế độ đơn giản</button>
+            <button type="button" onClick={returnToSimple}>Quay lại thiết kế trực quan</button>
           )}
           <button type="button" aria-label="Hoàn tác" disabled={state.undoStack.length === 0} onClick={() => setState(undo(state))}>Hoàn tác</button>
           <button type="button" aria-label="Làm lại" disabled={state.redoStack.length === 0} onClick={() => setState(redo(state))}>Làm lại</button>
@@ -1150,11 +1389,12 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
                     : 'Đã lưu'
             : `Tài liệu v${state.document.version}`}</span>
         </header>
-        {mode === 'simple' && (
+        {mode === 'simple' && isPageManagerOpen && (
           <PageManagerPanel
             document={state.document}
             activePageId={state.activePageId}
             canMutate={canMutate}
+            onClose={() => setPageManagerOpen(false)}
             onSelect={pageId => {
               setState(selectPage(stateRef.current, pageId))
               setAnnouncement(`Đang chỉnh trang ${stateRef.current.document.pages.find(page => page.id === pageId)?.name ?? ''}`)
@@ -1168,28 +1408,36 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
           />
         )}
         {mode === 'simple' ? (
-          <nav className="page-story" aria-label="Câu chuyện trang">
-            <h1>Câu chuyện trang</h1>
-            <p>Chọn từng phần để sắp xếp câu chuyện của website.</p>
-            <ol>
+          <nav className="page-story-pro" aria-label="Câu chuyện trang">
+            <div className="story-header">
+              <h1>Câu chuyện trang</h1>
+              <p>Chọn từng phần để sắp xếp câu chuyện của website.</p>
+            </div>
+            <ol className="story-layer-tree">
               {story.map(item => (
                 <li key={item.nodeId}>
                   <button
                     type="button"
+                    className={`story-layer-item ${selectedSectionId === item.nodeId ? 'active' : ''}`}
                     aria-label={`Chọn ${item.label} — ${item.purpose}`}
                     aria-current={selectedSectionId === item.nodeId ? 'true' : undefined}
                     onClick={() => selectSection(item.nodeId)}
                   >
-                    <span>{item.purpose}</span>
-                    <strong>{item.label}</strong>
-                    {item.hidden && <small>Đã ẩn</small>}
+                    <div className="layer-icon">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                    </div>
+                    <div className="layer-content">
+                      <strong>{item.label}</strong>
+                      <span>{item.purpose}</span>
+                    </div>
+                    {item.hidden && <span className="layer-badge">Đã ẩn</span>}
                   </button>
                 </li>
               ))}
             </ol>
           </nav>
         ) : (
-          <aside className="palette-panel advanced-sidebar" aria-label="Điều khiển nâng cao">
+          <aside className="palette-panel advanced-sidebar" aria-label="Chỉnh sửa chuyên sâu">
             <div className="advanced-sidebar-tabs" role="tablist" aria-label="Chọn bảng điều khiển">
               <button
                 type="button"
@@ -1286,20 +1534,37 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
               selectedNodeId={state.selectedNodeId ?? (mode === 'simple' ? selectedSectionId : null)}
               viewport={viewport}
               onSelect={selectEditorNode}
-              onMove={move}
               onChooseImage={chooseImageTarget}
               canMutate={canMutate}
               assetOrigin={assetOrigin}
+              selectionActions={selectionActions}
             />
           </div>
         </section>
         {mode === 'simple' ? (
           <aside className="section-guide" aria-label="Chỉnh sửa section">
-            {isFixture || !canMutate ? (
+            {isFixture ? (
               <>
                 <h1>{selectedStory?.label ?? 'Section'}</h1>
                 <p>{selectedStory?.purpose ?? 'Chọn một section từ Câu chuyện trang.'}</p>
-                <p className="hint">{canMutate ? 'AI đề xuất thay đổi trước khi áp dụng.' : 'Bạn đang xem ở chế độ chỉ đọc.'}</p>
+                <p className="hint">AI đề xuất thay đổi trước khi áp dụng.</p>
+              </>
+            ) : !canMutate ? (
+              <>
+                <h1>{selectedStory?.label ?? 'Section'}</h1>
+                <p>{selectedStory?.purpose ?? 'Chọn một section từ Câu chuyện trang.'}</p>
+                <p className="hint">Bạn đang xem ở chế độ chỉ đọc.</p>
+                <RevisionPanel
+                  revisions={revisions}
+                  summary={revisionSummary}
+                  error={revisionError}
+                  canManage={false}
+                  canCreate={false}
+                  canRestore={false}
+                  onSummaryChange={setRevisionSummary}
+                  onCreate={() => void createRevision()}
+                  onRestore={revisionId => void restoreRevision(revisionId)}
+                />
               </>
             ) : (
               <>
@@ -1313,6 +1578,7 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
                   workspaceId={workspaceId}
                   expectedVersion={autosave.serverVersion}
                   selectedNodeId={contextualProposalTargetId}
+                  styleTargetNodeId={exactProposalTarget?.id ?? null}
                   scopeLabel={proposalScopeLabel}
                   acceptedDocument={state.document}
                   viewport={viewport}
@@ -1321,6 +1587,9 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
                   api={proposalApi}
                   initialPrompt={proposalPrompt}
                   initialIntent={contextualProposalIntent}
+                  styleEnabled={assistantStyleEnabled && Boolean(exactProposalTarget) && !contextualMediaTarget}
+                  layoutEnabled={assistantLayoutEnabled && contextualTarget?.type !== 'image' && contextualProposalTargetId === selectedSectionId}
+                  compositionEnabled={assistantCompositionEnabled && contextualTarget?.type === 'section' && contextualProposalTargetId === selectedSectionId}
                   initialAllowedChanges={[]}
                   onAccepted={applyAcceptedProposal}
                   onStateChange={setActiveProposal}
@@ -1339,6 +1608,17 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
                     onRemix={prepareIntelligenceRemix}
                   />
                 )}
+                <RevisionPanel
+                  revisions={revisions}
+                  summary={revisionSummary}
+                  error={revisionError}
+                  canManage={canMutate}
+                  canCreate={autosave.status === 'idle' || autosave.status === 'saved'}
+                  canRestore={autosave.status !== 'dirty' && autosave.status !== 'saving' && autosave.status !== 'conflict'}
+                  onSummaryChange={setRevisionSummary}
+                  onCreate={() => void createRevision()}
+                  onRestore={revisionId => void restoreRevision(revisionId)}
+                />
               </>
             )}
           </aside>
@@ -1354,35 +1634,31 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
                     workspaceId={workspaceId}
                     expectedVersion={autosave.serverVersion}
                     selectedNodeId={state.selectedNodeId}
+                    styleTargetNodeId={exactSelectedNode?.id ?? null}
                     scopeLabel={proposalScopeLabel}
                     acceptedDocument={state.document}
                     viewport={viewport}
                     assetOrigin={assetOrigin}
                     canSubmit={proposalCanSubmit}
                     api={proposalApi}
+                    styleEnabled={assistantStyleEnabled && Boolean(exactSelectedNode)}
+                    layoutEnabled={assistantLayoutEnabled && exactSelectedNode?.id === selectedSectionId}
+                    compositionEnabled={assistantCompositionEnabled && exactSelectedNode?.type === 'section' && exactSelectedNode.id === selectedSectionId}
                     onAccepted={applyAcceptedProposal}
                     onStateChange={setActiveProposal}
                   />
                 )}
-                <section className="revision-panel" aria-labelledby="revisions-heading">
-                  <h2 id="revisions-heading">Phiên bản</h2>
-                  <label>
-                    Tên phiên bản
-                    <input aria-label="Tên phiên bản" value={revisionSummary} maxLength={200} onChange={event => setRevisionSummary(event.target.value)} />
-                  </label>
-                  <button type="button" disabled={autosave.status === 'dirty' || autosave.status === 'saving' || autosave.status === 'conflict'} onClick={() => void createRevision()}>Tạo phiên bản</button>
-                  {revisionError && <p role="alert">{revisionError}</p>}
-                  {revisions.length === 0 ? <p>Chưa có phiên bản nào.</p> : (
-                    <ul>
-                      {revisions.map(revision => (
-                        <li key={revision.id}>
-                          <span>{revision.summary}</span>
-                          <button type="button" aria-label={`Khôi phục ${revision.summary}`} disabled={autosave.status === 'dirty' || autosave.status === 'saving'} onClick={() => void restoreRevision(revision.id)}>Khôi phục</button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </section>
+                <RevisionPanel
+                  revisions={revisions}
+                  summary={revisionSummary}
+                  error={revisionError}
+                  canManage={canMutate}
+                  canCreate={autosave.status === 'idle' || autosave.status === 'saved'}
+                  canRestore={autosave.status !== 'dirty' && autosave.status !== 'saving' && autosave.status !== 'conflict'}
+                  onSummaryChange={setRevisionSummary}
+                  onCreate={() => void createRevision()}
+                  onRestore={revisionId => void restoreRevision(revisionId)}
+                />
               </>
             )}
           </aside>
@@ -1452,72 +1728,6 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
             )}
           </aside>
         )}
-        {mode === 'simple' && selectedSectionId && selectedSection && (
-          <div className="section-actions" aria-label="Thao tác section">
-            <strong>{story.find(item => item.nodeId === selectedSectionId)?.label}</strong>
-            <button
-              type="button"
-              aria-label="Viết lại"
-              disabled={!canMutate || isFixture || Boolean(activeProposal)}
-              onClick={() => {
-                setProposalPrompt('Viết lại phần này ngắn gọn và rõ ràng hơn')
-                setAnnouncement('Đã chuẩn bị yêu cầu Viết lại. Hãy kiểm tra phạm vi rồi đề xuất thay đổi.')
-                globalThis.document.querySelector<HTMLTextAreaElement>('[aria-label="Bạn muốn cải thiện điều gì?"]')?.focus()
-              }}
-            >Viết lại</button>
-            <button
-              type="button"
-              aria-label="Thử bố cục khác"
-              disabled={!canMutate}
-              onClick={() => applySectionPlan(
-                planSectionLayoutReplacement(stateRef.current.document, selectedSectionId),
-                'Đã thử bố cục khác',
-              )}
-            >Thử bố cục khác</button>
-            <button
-              type="button"
-              aria-label="Di chuyển section lên"
-              disabled={!canMutate || story.findIndex(item => item.nodeId === selectedSectionId) === 0}
-              onClick={() => applySectionPlan(
-                planSectionMove(stateRef.current.document, selectedSectionId, -1),
-                'Đã di chuyển section',
-              )}
-            >↑</button>
-            <button
-              type="button"
-              aria-label="Di chuyển section xuống"
-              disabled={!canMutate || story.findIndex(item => item.nodeId === selectedSectionId) === story.length - 1}
-              onClick={() => applySectionPlan(
-                planSectionMove(stateRef.current.document, selectedSectionId, 1),
-                'Đã di chuyển section',
-              )}
-            >↓</button>
-            <button
-              type="button"
-              aria-label={isNodeHidden(selectedSection) ? 'Hiện section' : 'Ẩn section'}
-              disabled={!canMutate}
-              onClick={() => applySectionPlan(
-                planSectionVisibility(stateRef.current.document, selectedSectionId, !isNodeHidden(selectedSection)),
-                isNodeHidden(selectedSection) ? 'Đã hiện section' : 'Đã ẩn section',
-              )}
-            >{isNodeHidden(selectedSection) ? 'Hiện' : 'Ẩn'}</button>
-            <button
-              type="button"
-              aria-label="Nhân bản section"
-              disabled={!canMutate}
-              onClick={() => {
-                const plan = planSectionDuplicate(stateRef.current.document, selectedSectionId, duplicateSectionId)
-                applySectionPlan(plan, 'Đã nhân bản section', plan.accepted ? plan.command.rootNodeId : undefined)
-              }}
-            >Nhân bản</button>
-            <button
-              type="button"
-              aria-label="Xóa section"
-              disabled={!canMutate || story.length <= 1}
-              onClick={() => setDialog('delete')}
-            >Xóa</button>
-          </div>
-        )}
         <footer className="status-bar" role="status" aria-live="polite">
           <span>{announcement}</span>
           {autosave.status === 'conflict' && (
@@ -1530,9 +1740,9 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
         </footer>
         {sheet && mode === 'simple' && (
           <div className="section-sheet-backdrop">
-            <section role="dialog" aria-modal="true" aria-label={sheet === 'story' ? 'Câu chuyện trang' : sheet === 'edit' ? 'Chỉnh sửa trực tiếp' : sheet === 'ask' ? 'Cùng thiết kế' : 'Thêm thao tác'} className="section-sheet">
+            <section role="dialog" aria-modal="true" aria-label={sheet === 'story' ? 'Câu chuyện trang' : sheet === 'edit' ? 'Chỉnh sửa trực tiếp' : sheet === 'ask' ? 'Trợ lý thiết kế AI' : 'Thêm thao tác'} className="section-sheet">
               <header>
-                <h2>{sheet === 'story' ? 'Câu chuyện trang' : sheet === 'edit' ? 'Chỉnh sửa trực tiếp' : sheet === 'ask' ? 'Cùng thiết kế' : 'Thêm thao tác'}</h2>
+                <h2>{sheet === 'story' ? 'Câu chuyện trang' : sheet === 'edit' ? 'Chỉnh sửa trực tiếp' : sheet === 'ask' ? 'Trợ lý thiết kế AI' : 'Thêm thao tác'}</h2>
                 <button
                   ref={sheetCloseRef}
                   type="button"
@@ -1561,6 +1771,7 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
                   workspaceId={workspaceId}
                   expectedVersion={autosave.serverVersion}
                   selectedNodeId={contextualProposalTargetId}
+                  styleTargetNodeId={exactProposalTarget?.id ?? null}
                   scopeLabel={proposalScopeLabel}
                   acceptedDocument={state.document}
                   viewport={viewport}
@@ -1569,6 +1780,9 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
                   api={proposalApi}
                   initialPrompt={proposalPrompt}
                   initialIntent={contextualProposalIntent}
+                  styleEnabled={assistantStyleEnabled && Boolean(exactProposalTarget) && !contextualMediaTarget}
+                  layoutEnabled={assistantLayoutEnabled && contextualProposalTargetId === selectedSectionId}
+                  compositionEnabled={assistantCompositionEnabled && contextualTarget?.type === 'section' && contextualProposalTargetId === selectedSectionId}
                   onAccepted={applyAcceptedProposal}
                   onStateChange={setActiveProposal}
                 />
@@ -1583,7 +1797,7 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
                       setSheet(null)
                     }}
                   >Nhân bản section</button>
-                  <button type="button" disabled={!canMutate || story.length <= 1} onClick={() => { setSheet(null); setDialog('delete') }}>Xóa section</button>
+                  <button type="button" disabled={!canMutate || story.length <= 1} onClick={() => { setSheet(null); setDialog('delete-section') }}>Xóa section</button>
                 </div>
               )}
             </section>
@@ -1592,23 +1806,25 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
         {dialog === 'advanced' && (
           <div className="editor-dialog-backdrop">
             <section role="dialog" aria-modal="true" aria-labelledby="advanced-dialog-heading" className="editor-dialog">
-              <h2 id="advanced-dialog-heading">Mở điều khiển nâng cao?</h2>
-              <p>Chế độ nâng cao hiển thị thành phần, lớp và thuộc tính kỹ thuật. Website sẽ không bị thay đổi khi chuyển chế độ.</p>
+              <h2 id="advanced-dialog-heading">Mở chỉnh sửa chuyên sâu?</h2>
+              <p>Chỉnh sửa chuyên sâu hiển thị cây lớp, thành phần và các kiểm soát kỹ thuật chi tiết hơn. Website sẽ không bị thay đổi khi chuyển cách làm việc.</p>
               <div>
-                <button type="button" onClick={() => setDialog(null)}>Ở lại chế độ đơn giản</button>
-                <button type="button" autoFocus onClick={enterAdvanced}>Xác nhận mở nâng cao</button>
+                <button type="button" onClick={() => setDialog(null)}>Ở lại thiết kế trực quan</button>
+                <button type="button" autoFocus onClick={enterAdvanced}>Mở chỉnh sửa chuyên sâu</button>
               </div>
             </section>
           </div>
         )}
-        {dialog === 'delete' && (
+        {(dialog === 'delete-section' || dialog === 'delete-node') && (
           <div className="editor-dialog-backdrop">
             <section role="dialog" aria-modal="true" aria-labelledby="delete-dialog-heading" className="editor-dialog">
-              <h2 id="delete-dialog-heading">Xóa section?</h2>
+              <h2 id="delete-dialog-heading">{dialog === 'delete-section' ? 'Xóa section?' : 'Xóa thành phần?'}</h2>
               <p>Bạn có thể hoàn tác ngay sau khi xóa.</p>
               <div>
                 <button type="button" onClick={() => setDialog(null)}>Hủy</button>
-                <button type="button" autoFocus onClick={confirmDelete}>Xác nhận xóa section</button>
+                <button type="button" autoFocus onClick={confirmDelete}>
+                  {dialog === 'delete-section' ? 'Xác nhận xóa section' : 'Xác nhận xóa thành phần'}
+                </button>
               </div>
             </section>
           </div>
@@ -1630,6 +1846,9 @@ export function EditorApp({
   previewOrigin = 'http://127.0.0.1:3001',
   assetOrigin = 'http://127.0.0.1:3002',
   deploymentEnabled = true,
+  assistantStyleEnabled = false,
+  assistantLayoutEnabled = false,
+  assistantCompositionEnabled = false,
   initialMode = projectId === 'project-1' ? 'advanced' : 'simple',
   proposalApi = browserAiProposalApi,
   assetApi,
@@ -1638,6 +1857,6 @@ export function EditorApp({
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
   return mounted
-    ? <EditorSurface projectId={projectId} projectName={projectName} workspaceId={workspaceId} role={role} initialDocument={initialDocument} initialVersion={initialVersion} api={api} editorOrigin={editorOrigin} previewOrigin={previewOrigin} assetOrigin={assetOrigin} deploymentEnabled={deploymentEnabled} initialMode={initialMode} proposalApi={proposalApi} {...(assetApi ? { assetApi } : {})} brief={brief} />
+    ? <EditorSurface projectId={projectId} projectName={projectName} workspaceId={workspaceId} role={role} initialDocument={initialDocument} initialVersion={initialVersion} api={api} editorOrigin={editorOrigin} previewOrigin={previewOrigin} assetOrigin={assetOrigin} deploymentEnabled={deploymentEnabled} assistantStyleEnabled={assistantStyleEnabled} assistantLayoutEnabled={assistantLayoutEnabled} assistantCompositionEnabled={assistantCompositionEnabled} initialMode={initialMode} proposalApi={proposalApi} {...(assetApi ? { assetApi } : {})} brief={brief} />
     : <main className="editor-loading" role="status">Đang tải trình chỉnh sửa ZenUI...</main>
 }

@@ -1,17 +1,32 @@
-import { createHmac } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 
 import {
   AI_PROMPT_VERSION,
   buildAiOperationsResponseJsonSchema,
+  buildAssistantContextPack,
   createMockLlmProvider,
   designDirectionContentBlueprintJsonSchema,
   designDirectionJobSchema,
   landingPageProviderBlueprintJsonSchema,
+  assistantPlanV2Schema,
+  styleEditSpecSchema,
+  layoutRecipeSelectionSchema,
+  sectionCompositionSpecSchema,
+  mediaCandidateEvaluationSchema,
+  visualBriefSchema,
   generationJobSchema,
   normalizeAiEditResponse,
+  planVisualBrief,
+  evaluateMediaCandidates,
   runDesignDirectionGeneration,
   runGeneration,
+  materializeLayoutProposal,
   materializeMediaProposal,
+  materializeSectionCompositionProposal,
+  materializeStyleProposal,
+  planLayoutRecipe,
+  planSectionComposition,
+  planStyleEdit,
   type DesignDirectionImageIntent,
   type DesignDirectionJob,
   type DesignDirectionOwnedImage,
@@ -22,6 +37,14 @@ import {
   type GenerationJob,
   type LLMProvider,
   type LlmUsage,
+  type AssistantPlannerProvider,
+  type MediaCandidateInput,
+  type MediaCandidateJudge,
+  type MediaProposalReview,
+  type LayoutRecipePlannerProvider,
+  type SectionCompositionPlannerProvider,
+  type StyleEditPlannerProvider,
+  type VisualBriefPlannerProvider,
   type ProviderRequest,
   type ProviderResponse,
 } from '@zenui/ai-core'
@@ -39,8 +62,10 @@ import {
   type DeploymentJob,
 } from '@zenui/deployment-core'
 import { VercelProviderError } from '@zenui/deployment-core/server'
+import { collectAssetReferences, parseDesignDocument } from '@zenui/design-schema'
 import { EXPORT_CONTENT_TYPE, createDeterministicSiteArchive, exportJobSchema } from '@zenui/export-core'
 import { compileStaticSite } from '@zenui/html-compiler'
+import { z } from 'zod'
 
 import type {
   AuthContext,
@@ -248,6 +273,117 @@ export function createGeminiProvider(dependencies: GeminiProviderDependencies): 
   }
 }
 
+interface GeminiMediaGenerateParameters {
+  model: string
+  contents: unknown
+  config: GeminiGenerateParameters['config']
+}
+
+export function createGeminiMediaIntelligenceProvider(dependencies: {
+  model: string
+  generateContent(input: GeminiMediaGenerateParameters, signal?: AbortSignal): Promise<GeminiResponseLike>
+  maxOutputTokens?: number
+}): AssistantPlannerProvider & LayoutRecipePlannerProvider & SectionCompositionPlannerProvider & StyleEditPlannerProvider & VisualBriefPlannerProvider & MediaCandidateJudge {
+  const call = async (input: {
+    contents: unknown
+    schema: unknown
+    signal: AbortSignal
+  }): Promise<{ output: unknown; usage: LlmUsage }> => {
+    let response: GeminiResponseLike
+    try {
+      response = await dependencies.generateContent({
+        model: dependencies.model,
+        contents: input.contents,
+        config: {
+          systemInstruction: [
+            systemPolicy,
+            'Plan only within the exact server-authorized target and scope in the context.',
+            'For media, match the requested representation and people policy; never silently substitute a stock photo.',
+            'Judge normalized candidate bytes only against the supplied visual brief.',
+          ].join(' '),
+          temperature: 0.1,
+          maxOutputTokens: dependencies.maxOutputTokens ?? 2048,
+          responseMimeType: 'application/json',
+          responseJsonSchema: geminiResponseSchema(input.schema),
+        },
+      }, input.signal)
+    } catch (error) {
+      throw providerFailure(error)
+    }
+    try {
+      return { output: JSON.parse(response.text ?? ''), usage: toUsage(response) }
+    } catch (error) {
+      throw providerFailure(error)
+    }
+  }
+
+  return {
+    plan: input => call({
+      contents: JSON.stringify({
+        contractVersion: 'assistant-plan-v2',
+        context: input.context,
+        outputContract: 'Classify one bounded copy, media, style, layout, or composition intent. Preserve the exact targetNodeId and scope supplied by the server.',
+      }),
+      schema: z.toJSONSchema(assistantPlanV2Schema, { target: 'draft-7' }),
+      signal: input.signal,
+    }),
+    planLayoutRecipe: input => call({
+      contents: JSON.stringify({
+        contractVersion: 'layout-recipe-selection-v1',
+        context: input.context,
+        outputContract: 'Choose one server-owned layout recipe for the exact selected top-level section. Never return nodes, IDs, HTML, CSS, URLs, colors, fonts, or raw style values.',
+      }),
+      schema: z.toJSONSchema(layoutRecipeSelectionSchema, { target: 'draft-7' }),
+      signal: input.signal,
+    }),
+    planSectionComposition: input => call({
+      contents: JSON.stringify({
+        contractVersion: 'section-composition-spec-v1',
+        context: input.context,
+        outputContract: 'Choose one server-owned composition template for the exact selected top-level section. Preserve copy, CTA, brand, media, content order, and responsive intent. Never return nodes, IDs, HTML, CSS, URLs, or arbitrary properties.',
+      }),
+      schema: z.toJSONSchema(sectionCompositionSpecSchema, { target: 'draft-7' }),
+      signal: input.signal,
+    }),
+    planStyleEdit: input => call({
+      contents: JSON.stringify({
+        contractVersion: 'style-edit-spec-v1',
+        context: input.context,
+        outputContract: 'Return one semantic style edit spec using only the enforced tokens. Never return raw CSS, URLs, fonts, colors, pixels, node IDs, or theme edits.',
+      }),
+      schema: z.toJSONSchema(styleEditSpecSchema, { target: 'draft-7' }),
+      signal: input.signal,
+    }),
+    planVisualBrief: input => call({
+      contents: JSON.stringify({
+        contractVersion: 'visual-brief-v1',
+        context: input.context,
+        outputContract: 'Return one bounded visual brief. Non-photo representations must set searchQuery to null. Use a new descriptive alt matching the requested visual.',
+      }),
+      schema: z.toJSONSchema(visualBriefSchema, { target: 'draft-7' }),
+      signal: input.signal,
+    }),
+    evaluateBatch: input => call({
+      contents: [
+        JSON.stringify({
+          contractVersion: 'media-candidate-evaluation-v1',
+          brief: input.brief,
+          candidates: input.candidates.map(candidate => ({ candidateId: candidate.candidateId, source: candidate.source })),
+          outputContract: 'Return one evaluation per candidate in the same order. Use only allowlisted violation codes and safe concise reasons.',
+        }),
+        ...input.candidates.map(candidate => ({
+          inlineData: { data: Buffer.from(candidate.bytes).toString('base64'), mimeType: 'image/webp' },
+        })),
+      ],
+      schema: z.toJSONSchema(
+        z.array(mediaCandidateEvaluationSchema).length(input.candidates.length),
+        { target: 'draft-7' },
+      ),
+      signal: input.signal,
+    }),
+  }
+}
+
 export const createMockWorkerProvider = createMockLlmProvider
 
 export type GeneratedImageErrorCode =
@@ -354,6 +490,385 @@ export function createGeminiImageGenerator(dependencies: {
   }
 }
 
+function addUsage(left: LlmUsage, right: LlmUsage): LlmUsage {
+  return {
+    inputTokens: left.inputTokens + right.inputTokens,
+    outputTokens: left.outputTokens + right.outputTokens,
+    totalTokens: left.totalTokens + right.totalTokens,
+  }
+}
+
+function candidatePrompt(prompt: string, candidateIndex: number): string {
+  if (candidateIndex === 0) return prompt
+  return `${prompt}. Use an alternative composition while preserving every required subject, constraint, people policy, text policy, palette, and aspect ratio.`
+}
+
+function generatedAspectRatio(aspectRatio: 'square' | 'landscape' | 'wide' | 'portrait'): ImageGenerationInput['aspectRatio'] {
+  if (aspectRatio === 'square') return '1:1'
+  return aspectRatio === 'wide' ? '16:9' : '4:3'
+}
+
+interface ImportedMediaCandidate {
+  assetId: string
+  bytes: Uint8Array
+  source: MediaCandidateInput['source']
+}
+
+export type AssistantObservation = {
+  lane?: 'copy' | 'media' | 'style' | 'layout' | 'composition'
+  stage:
+    | 'candidate'
+    | 'image_generation'
+    | 'judge'
+    | 'planner'
+    | 'proposal'
+    | 'repair'
+    | 'semantic_gate'
+    | 'text_tokens'
+  outcome: 'accepted' | 'completed' | 'failed' | 'rejected' | 'started'
+  count: number
+  source?: 'generated' | 'stock'
+}
+
+export type AssistantObserver = (observation: AssistantObservation) => void
+
+interface AssistantRefinementContext {
+  originalRequest: string
+  feedbackCodes: Array<
+    'wrong_topic' | 'style_mismatch' | 'layout_mismatch' | 'unwanted_detail' | 'copy_mismatch' | 'other'
+  >
+}
+
+function observeAssistant(observer: AssistantObserver | undefined, observation: AssistantObservation): void {
+  observer?.(observation)
+}
+
+export function createLayoutProposalV2Resolver(dependencies: {
+  planner: LayoutRecipePlannerProvider
+  locale?: 'vi' | 'en'
+}) {
+  return async function resolve(input: {
+    context: AuthContext
+    projectId: string
+    runId: string
+    targetNodeId: string
+    prompt: string
+    document: DesignDocument
+  }): Promise<{
+    document: DesignDocument
+    commands: unknown[]
+    summary: string
+    usage: LlmUsage
+  } | null> {
+    let planned: Awaited<ReturnType<typeof planLayoutRecipe>>
+    try {
+      planned = await planLayoutRecipe({
+        context: buildAssistantContextPack({
+          document: input.document,
+          selectedNodeId: input.targetNodeId,
+          request: input.prompt,
+          locale: dependencies.locale ?? 'vi',
+        }),
+        provider: dependencies.planner,
+      })
+    } catch {
+      return null
+    }
+    if (!planned.accepted) return null
+    const materialized = materializeLayoutProposal({
+      document: input.document,
+      sectionNodeId: input.targetNodeId,
+      selection: planned.selection,
+      runId: input.runId,
+      expectedVersion: input.document.version,
+      summary: 'Prepared a bounded section layout improvement',
+    })
+    return materialized.accepted
+      ? {
+          document: materialized.proposedDocument,
+          commands: materialized.commands,
+          summary: materialized.summary,
+          usage: planned.usage,
+        }
+      : null
+  }
+}
+
+export function createSectionCompositionV2Resolver(dependencies: {
+  planner: SectionCompositionPlannerProvider
+  locale?: 'vi' | 'en'
+}) {
+  return async function resolve(input: {
+    context: AuthContext
+    projectId: string
+    runId: string
+    targetNodeId: string
+    prompt: string
+    document: DesignDocument
+  }): Promise<{
+    document: DesignDocument
+    commands: unknown[]
+    summary: string
+    usage: LlmUsage
+  } | null> {
+    let planned: Awaited<ReturnType<typeof planSectionComposition>>
+    try {
+      planned = await planSectionComposition({
+        context: buildAssistantContextPack({
+          document: input.document,
+          selectedNodeId: input.targetNodeId,
+          request: input.prompt,
+          locale: dependencies.locale ?? 'vi',
+        }),
+        provider: dependencies.planner,
+      })
+    } catch {
+      return null
+    }
+    if (!planned.accepted) return null
+    const materialized = materializeSectionCompositionProposal({
+      document: input.document,
+      sectionNodeId: input.targetNodeId,
+      spec: planned.spec,
+      runId: input.runId,
+      expectedVersion: input.document.version,
+      summary: 'Prepared a bounded section composition improvement',
+    })
+    return materialized.accepted
+      ? {
+          document: materialized.proposedDocument,
+          commands: materialized.commands,
+          summary: materialized.summary,
+          usage: planned.usage,
+        }
+      : null
+  }
+}
+
+export function createStyleProposalV2Resolver(dependencies: {
+  planner: StyleEditPlannerProvider
+  locale?: 'vi' | 'en'
+}) {
+  return async function resolve(input: {
+    context: AuthContext
+    projectId: string
+    runId: string
+    targetNodeId: string
+    prompt: string
+    document: DesignDocument
+  }): Promise<{
+    document: DesignDocument
+    commands: unknown[]
+    summary: string
+    usage: LlmUsage
+  } | null> {
+    let planned: Awaited<ReturnType<typeof planStyleEdit>>
+    try {
+      planned = await planStyleEdit({
+        context: buildAssistantContextPack({
+          document: input.document,
+          selectedNodeId: input.targetNodeId,
+          request: input.prompt,
+          locale: dependencies.locale ?? 'vi',
+        }),
+        provider: dependencies.planner,
+      })
+    } catch {
+      return null
+    }
+    if (!planned.accepted) return null
+    const summary = 'Prepared a bounded style improvement'
+    const materialized = materializeStyleProposal({
+      document: input.document,
+      targetNodeId: input.targetNodeId,
+      spec: planned.spec,
+      runId: input.runId,
+      expectedVersion: input.document.version,
+      summary,
+    })
+    return materialized.accepted
+      ? {
+          document: materialized.proposedDocument,
+          commands: materialized.commands,
+          summary: materialized.summary,
+          usage: planned.usage,
+        }
+      : null
+  }
+}
+
+export function createMediaProposalV2Resolver(dependencies: {
+  planner: VisualBriefPlannerProvider
+  generator: { generate(input: ImageGenerationInput): Promise<GeneratedImageResult> }
+  judge: MediaCandidateJudge
+  importCandidate(input: {
+    context: AuthContext
+    projectId: string
+    runId: string
+    candidateIndex: number
+    bytes: Uint8Array
+    mimeType: string
+    source: MediaCandidateInput['source']
+    alt: string
+  }): Promise<ImportedMediaCandidate | null>
+  searchStock?: (input: {
+    context: AuthContext
+    projectId: string
+    runId: string
+    query: string
+    alt: string
+    aspectRatio: 'square' | 'landscape' | 'wide' | 'portrait'
+    peoplePolicy: 'required' | 'allowed' | 'forbidden'
+    mustAvoid: string[]
+  }) => Promise<ImportedMediaCandidate[]>
+  maxImagesPerRun: number
+  multiCandidateEnabled?: boolean
+  minimumScore?: number
+  locale?: 'vi' | 'en'
+  observe?: AssistantObserver
+}) {
+  const generationCount = Math.max(1, Math.min(
+    dependencies.maxImagesPerRun,
+    dependencies.multiCandidateEnabled ? 2 : 1,
+  ))
+  return async function resolve(input: {
+    context: AuthContext
+    projectId: string
+    runId: string
+    targetNodeId: string
+    prompt: string
+    document: DesignDocument
+  }): Promise<(DesignDirectionOwnedImage & { usage: LlmUsage; mediaReview: MediaProposalReview }) | null> {
+    let planned: Awaited<ReturnType<typeof planVisualBrief>>
+    try {
+      planned = await planVisualBrief({
+        context: buildAssistantContextPack({
+          document: input.document,
+          selectedNodeId: input.targetNodeId,
+          request: input.prompt,
+          locale: dependencies.locale ?? 'vi',
+        }),
+        provider: dependencies.planner,
+      })
+    } catch {
+      observeAssistant(dependencies.observe, { stage: 'planner', outcome: 'failed', count: 1 })
+      return null
+    }
+    if (!planned.accepted) {
+      observeAssistant(dependencies.observe, { stage: 'planner', outcome: 'rejected', count: 1 })
+      return null
+    }
+    observeAssistant(dependencies.observe, { stage: 'planner', outcome: 'completed', count: 1 })
+
+    const generated = (await Promise.all(Array.from({ length: generationCount }, async (_, candidateIndex) => {
+      try {
+        const image = await dependencies.generator.generate({
+          prompt: candidatePrompt(planned.brief.generationPrompt, candidateIndex),
+          aspectRatio: generatedAspectRatio(planned.brief.aspectRatio),
+          signal: new AbortController().signal,
+        })
+        observeAssistant(dependencies.observe, { stage: 'image_generation', outcome: 'completed', count: 1 })
+        const candidate = await dependencies.importCandidate({
+          context: input.context,
+          projectId: input.projectId,
+          runId: input.runId,
+          candidateIndex,
+          bytes: image.bytes,
+          mimeType: image.mimeType,
+          source: 'generated',
+          alt: planned.brief.alt,
+        })
+        if (candidate) {
+          observeAssistant(dependencies.observe, {
+            stage: 'candidate', outcome: 'completed', count: 1, source: 'generated',
+          })
+        }
+        return candidate
+      } catch {
+        observeAssistant(dependencies.observe, { stage: 'image_generation', outcome: 'failed', count: 1 })
+        return null
+      }
+    }))).filter((candidate): candidate is ImportedMediaCandidate => candidate !== null)
+
+    let imported = generated
+    if (imported.length === 0 && planned.brief.representation === 'photo' && planned.brief.searchQuery && dependencies.searchStock) {
+      try {
+        imported = (await dependencies.searchStock({
+          context: input.context,
+          projectId: input.projectId,
+          runId: input.runId,
+          query: planned.brief.searchQuery,
+          alt: planned.brief.alt,
+          aspectRatio: planned.brief.aspectRatio,
+          peoplePolicy: planned.brief.peoplePolicy,
+          mustAvoid: planned.brief.mustAvoid,
+        })).slice(0, 3)
+        if (imported.length > 0) {
+          observeAssistant(dependencies.observe, {
+            stage: 'candidate', outcome: 'completed', count: imported.length, source: 'stock',
+          })
+        }
+      } catch {
+        observeAssistant(dependencies.observe, { stage: 'candidate', outcome: 'failed', count: 1, source: 'stock' })
+        return null
+      }
+    }
+    if (imported.length === 0) return null
+
+    const candidates: MediaCandidateInput[] = imported.map((candidate, index) => ({
+      candidateId: `candidate-${index}`,
+      assetId: candidate.assetId,
+      source: candidate.source,
+      bytes: candidate.bytes,
+    }))
+    let judged: Awaited<ReturnType<typeof evaluateMediaCandidates>>
+    try {
+      judged = await evaluateMediaCandidates({
+        brief: planned.brief,
+        candidates,
+        judge: dependencies.judge,
+        ...(dependencies.minimumScore !== undefined ? { minimumScore: dependencies.minimumScore } : {}),
+      })
+    } catch {
+      observeAssistant(dependencies.observe, { stage: 'judge', outcome: 'failed', count: 1 })
+      return null
+    }
+    observeAssistant(dependencies.observe, { stage: 'judge', outcome: 'completed', count: 1 })
+    if (!judged.accepted) {
+      observeAssistant(dependencies.observe, { stage: 'semantic_gate', outcome: 'rejected', count: 1 })
+      return null
+    }
+    observeAssistant(dependencies.observe, { stage: 'semantic_gate', outcome: 'accepted', count: 1 })
+    const evaluations = new Map(judged.evaluations.map(evaluation => [evaluation.candidateId, evaluation]))
+    const review: MediaProposalReview = {
+      version: 'media-proposal-review-v1',
+      visualBrief: planned.brief,
+      candidates: candidates.map(candidate => {
+        const evaluation = evaluations.get(candidate.candidateId)!
+        return {
+          candidateId: candidate.candidateId,
+          assetId: candidate.assetId,
+          source: candidate.source,
+          score: evaluation.score,
+          passed: evaluation.passed,
+          safeReason: evaluation.safeReason,
+        }
+      }),
+      selectedCandidateId: judged.selectedCandidateId,
+      rootRequestId: input.runId,
+      previousProposalId: null,
+      rejectedCandidateIds: [],
+    }
+    return {
+      assetId: judged.selectedAssetId,
+      alt: planned.brief.alt,
+      decorative: false,
+      usage: addUsage(planned.usage, judged.usage),
+      mediaReview: review,
+    }
+  }
+}
+
 export function createHybridMediaResolver(dependencies: {
   generateOwned(intent: DesignDirectionImageIntent): Promise<DesignDirectionOwnedImage | null>
   resolvePexels(intent: DesignDirectionImageIntent): Promise<DesignDirectionOwnedImage | null>
@@ -384,6 +899,7 @@ export interface AssetWorkerInput {
   providerResultId: string | null
   parentAssetId: string | null
   parentObjectKey?: string | null
+  objectKey?: string | null
   transform: CropTransform | null
 }
 
@@ -475,7 +991,96 @@ export function createAssetProcessor(dependencies: {
   }
 }
 
-export interface ExportWorkerRepository {
+interface PublicationAsset {
+  id: string
+  objectKey: string
+  contentType: 'image/webp'
+  bytes: number
+  checksum: string
+}
+
+interface PublicationAssetRepository {
+  getPublicationAssets?(context: AuthContext, projectId: string, assetIds: readonly string[]): Promise<PublicationAsset[]>
+}
+
+interface PublicationAssetStore {
+  get(key: string): Promise<Uint8Array | null>
+}
+
+interface PublicationFile {
+  path: string
+  content: string | Uint8Array
+}
+
+async function preparePublication(
+  document: DesignDocument,
+  context: AuthContext,
+  projectId: string,
+  dependencies: {
+    repository: PublicationAssetRepository
+    assetStore: PublicationAssetStore
+    imagePolicy?: RemoteImagePolicy
+    maxArtifactBytes?: number
+  },
+): Promise<{ success: true; files: PublicationFile[]; routeCount: number } | { success: false; code: 'invalid_artifact' | 'artifact_too_large' | 'storage_unavailable' }> {
+  const parsed = parseDesignDocument(document, {
+    ...(dependencies.imagePolicy ? { imagePolicy: dependencies.imagePolicy } : {}),
+  })
+  if (!parsed.success) return { success: false, code: 'invalid_artifact' }
+  const assetIds = collectAssetReferences(parsed.data)
+  let metadata: PublicationAsset[]
+  try {
+    metadata = assetIds.length === 0
+      ? []
+      : dependencies.repository.getPublicationAssets
+        ? await dependencies.repository.getPublicationAssets(context, projectId, assetIds)
+        : []
+  } catch {
+    return { success: false, code: 'invalid_artifact' }
+  }
+  if (metadata.length !== assetIds.length || metadata.some((asset, index) => asset.id !== assetIds[index])) {
+    return { success: false, code: 'invalid_artifact' }
+  }
+  const assetFiles: PublicationFile[] = []
+  let assetBytes = 0
+  for (const asset of metadata) {
+    let bytes: Uint8Array | null
+    try {
+      bytes = await dependencies.assetStore.get(asset.objectKey)
+    } catch {
+      return { success: false, code: 'storage_unavailable' }
+    }
+    if (!bytes) return { success: false, code: 'storage_unavailable' }
+    if (bytes.byteLength !== asset.bytes || createHash('sha256').update(bytes).digest('hex') !== asset.checksum) {
+      return { success: false, code: 'invalid_artifact' }
+    }
+    assetBytes += bytes.byteLength
+    assetFiles.push({ path: `assets/${asset.id}.webp`, content: bytes })
+  }
+  const maxArtifactBytes = dependencies.maxArtifactBytes
+  if (maxArtifactBytes !== undefined && assetBytes > maxArtifactBytes) {
+    return { success: false, code: 'artifact_too_large' }
+  }
+  const compiled = compileStaticSite(parsed.data, {
+    ...(dependencies.imagePolicy ? { imagePolicy: dependencies.imagePolicy } : {}),
+    portableAssetPaths: Object.fromEntries(assetIds.map(id => [id, `assets/${id}.webp`])),
+    ...(maxArtifactBytes ? { maxSiteBytes: maxArtifactBytes - assetBytes } : {}),
+  })
+  if (!compiled.success) {
+    return { success: false, code: compiled.code === 'artifact_too_large' ? compiled.code : 'invalid_artifact' }
+  }
+  if (compiled.files.length + assetFiles.length > 20) return { success: false, code: 'artifact_too_large' }
+  return {
+    success: true,
+    files: [
+      ...assetFiles,
+      ...compiled.files.map(file => ({ path: file.path, content: file.html })),
+    ],
+    routeCount: compiled.routeCount,
+  }
+}
+
+export interface ExportWorkerRepository extends PublicationAssetRepository {
   getWorkerInput(context: AuthContext, runId: string): Promise<(ExportRunRecord & { document: DesignDocument }) | null>
   claim(context: AuthContext, runId: string): Promise<ExportRunRecord | null>
   complete(
@@ -489,8 +1094,8 @@ export interface ExportWorkerRepository {
 export function createExportProcessor(dependencies: {
   repository: ExportWorkerRepository
   store: ExportObjectStore
+  assetStore?: PublicationAssetStore
   imagePolicy?: RemoteImagePolicy
-  assetOrigin?: string
   maxArtifactBytes?: number
 }) {
   return async function process(job: WorkerJob<ExportJob>): Promise<ExportRunRecord> {
@@ -501,19 +1106,20 @@ export function createExportProcessor(dependencies: {
     if (!run || run.projectId !== parsed.data.projectId) throw new Error('export_run_not_found')
     const claimed = await dependencies.repository.claim(context, run.id)
     if (!claimed) throw new Error('export_run_not_claimed')
-    const compiled = compileStaticSite(run.document, {
+    const prepared = await preparePublication(run.document, context, run.projectId, {
+      repository: dependencies.repository,
+      assetStore: dependencies.assetStore ?? { get: () => Promise.resolve(null) },
       ...(dependencies.imagePolicy ? { imagePolicy: dependencies.imagePolicy } : {}),
-      ...(dependencies.assetOrigin ? { assetOrigin: dependencies.assetOrigin } : {}),
-      ...(dependencies.maxArtifactBytes ? { maxSiteBytes: dependencies.maxArtifactBytes } : {}),
+      ...(dependencies.maxArtifactBytes ? { maxArtifactBytes: dependencies.maxArtifactBytes } : {}),
     })
-    if (!compiled.success) {
-      const code: ExportErrorCode = compiled.code === 'artifact_too_large' ? compiled.code : 'invalid_document'
+    if (!prepared.success) {
+      const code: ExportErrorCode = prepared.code === 'invalid_artifact' ? 'invalid_document' : prepared.code
       return await dependencies.repository.fail(context, run.id, code) ?? claimed
     }
     let archive: ReturnType<typeof createDeterministicSiteArchive>
     try {
       archive = createDeterministicSiteArchive(
-        compiled.files.map(file => ({ path: file.path, content: file.html })),
+        prepared.files,
         dependencies.maxArtifactBytes ? { maxBytes: dependencies.maxArtifactBytes } : {},
       )
     } catch (error) {
@@ -539,14 +1145,14 @@ export function createExportProcessor(dependencies: {
       checksum: archive.checksum,
       bytes: archive.bytes,
       contentType: EXPORT_CONTENT_TYPE,
-      routeCount: archive.routeCount,
+      routeCount: prepared.routeCount,
     }) ?? claimed
   }
 }
 
 type DeploymentConnectionInput = DeploymentWorkerInput['connection']
 
-export interface DeploymentWorkerRepository {
+export interface DeploymentWorkerRepository extends PublicationAssetRepository {
   getWorkerInput(context: AuthContext, deploymentId: string): Promise<DeploymentWorkerInput | null>
   claimUploading(context: AuthContext, deploymentId: string): Promise<DeploymentRecord | null>
   recordArtifact(context: AuthContext, deploymentId: string, input: {
@@ -570,13 +1176,16 @@ interface DeploymentProvider {
   createDeployment(accessToken: string, input: {
     teamId: string | null
     name: string
-    files: readonly { path: string; content: string }[]
+    files: readonly { path: string; content: string | Uint8Array }[]
     target: 'preview' | 'production'
     correlationId: string
   }): Promise<{ providerDeploymentId: string; state: 'building' | 'ready'; url?: string }>
-  getDeployment(accessToken: string, providerDeploymentId: string, teamId: string | null): Promise<
-    { state: 'building' } | { state: 'ready'; url: string } | { state: 'failed' }
-  >
+  getDeployment(
+    accessToken: string,
+    providerDeploymentId: string,
+    teamId: string | null,
+    context: { projectName: string; target: 'preview' | 'production' },
+  ): Promise<{ state: 'building' } | { state: 'ready'; url: string } | { state: 'failed' }>
 }
 
 function deploymentFailureCode(error: unknown): DeploymentErrorCode {
@@ -591,11 +1200,11 @@ function wait(milliseconds: number): Promise<void> {
 export function createDeploymentProcessor(dependencies: {
   repository: DeploymentWorkerRepository
   store: DeploymentObjectStore
+  assetStore?: PublicationAssetStore
   provider: DeploymentProvider
   decryptCredential(connection: DeploymentConnectionInput): string
   projectNameSecret: string
   imagePolicy?: RemoteImagePolicy
-  assetOrigin?: string
   maxArtifactBytes?: number
   pollIntervalMs?: number
   maxPollAttempts?: number
@@ -610,19 +1219,19 @@ export function createDeploymentProcessor(dependencies: {
     if (!input || input.projectId !== parsed.data.projectId) throw new Error('deployment_not_found')
     const claimed = await dependencies.repository.claimUploading(context, input.id)
     if (!claimed) throw new Error('deployment_not_claimed')
-    const compiled = compileStaticSite(input.document, {
+    const prepared = await preparePublication(input.document, context, input.projectId, {
+      repository: dependencies.repository,
+      assetStore: dependencies.assetStore ?? { get: () => Promise.resolve(null) },
       ...(dependencies.imagePolicy ? { imagePolicy: dependencies.imagePolicy } : {}),
-      ...(dependencies.assetOrigin ? { assetOrigin: dependencies.assetOrigin } : {}),
-      ...(dependencies.maxArtifactBytes ? { maxSiteBytes: dependencies.maxArtifactBytes } : {}),
+      ...(dependencies.maxArtifactBytes ? { maxArtifactBytes: dependencies.maxArtifactBytes } : {}),
     })
-    if (!compiled.success) {
-      const code: DeploymentErrorCode = compiled.code === 'artifact_too_large' ? compiled.code : 'invalid_artifact'
-      return await dependencies.repository.fail(context, input.id, code) ?? claimed
+    if (!prepared.success) {
+      return await dependencies.repository.fail(context, input.id, prepared.code) ?? claimed
     }
     let bundle: ReturnType<typeof createDeterministicSiteArchive>
     try {
       bundle = createDeterministicSiteArchive(
-        compiled.files.map(file => ({ path: file.path, content: file.html })),
+        prepared.files,
         dependencies.maxArtifactBytes ? { maxBytes: dependencies.maxArtifactBytes } : {},
       )
     } catch (error) {
@@ -655,7 +1264,7 @@ export function createDeploymentProcessor(dependencies: {
       const created = await dependencies.provider.createDeployment(accessToken, {
         teamId: input.connection.teamId,
         name: providerProjectName,
-        files: compiled.files.map(file => ({ path: file.path, content: file.html })),
+        files: prepared.files,
         target: input.target,
         correlationId: input.id,
       })
@@ -674,7 +1283,12 @@ export function createDeploymentProcessor(dependencies: {
       }
       for (let attempt = 0; attempt < maxPollAttempts; attempt += 1) {
         if (attempt > 0 && pollIntervalMs > 0) await wait(pollIntervalMs)
-        const state = await dependencies.provider.getDeployment(accessToken, providerDeploymentId, input.connection.teamId)
+        const state = await dependencies.provider.getDeployment(
+          accessToken,
+          providerDeploymentId,
+          input.connection.teamId,
+          { projectName: providerProjectName, target: input.target },
+        )
         if (state.state === 'ready') return await dependencies.repository.completeReady(context, input.id, state.url) ?? building
         if (state.state === 'failed') return await dependencies.repository.fail(context, input.id, 'provider_error') ?? building
       }
@@ -710,6 +1324,7 @@ export interface GenerationWorkerRepository {
       summary: string
       usage: LlmUsage
       repairCount: number
+      mediaReview?: MediaProposalReview
     },
   ): Promise<
     | { accepted: true; run: GenerationRunRecord }
@@ -832,7 +1447,58 @@ export function createGenerationProcessor(dependencies: {
     targetNodeId: string
     prompt: string
     document: DesignDocument
+    refinement?: AssistantRefinementContext
   }) => Promise<DesignDirectionOwnedImage | null>
+  resolveProposalMediaV2?: (input: {
+    context: AuthContext
+    projectId: string
+    runId: string
+    targetNodeId: string
+    prompt: string
+    document: DesignDocument
+    refinement?: AssistantRefinementContext
+  }) => Promise<(DesignDirectionOwnedImage & { usage: LlmUsage; mediaReview: MediaProposalReview }) | null>
+  resolveStyleProposalV2?: (input: {
+    context: AuthContext
+    projectId: string
+    runId: string
+    targetNodeId: string
+    prompt: string
+    document: DesignDocument
+    refinement?: AssistantRefinementContext
+  }) => Promise<{ document: DesignDocument; commands: unknown[]; summary: string; usage: LlmUsage } | null>
+  resolveLayoutProposalV2?: (input: {
+    context: AuthContext
+    projectId: string
+    runId: string
+    targetNodeId: string
+    prompt: string
+    document: DesignDocument
+    refinement?: AssistantRefinementContext
+  }) => Promise<{ document: DesignDocument; commands: unknown[]; summary: string; usage: LlmUsage } | null>
+  resolveCompositionProposalV2?: (input: {
+    context: AuthContext
+    projectId: string
+    runId: string
+    targetNodeId: string
+    prompt: string
+    document: DesignDocument
+    refinement?: AssistantRefinementContext
+  }) => Promise<{ document: DesignDocument; commands: unknown[]; summary: string; usage: LlmUsage } | null>
+  assistantMediaV2Enabled?: boolean
+  assistantStyleV2Enabled?: boolean
+  assistantLayoutV2Enabled?: boolean
+  assistantCompositionV2Enabled?: boolean
+  runAssistantShadow?: (input: {
+    context: AuthContext
+    projectId: string
+    runId: string
+    targetNodeId: string
+    prompt: string
+    document: DesignDocument
+    refinement?: AssistantRefinementContext
+  }) => Promise<void>
+  observe?: AssistantObserver
   timeoutMs?: number
   generateMaxRepairAttempts?: number
   editMaxRepairAttempts?: number
@@ -861,27 +1527,188 @@ export function createGenerationProcessor(dependencies: {
     })
     if (!claimed) throw new Error('generation_run_not_claimed')
 
+    const assistantLane = run.delivery === 'proposal'
+      ? run.proposalIntent === 'replace-media'
+        ? 'media' as const
+        : run.proposalIntent === 'style'
+          ? 'style' as const
+          : run.proposalIntent === 'layout'
+            ? 'layout' as const
+            : run.proposalIntent === 'composition'
+              ? 'composition' as const
+              : 'copy' as const
+      : null
+    if (assistantLane) {
+      observeAssistant(dependencies.observe, {
+        lane: assistantLane, stage: 'proposal', outcome: 'started', count: 1,
+      })
+    }
+    if (run.delivery === 'proposal' && run.selectedNodeId && dependencies.runAssistantShadow) {
+      try {
+        await dependencies.runAssistantShadow({
+          context,
+          projectId: run.projectId,
+          runId: run.id,
+          targetNodeId: run.selectedNodeId,
+          prompt: run.prompt,
+          document: run.document,
+          ...(run.proposalAction !== 'request' && run.originalRequest
+            ? { refinement: { originalRequest: run.originalRequest, feedbackCodes: run.feedbackCodes } }
+            : {}),
+        })
+      } catch {
+        // Shadow results are observational only; legacy proposal execution remains authoritative.
+      }
+    }
+
+    const refinement = run.delivery === 'proposal'
+      && run.proposalAction !== 'request'
+      && run.originalRequest
+      ? {
+          originalRequest: run.originalRequest,
+          feedbackCodes: run.feedbackCodes,
+        }
+      : undefined
+    const mediaResolver = dependencies.assistantMediaV2Enabled
+      ? dependencies.resolveProposalMediaV2
+      : dependencies.resolveProposalMedia
     const result = run.delivery === 'proposal'
-      && run.proposalIntent === 'replace-media'
+      && run.proposalIntent === 'composition'
       && run.selectedNodeId
-      && dependencies.resolveProposalMedia
+      && dependencies.assistantCompositionV2Enabled
+      && dependencies.resolveCompositionProposalV2
       ? await (async () => {
-          const owned = await dependencies.resolveProposalMedia!({
+          const composition = await dependencies.resolveCompositionProposalV2!({
             context,
             projectId: run.projectId,
             runId: run.id,
             targetNodeId: run.selectedNodeId!,
             prompt: run.prompt,
             document: run.document,
+            ...(refinement ? { refinement } : {}),
           })
+          return composition
+            ? {
+                accepted: true as const,
+                document: composition.document,
+                commands: composition.commands,
+                summary: composition.summary,
+                repairAttempts: 0,
+                usage: composition.usage,
+                provider: 'semantic-composition',
+                model: 'composition-intelligence-v2',
+                promptVersion: AI_PROMPT_VERSION,
+              }
+            : {
+                accepted: false as const,
+                code: 'invalid_model_output' as const,
+                repairAttempts: 0,
+                usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+                provider: 'semantic-composition',
+                model: 'composition-intelligence-v2',
+                promptVersion: AI_PROMPT_VERSION,
+              }
+        })()
+      : run.delivery === 'proposal'
+      && run.proposalIntent === 'layout'
+      && run.selectedNodeId
+      && dependencies.assistantLayoutV2Enabled
+      && dependencies.resolveLayoutProposalV2
+      ? await (async () => {
+          const layout = await dependencies.resolveLayoutProposalV2!({
+            context,
+            projectId: run.projectId,
+            runId: run.id,
+            targetNodeId: run.selectedNodeId!,
+            prompt: run.prompt,
+            document: run.document,
+            ...(refinement ? { refinement } : {}),
+          })
+          return layout
+            ? {
+                accepted: true as const,
+                document: layout.document,
+                commands: layout.commands,
+                summary: layout.summary,
+                repairAttempts: 0,
+                usage: layout.usage,
+                provider: 'semantic-layout',
+                model: 'layout-intelligence-v2',
+                promptVersion: AI_PROMPT_VERSION,
+              }
+            : {
+                accepted: false as const,
+                code: 'invalid_model_output' as const,
+                repairAttempts: 0,
+                usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+                provider: 'semantic-layout',
+                model: 'layout-intelligence-v2',
+                promptVersion: AI_PROMPT_VERSION,
+              }
+        })()
+      : run.delivery === 'proposal'
+      && run.proposalIntent === 'style'
+      && run.selectedNodeId
+      && dependencies.assistantStyleV2Enabled
+      && dependencies.resolveStyleProposalV2
+      ? await (async () => {
+          const styled = await dependencies.resolveStyleProposalV2!({
+            context,
+            projectId: run.projectId,
+            runId: run.id,
+            targetNodeId: run.selectedNodeId!,
+            prompt: run.prompt,
+            document: run.document,
+            ...(refinement ? { refinement } : {}),
+          })
+          return styled
+            ? {
+                accepted: true as const,
+                document: styled.document,
+                commands: styled.commands,
+                summary: styled.summary,
+                repairAttempts: 0,
+                usage: styled.usage,
+                provider: 'semantic-style',
+                model: 'style-intelligence-v2',
+                promptVersion: AI_PROMPT_VERSION,
+              }
+            : {
+                accepted: false as const,
+                code: 'invalid_model_output' as const,
+                repairAttempts: 0,
+                usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+                provider: 'semantic-style',
+                model: 'style-intelligence-v2',
+                promptVersion: AI_PROMPT_VERSION,
+              }
+        })()
+      : run.delivery === 'proposal'
+        && run.proposalIntent === 'replace-media'
+        && run.selectedNodeId
+        && mediaResolver
+        ? await (async () => {
+          const owned = await mediaResolver({
+            context,
+            projectId: run.projectId,
+            runId: run.id,
+            targetNodeId: run.selectedNodeId!,
+            prompt: run.prompt,
+            document: run.document,
+            ...(refinement ? { refinement } : {}),
+          })
+          const mediaV2 = owned && dependencies.assistantMediaV2Enabled
+            ? owned as DesignDirectionOwnedImage & { usage: LlmUsage; mediaReview: MediaProposalReview }
+            : null
+          const usage: LlmUsage = mediaV2?.usage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
           if (!owned) {
             return {
               accepted: false as const,
               code: 'provider_error' as const,
               repairAttempts: 0,
-              usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+              usage,
               provider: 'owned-media',
-              model: 'hybrid-generated-pexels',
+              model: dependencies.assistantMediaV2Enabled ? 'media-intelligence-v2' : 'hybrid-generated-pexels',
               promptVersion: AI_PROMPT_VERSION,
             }
           }
@@ -901,18 +1728,19 @@ export function createGenerationProcessor(dependencies: {
                 commands: materialized.commands,
                 summary: materialized.summary,
                 repairAttempts: 0,
-                usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+                usage,
                 provider: 'owned-media',
-                model: 'hybrid-generated-pexels',
+                model: dependencies.assistantMediaV2Enabled ? 'media-intelligence-v2' : 'hybrid-generated-pexels',
                 promptVersion: AI_PROMPT_VERSION,
+                ...(mediaV2 ? { mediaReview: mediaV2.mediaReview } : {}),
               }
             : {
                 accepted: false as const,
                 code: materialized.code === 'scope_violation' ? 'scope_violation' as const : materialized.code === 'stale_document_version' ? 'stale_document_version' as const : 'invalid_model_output' as const,
                 repairAttempts: 0,
-                usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+                usage,
                 provider: 'owned-media',
-                model: 'hybrid-generated-pexels',
+                model: dependencies.assistantMediaV2Enabled ? 'media-intelligence-v2' : 'hybrid-generated-pexels',
                 promptVersion: AI_PROMPT_VERSION,
               }
         })()
@@ -931,7 +1759,22 @@ export function createGenerationProcessor(dependencies: {
           ...(dependencies.imagePolicy ? { imagePolicy: dependencies.imagePolicy } : {}),
           onRepairAttempt: attempt => dependencies.repository.markRepairing(context, run.id, attempt).then(() => undefined),
         })
+    if (assistantLane && result.usage.totalTokens > 0) {
+      observeAssistant(dependencies.observe, {
+        lane: assistantLane, stage: 'text_tokens', outcome: 'completed', count: result.usage.totalTokens,
+      })
+    }
+    if (assistantLane && result.repairAttempts > 0) {
+      observeAssistant(dependencies.observe, {
+        lane: assistantLane, stage: 'repair', outcome: 'completed', count: result.repairAttempts,
+      })
+    }
     if (!result.accepted) {
+      if (assistantLane) {
+        observeAssistant(dependencies.observe, {
+          lane: assistantLane, stage: 'proposal', outcome: 'rejected', count: 1,
+        })
+      }
       return await dependencies.repository.fail(context, run.id, {
         errorCode: result.code,
         usage: result.usage,
@@ -945,6 +1788,9 @@ export function createGenerationProcessor(dependencies: {
           summary: result.summary,
           usage: result.usage,
           repairCount: result.repairAttempts,
+          ...('mediaReview' in result && result.mediaReview
+            ? { mediaReview: result.mediaReview as MediaProposalReview }
+            : {}),
         })
       : await dependencies.repository.complete(context, run.id, {
           document: result.document,
@@ -958,11 +1804,21 @@ export function createGenerationProcessor(dependencies: {
         : completed.code === 'scope_violation'
           ? completed.code
           : 'invalid_model_output'
+      if (assistantLane) {
+        observeAssistant(dependencies.observe, {
+          lane: assistantLane, stage: 'proposal', outcome: 'rejected', count: 1,
+        })
+      }
       return await dependencies.repository.fail(context, run.id, {
         errorCode,
         usage: result.usage,
         repairCount: result.repairAttempts,
       }) ?? claimed
+    }
+    if (assistantLane) {
+      observeAssistant(dependencies.observe, {
+        lane: assistantLane, stage: 'proposal', outcome: 'accepted', count: 1,
+      })
     }
     return completed.run
   }

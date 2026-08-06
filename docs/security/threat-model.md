@@ -93,7 +93,8 @@ Phase 3 implementation boundary:
 - Durable `generation_runs` and `usage_records` are workspace-scoped. Legacy direct-apply completion atomically updates one optimistic document version and creates one immutable AI revision; stale completion preserves the current draft.
 - Stage 7 user-facing editing uses a proposal delivery lane: worker completion stores validated commands, an isolated proposed snapshot and usage only. It cannot update the accepted draft or create a revision. Public proposal DTOs omit prompt, commands, provider/model/token details and raw output.
 - Accept is the sole proposal apply authority: an authenticated exact-Origin transaction re-reads the tenant-scoped ready proposal/current draft, validates captured scope/version, replays stored commands, compares the canonical result with the reviewed snapshot, then performs one draft increment and one AI revision. Snapshot mismatch, scope escape, stale version, duplicate race, cancelled/discarded state or late worker completion fail closed with no partial mutation.
-- Refine/Try another rematerialize against the accepted base rather than chaining unaccepted mutations. Cancel/discard and mode/sheet transitions do not create commands, revisions or autosave effects.
+- Refine/Try another rematerialize against the accepted base rather than chaining unaccepted mutations. Durable `proposal-lineage-v1` is tenant-scoped, bounded to eight turns and stores no chain-of-thought/provider body; target, scope and context fingerprint are immutable. Public DTOs redact lineage, original request and feedback internals. Cancel/discard and mode/sheet transitions do not create commands, revisions or autosave effects.
+- Co-designer rollout fails closed: `disabled` executes no v2 calls; `shadow` deterministically samples planner-only observation while v1 remains authoritative and UI-hidden; `opt-in` is required for active v2 lanes. Operations metrics use fixed-cardinality enums and aggregate counts only, excluding prompts, bytes, IDs, object keys, credentials and provider bodies.
 - Redis admission uses one Lua transaction over TTL-scoped user/workspace/token keys. Production has no process-local rate-limit or mock-provider fallback.
 - BullMQ carries a strict job schema with run ID as `jobId`; the worker has bounded concurrency, SDK retries disabled, redacted error logs and `executesUserCode: false`.
 - SSE authenticates every connection, reads durable PostgreSQL status and emits only schema-validated status/usage/safe error metadata; prompts, secrets and provider bodies are excluded.
@@ -135,8 +136,8 @@ Phase 4 implementation boundary:
 - `@zenui/preview-bridge` requires protocol version, UUID channel, strict discriminated payload, exact `event.origin`, exact iframe/parent `event.source`, and matching channel. Parent posts only to exact `PREVIEW_ORIGIN`; wildcard targets and `null` origins are rejected.
 - Preview headers use deny-by-default CSP, app-owned script, nonce-bound dynamic stylesheet, exact `frame-ancestors`, `no-referrer`, `nosniff`, restrictive Permissions Policy and `no-store`; no cookie is set.
 - The browser-safe renderer creates nodes with DOM APIs and text content. Generated HTML, event handlers, JavaScript and raw CSS are not accepted; validator + registry relationship checks precede render.
-- Standalone export uses the same canonical render plan, deterministic stylesheet and SHA-256 CSP style hash. The artifact has `script-src 'none'`, no runtime dependency and a bounded byte size.
-- Durable exports snapshot one authorized version, run through BullMQ and a worker with `executesUserCode: false`, and are stored under a private deterministic S3-compatible key. Browser responses never expose object keys or credentials; authenticated BFF download is bounded and `no-store`.
+- Standalone export uses the same canonical render plan, deterministic stylesheet and SHA-256 CSP style hash. The portable artifact has `script-src 'none'`, resolves owned images through relative same-site paths with `img-src 'self'`, has no runtime origin dependency and has a bounded byte size.
+- Durable exports snapshot one authorized version, run through BullMQ and a worker with `executesUserCode: false`, authorize every referenced project/workspace asset, recheck exact byte length and SHA-256, package exact WebP bytes, and are stored under a private deterministic S3-compatible key. Browser responses and artifact HTML never expose object keys, credentials, `localhost` or `127.0.0.1`; authenticated BFF download is bounded and `no-store`.
 - Phase 7 requires `REMOTE_IMAGE_HOST_ALLOWLIST` at web, worker and preview startup. Images are HTTPS only; entries are exact hosts or explicit `*.example.com` subdomain rules. Validation normalizes case/trailing dots and rejects credentials, custom ports, localhost and IP literals. Compiler/preview CSP uses the same exact sources rather than scheme wildcards.
 - The local visual-demo policy may add only the exact CDN hosts `images.unsplash.com` and `images.pexels.com`; it does not permit provider-domain wildcards, `source.unsplash.com` or arbitrary HTTPS. The browser fetches these images directly, so this mode adds no application-server SSRF request path. Gemini receives only the approved hostnames as generation capability metadata, and server validation remains authoritative.
 - Stage 4 replaces that residual production path with the asset-import boundary below. Legacy URL documents remain readable during migration, but all newly generated production documents must store opaque ZenUI asset IDs.
@@ -149,6 +150,9 @@ Export threats and controls:
 | Oversized export/download | Memory or bandwidth abuse | 1 MiB document limit, compiler artifact limit, Redis admission, persisted byte metadata and exact download length | 4 |
 | Export races newer draft | Wrong artifact | Transactional snapshot at exact optimistic version; job reads immutable snapshot | 4 |
 | Forged export access | Cross-tenant disclosure | Auth/RBAC/project ownership on create, status and download; not-found semantics | 4 |
+| Cross-project, archived, non-ready or corrupt owned asset | Tenant disclosure or broken public artifact | Project/workspace publication lookup, ready/non-archived gate, private object fetch and exact length/SHA-256 recheck before storage/provider calls | 10B1 |
+| Local runtime/object key compiled into public artifact | Images resolve only on owner machine or leak internals | Relative same-site asset paths, `img-src 'self'`, package exact WebP bytes, regression scan for localhost/loopback/object keys | 10B1 |
+| Generated Vercel deployment URL exposed as public address | Visitors hit Vercel Authentication instead of public production site | Production completes only with exact Vercel-confirmed `${providerProjectName}.vercel.app` alias; generated URL remains preview/protection-scoped | 10B1 |
 
 ## Data flow: production image import and delivery
 
@@ -180,10 +184,13 @@ Private S3-compatible object + ready PostgreSQL asset
 Design Document stores random opaque assetId
           |
           v
-Exact cookie-free ASSET_ORIGIN /a/<assetId>
-          |
-          v
-Canvas / Preview / Share / Export / Deploy
+Runtime: exact cookie-free ASSET_ORIGIN /a/<assetId>
+          |                         Publication worker
+          v                         authorize + length/SHA-256 recheck
+Canvas / Preview / Share            |
+                                    v
+                              Export / Deploy bundle
+                              relative assets/<assetId>.webp
 ```
 
 Stage 4 security invariants:

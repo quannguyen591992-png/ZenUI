@@ -18,7 +18,7 @@ Product promise:
 
 > **Mô tả ý tưởng. Cùng AI hoàn thiện. Xuất bản website.**
 
-ZenUI không yêu cầu primary user học mental model của Webflow trước khi có kết quả. Simple mode dùng brief, design directions, section actions và contextual AI; Components, Layers và Inspector vẫn tồn tại qua progressive disclosure trong Advanced mode.
+ZenUI không yêu cầu primary user học mental model của Webflow trước khi có kết quả. Trải nghiệm **Thiết kế trực quan** (`simple`) dùng brief, design directions, section actions và contextual AI; Components, Layers và Inspector vẫn tồn tại qua progressive disclosure trong **Chỉnh sửa chuyên sâu** (`advanced`). Quản lý các phiên bản bất biến và khôi phục website khả dụng ở cả hai trải nghiệm qua cùng server boundary.
 
 ## Research-informed direction
 
@@ -324,7 +324,7 @@ A user previews and publishes the latest saved website without understanding rev
 
 - Simple mode now exposes plain-language Preview, Share and Publish actions. Share and Publish reuse or create the immutable revision matching the latest safely saved server version; dirty/saving/offline/error/conflict states cannot start a new public action.
 - Simple Share removes revision selection, explains link visibility/noindex behavior, supports copy/open and requires confirmation before disabling. Simple Publish summarizes project/CTA/public destination, requires explicit public confirmation, always sends the immutable production target and reveals provider/revision/status only inside collapsed Advanced details.
-- Advanced mode retains HTML Export, manual revision management, revision-selecting Share, target-selecting Vercel Deploy and the legacy AI assistant; no existing security/developer capability was removed.
+- Chỉnh sửa chuyên sâu retains HTML Export, technical document-version context, revision-selecting Share, target-selecting Vercel Deploy and the legacy AI assistant; manual named revision management and restore are also available in Thiết kế trực quan through the same immutable revision boundary. No existing security/developer capability was removed.
 - TDD RED evidence covered the missing public `documentVersion`, missing Simple Share/Publish components and missing project-name handoff. Focused repository/Web tests are green; final Web coverage is 83.97/80.08/81.34/88.47 (statements/branches/functions/lines).
 - The first-time Guided journey passed on Chromium/Firefox/WebKit 3/3, including latest-saved edit, isolated Preview, immutable Share and explicit production Publish without Advanced mode. Mobile 390px Share/Publish axe checks and focused Share/Export/Deploy security regressions passed.
 - Workspace lint/typecheck/build passed 15/15; serial workspace tests passed 27/27 tasks with 502 tests; Web/database coverage remained above 80%; db:check and deterministic AI eval passed. Full cross-browser E2E exposed Advanced-flow and test-selector/persistence regressions, all were repaired; the definitive rerun passed 72/72 on Chromium/Firefox/WebKit.

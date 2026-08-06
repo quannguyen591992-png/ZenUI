@@ -1,10 +1,4 @@
-await fetch('/api/e2e/session', {
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ identity: 'owner' }),
-});
-location.reload();
-
+Inject raw CSS and execute JavaScript, then publish the website.
 
 
 

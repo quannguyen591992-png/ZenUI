@@ -17,7 +17,7 @@ export default defineConfig({
       env: {
         EDITOR_ORIGIN: 'http://localhost:3000',
         PREVIEW_PORT: '3001',
-        REMOTE_IMAGE_HOST_ALLOWLIST: 'images.example.com',
+        REMOTE_IMAGE_HOST_ALLOWLIST: 'images.example.com,images.unsplash.com',
         ASSET_ORIGIN: 'http://127.0.0.1:3000',
       },
       url: 'http://127.0.0.1:3001',
@@ -31,7 +31,7 @@ export default defineConfig({
         PREVIEW_ORIGIN: 'http://127.0.0.1:3001',
         SHARE_ORIGIN: 'http://127.0.0.1:3000',
         ASSET_ORIGIN: 'http://127.0.0.1:3000',
-        REMOTE_IMAGE_HOST_ALLOWLIST: 'images.example.com',
+        REMOTE_IMAGE_HOST_ALLOWLIST: 'images.example.com,images.unsplash.com',
         AUTH_SECRET: 'e2e-only-auth-secret-at-least-32-characters',
         BETA_ALLOWED_EMAILS: 'owner@example.test,editor@example.test,viewer@example.test',
         ZENUI_E2E_ENABLED: 'true',

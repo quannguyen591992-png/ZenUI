@@ -1,6 +1,20 @@
 import { connect } from 'node:net'
 
 export const DEV_PORTS = [3000, 3001, 9464]
+export const VERCEL_CALLBACK_PATH = '/api/v1/provider-connections/vercel/callback'
+
+export function assertVercelRedirectConfiguration(environment = process.env) {
+  if (environment.VERCEL_DEPLOYMENT_ENABLED !== 'true') return
+  try {
+    const appOrigin = new URL(environment.APP_ORIGIN).origin
+    const redirect = new URL(environment.VERCEL_REDIRECT_URI)
+    if (redirect.origin !== appOrigin || redirect.pathname !== VERCEL_CALLBACK_PATH || redirect.search || redirect.hash) {
+      throw new Error('mismatch')
+    }
+  } catch {
+    throw new Error(`VERCEL_REDIRECT_URI must exactly match APP_ORIGIN plus ${VERCEL_CALLBACK_PATH}`)
+  }
+}
 
 export function isPortAvailable(port, host = '127.0.0.1') {
   return new Promise(resolve => {

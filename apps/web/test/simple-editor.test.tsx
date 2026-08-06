@@ -125,6 +125,151 @@ describe('Stage 6 section-first editor', () => {
     vi.unstubAllGlobals()
   })
 
+  it('shows redacted media candidates without exposing internal generation metadata', () => {
+    const mediaProposal: AiProposalSummary = {
+      ...readyProposal,
+      intent: 'replace-media',
+      scope: { kind: 'element', rootNodeId: 'image-1', sectionNodeId: 'section-1', label: 'Hình ảnh trong Phần Features' },
+      mediaReview: {
+        version: 'media-proposal-review-v1', representation: 'process-diagram',
+        alt: 'Sơ đồ quy trình phát triển năm bước',
+        candidates: [{
+          candidateId: 'candidate-1', assetId: '77777777-7777-4777-8777-777777777777',
+          source: 'generated', score: 0.91, safeReason: 'Phù hợp với sơ đồ năm bước.',
+        }, {
+          candidateId: 'candidate-2', assetId: '88888888-8888-4888-8888-888888888888',
+          source: 'generated', score: 0.86, safeReason: 'Phương án bố cục thay thế.',
+        }],
+        selectedCandidateId: 'candidate-1',
+      },
+    }
+    render(
+      <ContextualAi
+        projectId={projectId} workspaceId={workspaceId} expectedVersion={1}
+        selectedNodeId="image-1" scopeLabel="Hình ảnh" acceptedDocument={sectionDocument()}
+        viewport="desktop" assetOrigin="http://127.0.0.1:3002" canSubmit api={proposalApi({
+          create: () => Promise.resolve({ ...mediaProposal, status: 'preparing', proposedDocument: null, mediaReview: null }),
+          subscribe: (_projectId, _workspaceId, _proposalId, onEvent) => {
+            queueMicrotask(() => onEvent(mediaProposal))
+            return () => undefined
+          },
+        })}
+        onAccepted={() => undefined}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText('Bạn muốn cải thiện điều gì?'), { target: { value: 'Thay bằng sơ đồ năm bước' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Đề xuất thay đổi' }))
+
+    return screen.findByRole('heading', { name: 'Phương án hình ảnh' }).then(() => {
+      expect(screen.getAllByRole('img', { name: 'Sơ đồ quy trình phát triển năm bước' })[0]).toHaveAttribute(
+        'src', 'http://127.0.0.1:3002/a/77777777-7777-4777-8777-777777777777',
+      )
+      expect(screen.getByText('Điểm phù hợp 91%')).toBeInTheDocument()
+      expect(screen.getByText('Đang được đề xuất')).toBeInTheDocument()
+      expect(screen.getAllByRole('button', { name: /Chọn phương án/ })).toHaveLength(2)
+      expect(screen.getByRole('button', { name: 'Tạo thêm giống phương án đang chọn' })).toBeInTheDocument()
+      expect(document.body.textContent).not.toMatch(/generationPrompt|searchQuery|objectKey/)
+    })
+  })
+
+  it('offers the style lane only when enabled and sends an exact-element style proposal', async () => {
+    const create = vi.fn().mockResolvedValue({
+      ...readyProposal,
+      status: 'preparing', proposedDocument: null,
+      intent: 'style', scope: {
+        kind: 'element', rootNodeId: 'heading-1', sectionNodeId: 'section-1', label: 'Tiêu đề trong Phần Features',
+      },
+    })
+    render(
+      <ContextualAi
+        projectId={projectId} workspaceId={workspaceId} expectedVersion={1}
+        selectedNodeId="section-1" styleTargetNodeId="heading-1" styleScopeLabel="Tiêu đề"
+        scopeLabel="Phần Features" acceptedDocument={sectionDocument()}
+        viewport="desktop" assetOrigin="http://127.0.0.1:3002" canSubmit
+        styleEnabled api={proposalApi({ create, subscribe: () => () => undefined })}
+        onAccepted={() => undefined}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Phong cách' }))
+    expect(screen.getByLabelText('Bạn muốn cải thiện điều gì?')).toHaveValue('Nhấn mạnh và căn giữa thành phần đã chọn')
+    fireEvent.click(screen.getByRole('button', { name: 'Đề xuất thay đổi' }))
+    await waitFor(() => expect(create).toHaveBeenCalledWith(projectId, expect.objectContaining({
+      intent: 'style', selectedNodeId: 'heading-1',
+      prompt: 'Nhấn mạnh và căn giữa thành phần đã chọn',
+    })))
+  })
+
+  it('offers the layout lane only for a selected section and sends a section-scoped proposal', async () => {
+    const create = vi.fn().mockResolvedValue({
+      ...readyProposal,
+      status: 'preparing', proposedDocument: null,
+      intent: 'layout', scope: {
+        kind: 'section', rootNodeId: 'section-1', sectionNodeId: 'section-1', label: 'Phần Features',
+      },
+    })
+    render(
+      <ContextualAi
+        projectId={projectId} workspaceId={workspaceId} expectedVersion={1}
+        selectedNodeId="section-1" scopeLabel="Phần Features" acceptedDocument={sectionDocument()}
+        viewport="desktop" assetOrigin="http://127.0.0.1:3002" canSubmit
+        layoutEnabled api={proposalApi({ create, subscribe: () => () => undefined })}
+        onAccepted={() => undefined}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Bố cục' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Đề xuất thay đổi' }))
+    await waitFor(() => expect(create).toHaveBeenCalledWith(projectId, expect.objectContaining({
+      intent: 'layout', selectedNodeId: 'section-1',
+      prompt: 'Trình bày section cân giữa, thoáng và tối ưu cho điện thoại',
+    })))
+  })
+
+  it('offers the composition lane only for a selected section and sends a section-scoped proposal', async () => {
+    const create = vi.fn().mockResolvedValue({
+      ...readyProposal,
+      status: 'preparing', proposedDocument: null,
+      intent: 'composition', scope: {
+        kind: 'section', rootNodeId: 'section-1', sectionNodeId: 'section-1', label: 'Phần Features',
+      },
+    })
+    render(
+      <ContextualAi
+        projectId={projectId} workspaceId={workspaceId} expectedVersion={1}
+        selectedNodeId="section-1" scopeLabel="Phần Features" acceptedDocument={sectionDocument()}
+        viewport="desktop" assetOrigin="http://127.0.0.1:3002" canSubmit
+        compositionEnabled api={proposalApi({ create, subscribe: () => () => undefined })}
+        onAccepted={() => undefined}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Sắp xếp lại' }))
+    expect(screen.getByLabelText('Bạn muốn cải thiện điều gì?')).toHaveValue('Sắp xếp lại section theo bố cục chia đôi, giữ nguyên nội dung và hình ảnh')
+    fireEvent.click(screen.getByRole('button', { name: 'Đề xuất thay đổi' }))
+    await waitFor(() => expect(create).toHaveBeenCalledWith(projectId, expect.objectContaining({
+      intent: 'composition', selectedNodeId: 'section-1',
+      prompt: 'Sắp xếp lại section theo bố cục chia đôi, giữ nguyên nội dung và hình ảnh',
+    })))
+  })
+
+  it('uses structured feedback while refining without changing the proposal target', async () => {
+    const create = vi.fn<AiProposalApi['create']>().mockResolvedValue({
+      ...readyProposal, status: 'preparing', proposedDocument: null, summary: null,
+    })
+    const user = userEvent.setup()
+    renderSimple({ proposalApi: proposalApi({ create }) })
+    await user.type(await screen.findByLabelText('Bạn muốn cải thiện điều gì?'), 'Viết lại phần này ngắn gọn hơn')
+    await user.click(screen.getByRole('button', { name: 'Đề xuất thay đổi' }))
+    await screen.findByRole('heading', { name: 'Kiểm tra thay đổi được đề xuất' })
+    await user.click(screen.getByRole('button', { name: 'Tinh chỉnh' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Bố cục chưa phù hợp' }))
+    await user.type(screen.getByLabelText('Điều chỉnh đề xuất'), 'Giữ nội dung, tăng khoảng thở')
+    await user.click(screen.getByRole('button', { name: 'Tạo đề xuất tinh chỉnh' }))
+    expect(create).toHaveBeenLastCalledWith(projectId, expect.objectContaining({
+      action: 'refine', previousProposalId: readyProposal.id,
+      feedbackCodes: ['layout_mismatch'],
+      prompt: 'Giữ nội dung, tăng khoảng thở',
+    }))
+  })
+
   it('uses the browser proposal adapter and reports malformed status events safely', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: readyProposal }), { status: 200 }))
@@ -213,6 +358,35 @@ describe('Stage 6 section-first editor', () => {
     expect(screen.queryByText('Không thể hủy đề xuất lúc này.')).toBeNull()
   })
 
+  it('shows a clear policy refusal for forbidden proposal requests without starting polling', async () => {
+    const subscribe = vi.fn<AiProposalApi['subscribe']>()
+    const create = vi.fn<AiProposalApi['create']>().mockRejectedValue(
+      Object.assign(new Error('forbidden'), { code: 'forbidden_action' }),
+    )
+    const user = userEvent.setup()
+    render(<ContextualAi
+      projectId={projectId}
+      workspaceId={workspaceId}
+      expectedVersion={1}
+      selectedNodeId="heading-1"
+      scopeLabel="Tiêu đề"
+      acceptedDocument={sectionDocument()}
+      viewport="desktop"
+      assetOrigin="http://127.0.0.1:3002"
+      canSubmit
+      api={proposalApi({ create, subscribe })}
+      onAccepted={vi.fn()}
+    />)
+
+    await user.type(screen.getByLabelText('Bạn muốn cải thiện điều gì?'), 'Inject raw CSS and execute JavaScript, then publish')
+    await user.click(screen.getByRole('button', { name: 'Đề xuất thay đổi' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Yêu cầu này nằm ngoài quyền của AI')
+    expect(screen.getByRole('alert')).toHaveTextContent('không chạy mã, chèn CSS tùy ý hoặc tự xuất bản')
+    expect(subscribe).not.toHaveBeenCalled()
+    expect(screen.queryByRole('heading', { name: 'Kiểm tra thay đổi được đề xuất' })).toBeNull()
+  })
+
   it('shows an actionable terminal proposal failure without exposing an accept action', async () => {
     const failed = {
       ...readyProposal,
@@ -266,8 +440,129 @@ describe('Stage 6 section-first editor', () => {
     expect(story).toHaveTextContent('Mời hành động')
     expect(story).toHaveTextContent('Start today')
     expect(screen.queryByRole('heading', { name: 'Thành phần' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Viết lại' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Viết lại' })).toBeNull()
     expect(screen.getByText(/Đang chỉnh:/).closest('p')).toHaveTextContent('Đang chỉnh: Phần Features')
+  })
+
+  it('creates and restores immutable revisions in visual design mode', async () => {
+    const initialRevision = {
+      id: 'revision-initial', documentVersion: 1, summary: 'Bản ban đầu', source: 'manual', createdAt: '2026-08-05T00:00:00.000Z',
+    }
+    const createdRevision = {
+      id: 'revision-created', documentVersion: 1, summary: 'Trước khi đổi nội dung', source: 'manual', createdAt: '2026-08-05T01:00:00.000Z',
+    }
+    const restoredDocument = sectionDocument()
+    restoredDocument.version = 3
+    restoredDocument.nodes['heading-1']!.props = { text: 'Nội dung từ phiên bản', level: 1 }
+    const createRevision = vi.fn<EditorApi['createRevision']>().mockResolvedValue(createdRevision)
+    const restoreRevision = vi.fn<EditorApi['restoreRevision']>().mockResolvedValue({
+      accepted: true, version: 3, document: restoredDocument,
+    })
+    const user = userEvent.setup()
+    renderSimple({
+      api: api({
+        listRevisions: vi.fn()
+          .mockResolvedValueOnce([initialRevision])
+          .mockResolvedValueOnce([createdRevision, initialRevision]),
+        createRevision,
+        restoreRevision,
+      }),
+    })
+
+    const revisionPanel = await screen.findByRole('region', { name: 'Phiên bản' })
+    expect(within(revisionPanel).getByText('Bản ban đầu')).toBeVisible()
+    await user.type(within(revisionPanel).getByLabelText('Tên phiên bản'), 'Trước khi đổi nội dung')
+    await user.click(within(revisionPanel).getByRole('button', { name: 'Tạo phiên bản' }))
+
+    expect(createRevision).toHaveBeenCalledWith(projectId, workspaceId, 'Trước khi đổi nội dung')
+    expect(within(revisionPanel).getByLabelText('Tên phiên bản')).toHaveValue('')
+    expect(within(revisionPanel).getByText('Trước khi đổi nội dung')).toBeVisible()
+
+    await user.click(within(revisionPanel).getByRole('button', { name: 'Khôi phục Bản ban đầu' }))
+    expect(restoreRevision).toHaveBeenCalledWith(projectId, workspaceId, 'revision-initial', 1)
+    expect(await within(screen.getByLabelText('Khung thiết kế')).findByRole('heading', { name: 'Nội dung từ phiên bản' })).toBeVisible()
+  })
+
+  it('keeps revision management unavailable to fixture documents and read-only viewers', async () => {
+    render(<EditorApp />)
+    expect(await screen.findByText('Cần xuất tệp từ máy chủ')).toBeVisible()
+    expect(screen.queryByRole('region', { name: 'Phiên bản' })).toBeNull()
+
+    cleanup()
+    renderSimple({ role: 'viewer', api: api({
+      listRevisions: () => Promise.resolve([{
+        id: 'revision-1', documentVersion: 1, summary: 'Bản chỉ đọc', source: 'manual', createdAt: '2026-08-05T00:00:00.000Z',
+      }]),
+    }) })
+    const revisionPanel = await screen.findByRole('region', { name: 'Phiên bản' })
+    expect(within(revisionPanel).getByText('Bản chỉ đọc')).toBeVisible()
+    expect(within(revisionPanel).queryByLabelText('Tên phiên bản')).toBeNull()
+    expect(within(revisionPanel).queryByRole('button', { name: 'Khôi phục Bản chỉ đọc' })).toBeNull()
+  })
+
+  it('keeps section actions in the blue toolbar attached to the selected Canvas section', async () => {
+    const user = userEvent.setup()
+    renderSimple()
+
+    await user.click(await screen.findByRole('button', { name: 'Chọn Start today — Mời hành động' }))
+
+    const selectedSection = screen.getByLabelText('Khung thiết kế').querySelector<HTMLElement>('[data-node-id="cta-section"]')
+    expect(selectedSection).not.toBeNull()
+    const toolbar = selectedSection!.querySelector<HTMLElement>('.node-actions')
+    expect(toolbar).not.toBeNull()
+    expect(within(toolbar!).queryByRole('button', { name: 'Viết lại' })).toBeNull()
+    expect(within(toolbar!).queryByRole('button', { name: 'Thử bố cục khác' })).toBeNull()
+    expect(within(toolbar!).queryByRole('button', { name: 'Ẩn section' })).toBeNull()
+    const controls = within(toolbar!).getAllByRole('button')
+    expect(controls.map(control => control.getAttribute('aria-label'))).toEqual([
+      'Chọn Start today',
+      'Kéo Start today',
+      'Di chuyển Start today lên',
+      'Di chuyển Start today xuống',
+      'Nhân bản Start today',
+      'Xóa Start today',
+    ])
+    expect(within(toolbar!).getByRole('button', { name: 'Kéo Start today' })).toBeEnabled()
+    expect(within(toolbar!).getByRole('button', { name: 'Di chuyển Start today lên' })).toBeEnabled()
+    expect(within(toolbar!).getByRole('button', { name: 'Di chuyển Start today xuống' })).toBeDisabled()
+    expect(within(toolbar!).getByRole('button', { name: 'Nhân bản Start today' })).toBeEnabled()
+    expect(within(toolbar!).getByRole('button', { name: 'Xóa Start today' })).toBeEnabled()
+    expect(within(toolbar!).getAllByText('Start today')).toHaveLength(1)
+    expect(screen.queryByLabelText('Thao tác section')).toBeNull()
+  })
+
+  it('targets the exact selected Canvas element in the contextual AI request', async () => {
+    const create = vi.fn<AiProposalApi['create']>().mockResolvedValue({
+      ...readyProposal,
+      status: 'preparing',
+      proposedDocument: null,
+      summary: null,
+      scope: {
+        kind: 'element', rootNodeId: 'paragraph-1', sectionNodeId: 'section-1',
+        label: 'Đoạn văn trong Phần Features',
+      },
+    })
+    const user = userEvent.setup()
+    renderSimple({ proposalApi: proposalApi({ create, subscribe: () => () => undefined }) })
+
+    expect(await screen.findByText(/Đang chỉnh:/)).toHaveTextContent('Đang chỉnh: Phần Features')
+    const canvas = screen.getByLabelText('Khung thiết kế')
+    await user.click(within(canvas).getByText('Launch a structured landing page.'))
+
+    expect(screen.getByText(/Đang chỉnh:/).closest('p')).toHaveTextContent(
+      'Đang chỉnh: Đoạn văn: Launch a structured landing page.',
+    )
+    expect(screen.queryByRole('button', { name: 'Bố cục' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Sắp xếp lại' })).toBeNull()
+
+    await user.type(screen.getByLabelText('Bạn muốn cải thiện điều gì?'), 'Viết lại đoạn này rõ ràng hơn')
+    await user.click(screen.getByRole('button', { name: 'Đề xuất thay đổi' }))
+
+    expect(create).toHaveBeenCalledWith(projectId, expect.objectContaining({
+      intent: 'standard',
+      selectedNodeId: 'paragraph-1',
+      prompt: 'Viết lại đoạn này rõ ràng hơn',
+    }))
   })
 
   it('selects and edits a Canvas component directly in Simple mode without depending on AI', async () => {
@@ -279,6 +574,18 @@ describe('Stage 6 section-first editor', () => {
 
     const canvas = screen.getByLabelText('Khung thiết kế')
     await user.click(within(canvas).getByRole('heading', { name: 'Build your next product' }))
+
+    const selectedHeading = canvas.querySelector<HTMLElement>('[data-node-id="heading-1"]')
+    const toolbar = selectedHeading?.querySelector<HTMLElement>(':scope > .node-actions')
+    expect(toolbar).not.toBeNull()
+    expect(within(toolbar!).getAllByRole('button').map(button => button.getAttribute('aria-label'))).toEqual([
+      'Chọn Build your next product',
+      'Kéo Build your next product',
+      'Di chuyển Build your next product lên',
+      'Di chuyển Build your next product xuống',
+      'Nhân bản Build your next product',
+      'Xóa Build your next product',
+    ])
 
     const manualEditor = screen.getByRole('region', { name: 'Chỉnh sửa trực tiếp' })
     expect(within(manualEditor).getByRole('heading', { name: 'Thiết kế' })).toBeVisible()
@@ -301,7 +608,9 @@ describe('Stage 6 section-first editor', () => {
         patch: { text: 'Sửa tay khi AI không sẵn sàng' },
       }),
     ])
-    expect(screen.getByText(/Đang chỉnh:/).closest('p')).toHaveTextContent('Phần Features')
+    expect(screen.getByText(/Đang chỉnh:/).closest('p')).toHaveTextContent(
+      'Đang chỉnh: Tiêu đề: Sửa tay khi AI không sẵn sàng',
+    )
   })
 
   it('keeps manual Simple editing available after an AI proposal fails', async () => {
@@ -326,7 +635,7 @@ describe('Stage 6 section-first editor', () => {
       }),
     })
 
-    await user.click(await screen.findByRole('button', { name: 'Viết lại' }))
+    await user.type(await screen.findByLabelText('Bạn muốn cải thiện điều gì?'), 'Viết lại phần này ngắn gọn hơn')
     await user.click(screen.getByRole('button', { name: 'Đề xuất thay đổi' }))
     expect(await screen.findByText(/Dịch vụ AI tạm thời chưa sẵn sàng/)).toBeVisible()
 
@@ -584,7 +893,8 @@ describe('Stage 6 section-first editor', () => {
       api={api({ saveCommands })}
     />)
 
-    expect(await screen.findByRole('heading', { name: 'Trang' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Quản lý trang' }))
+    expect(await screen.findByRole('heading', { name: 'Quản lý Trang' })).toBeVisible()
     await user.type(screen.getByLabelText('Tên trang mới'), 'About')
     await user.type(screen.getByLabelText('Đường dẫn trang mới'), 'About Us')
     await user.click(screen.getByRole('button', { name: 'Thêm trang' }))
@@ -619,6 +929,7 @@ describe('Stage 6 section-first editor', () => {
       api={api({ saveCommands })}
     />)
 
+    await user.click(screen.getByRole('button', { name: 'Quản lý trang' }))
     await user.clear(await screen.findByLabelText('Nhãn điều hướng About'))
     await user.type(screen.getByLabelText('Nhãn điều hướng About'), 'Về chúng tôi')
     await user.click(screen.getByRole('button', { name: 'Lưu nhãn About' }))
@@ -650,7 +961,7 @@ describe('Stage 6 section-first editor', () => {
     const user = userEvent.setup()
     renderSimple({ api: api({ saveCommands }), proposalApi: proposalApi({ accept }) })
 
-    await user.click(await screen.findByRole('button', { name: 'Viết lại' }))
+    await user.type(await screen.findByLabelText('Bạn muốn cải thiện điều gì?'), 'Viết lại phần này ngắn gọn hơn')
     await user.click(screen.getByRole('button', { name: 'Đề xuất thay đổi' }))
     expect(await screen.findByRole('heading', { name: 'Kiểm tra thay đổi được đề xuất' })).toBeVisible()
 
@@ -659,6 +970,12 @@ describe('Stage 6 section-first editor', () => {
     expect(screen.getByRole('list', { name: 'Tóm tắt thay đổi' })).toHaveTextContent('Build your next product')
     expect(screen.getByRole('list', { name: 'Tóm tắt thay đổi' })).toHaveTextContent('AI proposal heading')
 
+    const scrollWidth = vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute('role') === 'tabpanel' ? 1180 : 0
+    })
+    const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute('role') === 'tabpanel' ? 700 : 0
+    })
     await user.click(compareButton)
     const dialog = screen.getByRole('dialog', { name: 'So sánh nội dung cũ và mới' })
     expect(dialog).toBeVisible()
@@ -670,6 +987,15 @@ describe('Stage 6 section-first editor', () => {
     expect(currentTab).toHaveAttribute('aria-selected', 'false')
     expect(screen.getByRole('region', { name: 'Website được đề xuất' })).toHaveAttribute('data-render-root-id', 'section-1')
     expect(screen.getByRole('region', { name: 'Website được đề xuất' })).toHaveTextContent('AI proposal heading')
+    const comparisonPanes = within(dialog).getAllByRole('tabpanel')
+    expect(comparisonPanes).toHaveLength(2)
+    await waitFor(() => {
+      for (const pane of comparisonPanes) {
+        expect(pane.scrollLeft).toBe(240)
+      }
+    })
+    scrollWidth.mockRestore()
+    clientWidth.mockRestore()
     expect(screen.getByRole('list', { name: 'Chi tiết thay đổi' })).toHaveTextContent('Build your next product')
     expect(screen.getByRole('list', { name: 'Chi tiết thay đổi' })).toHaveTextContent('AI proposal heading')
 
@@ -714,7 +1040,7 @@ describe('Stage 6 section-first editor', () => {
     const user = userEvent.setup()
     renderSimple({ api: api({ saveCommands }), proposalApi: proposalApi({ discard, create }) })
 
-    await user.click(await screen.findByRole('button', { name: 'Viết lại' }))
+    await user.type(await screen.findByLabelText('Bạn muốn cải thiện điều gì?'), 'Viết lại phần này ngắn gọn hơn')
     await user.click(screen.getByRole('button', { name: 'Đề xuất thay đổi' }))
     await screen.findByRole('heading', { name: 'Kiểm tra thay đổi được đề xuất' })
     await user.click(screen.getByRole('button', { name: 'Tinh chỉnh' }))
@@ -733,7 +1059,7 @@ describe('Stage 6 section-first editor', () => {
     expect(saveCommands).not.toHaveBeenCalled()
   })
 
-  it('round-trips Simple and Advanced without mutating history or autosaving', async () => {
+  it('round-trips visual design and in-depth editing without mutating history or autosaving', async () => {
     const saveCommands = vi.fn<EditorApi['saveCommands']>((_projectId, _workspaceId, expectedVersion) => (
       Promise.resolve({ accepted: true, version: expectedVersion + 1 })
     ))
@@ -741,22 +1067,23 @@ describe('Stage 6 section-first editor', () => {
     renderSimple({ api: api({ saveCommands }) })
 
     await user.selectOptions(await screen.findByLabelText('Thiết bị xem trước'), 'mobile')
-    await user.click(screen.getByRole('button', { name: 'Mở điều khiển nâng cao' }))
-    expect(screen.getByRole('dialog', { name: 'Mở điều khiển nâng cao?' })).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Xác nhận mở nâng cao' }))
+    await user.click(screen.getByRole('button', { name: 'Mở chỉnh sửa chuyên sâu' }))
+    const modeDialog = screen.getByRole('dialog', { name: 'Mở chỉnh sửa chuyên sâu?' })
+    expect(modeDialog).toBeVisible()
+    await user.click(within(modeDialog).getByRole('button', { name: 'Mở chỉnh sửa chuyên sâu' }))
 
     expect(screen.getByRole('tab', { name: 'Lớp' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tree', { name: 'Lớp' })).toBeVisible()
     expect(screen.getByLabelText('Thiết bị xem trước')).toHaveValue('mobile')
     expect(screen.getByRole('button', { name: 'Hoàn tác' })).toBeDisabled()
 
-    await user.click(screen.getByRole('button', { name: 'Quay lại chế độ đơn giản' }))
+    await user.click(screen.getByRole('button', { name: 'Quay lại thiết kế trực quan' }))
     expect(screen.getByRole('heading', { name: 'Câu chuyện trang' })).toBeVisible()
     expect(screen.getByLabelText('Thiết bị xem trước')).toHaveValue('mobile')
     expect(saveCommands).not.toHaveBeenCalled()
   })
 
-  it('reorders, duplicates, hides, shows and replaces a section through autosaved commands', async () => {
+  it('reorders and duplicates a section through autosaved commands', async () => {
     const saveCommands = vi.fn<EditorApi['saveCommands']>((_projectId, _workspaceId, expectedVersion) => (
       Promise.resolve({ accepted: true, version: expectedVersion + 1 })
     ))
@@ -764,21 +1091,14 @@ describe('Stage 6 section-first editor', () => {
     renderSimple({ api: api({ saveCommands }) })
 
     await user.click(await screen.findByRole('button', { name: 'Chọn Start today — Mời hành động' }))
-    await user.click(screen.getByRole('button', { name: 'Di chuyển section lên' }))
+    await user.click(screen.getByRole('button', { name: 'Di chuyển Start today lên' }))
     await waitFor(() => expect(saveCommands).toHaveBeenCalledTimes(1))
 
-    await user.click(screen.getByRole('button', { name: 'Nhân bản section' }))
+    await user.click(screen.getByRole('button', { name: 'Nhân bản Start today' }))
     await waitFor(() => expect(saveCommands).toHaveBeenCalledTimes(2))
     expect(screen.getAllByRole('button', { name: 'Chọn Start today — Mời hành động' })).toHaveLength(2)
-
-    await user.click(screen.getByRole('button', { name: 'Ẩn section' }))
-    await waitFor(() => expect(saveCommands).toHaveBeenCalledTimes(3))
-    expect(screen.getByText('Đã ẩn')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Hiện section' }))
-    await waitFor(() => expect(saveCommands).toHaveBeenCalledTimes(4))
-
-    await user.click(screen.getByRole('button', { name: 'Thử bố cục khác' }))
-    await waitFor(() => expect(saveCommands).toHaveBeenCalledTimes(5))
+    expect(screen.queryByRole('button', { name: 'Ẩn section' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Thử bố cục khác' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Hoàn tác' })).toBeEnabled()
   })
 
@@ -806,16 +1126,17 @@ describe('Stage 6 section-first editor', () => {
     renderSimple()
 
     await user.click(await screen.findByRole('button', { name: 'Chọn Start today — Mời hành động' }))
-    await user.click(screen.getByRole('button', { name: 'Xóa section' }))
+    await user.click(screen.getByRole('button', { name: 'Xóa Start today' }))
     expect(screen.getByRole('dialog', { name: 'Xóa section?' })).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Xác nhận xóa section' }))
     expect(screen.queryByRole('button', { name: 'Chọn Start today — Mời hành động' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Xóa section' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Xóa Features' })).toBeDisabled()
 
     cleanup()
     renderSimple({ role: 'viewer' })
-    expect(await screen.findByRole('button', { name: 'Thử bố cục khác' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Nhân bản section' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Xóa section' })).toBeDisabled()
+    expect(await screen.findByRole('button', { name: 'Kéo Features' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Thử bố cục khác' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Nhân bản Features' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Xóa Features' })).toBeDisabled()
   })
 })

@@ -9,6 +9,11 @@ import { ProjectEditor } from './project-editor'
 
 export const dynamic = 'force-dynamic'
 
+export function isAssistantOptInEnabled(environment: Record<string, string | undefined> = process.env): boolean {
+  return environment.AI_ASSISTANT_ROLLOUT_MODE === 'opt-in'
+    && environment.AI_ASSISTANT_V2_ENABLED === 'true'
+}
+
 export default async function ProjectPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await params
   if (!await getRuntimeSession()) {
@@ -22,6 +27,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ projec
   if (!appOrigin || !previewOrigin || !assetOrigin || !remoteImageHostAllowlist) {
     throw new Error('APP_ORIGIN, PREVIEW_ORIGIN, ASSET_ORIGIN and REMOTE_IMAGE_HOST_ALLOWLIST are required')
   }
+  const assistantOptInEnabled = isAssistantOptInEnabled()
   return (
     <ProjectEditor
       projectId={projectId}
@@ -30,6 +36,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ projec
       assetOrigin={validateAssetOrigin(assetOrigin, appOrigin)}
       remoteImageHostAllowlist={remoteImageHostAllowlist}
       deploymentEnabled={isE2eRuntimeEnabled() || process.env.VERCEL_DEPLOYMENT_ENABLED === 'true'}
+      assistantStyleEnabled={assistantOptInEnabled && process.env.AI_ASSISTANT_STYLE_ENABLED === 'true'}
+      assistantLayoutEnabled={assistantOptInEnabled && process.env.AI_ASSISTANT_LAYOUT_ENABLED === 'true'}
+      assistantCompositionEnabled={assistantOptInEnabled && process.env.AI_ASSISTANT_COMPOSITION_ENABLED === 'true'}
     />
   )
 }

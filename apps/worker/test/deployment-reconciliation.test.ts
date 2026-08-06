@@ -24,6 +24,7 @@ function repository(input: Record<string, unknown>) {
       projectId: job.projectId,
       workspaceId: job.workspaceId,
       status: 'building',
+      target: 'production',
       providerProjectName: 'zenui-12345678',
       providerDeploymentId: 'dpl_test',
       connection,
@@ -50,7 +51,9 @@ describe('deployment reconciliation', () => {
     })
 
     await expect(reconcile({ data: job })).resolves.toEqual({ outcome: 'completed' })
-    expect(provider.getDeployment).toHaveBeenCalledWith('token', 'dpl_test', 'team_test')
+    expect(provider.getDeployment).toHaveBeenCalledWith('token', 'dpl_test', 'team_test', {
+      projectName: 'zenui-12345678', target: 'production',
+    })
     expect(repo.completeReady).toHaveBeenCalledWith(expect.any(Object), job.deploymentId, 'https://zenui-test.vercel.app')
     expect(provider).not.toHaveProperty('createDeployment')
   })

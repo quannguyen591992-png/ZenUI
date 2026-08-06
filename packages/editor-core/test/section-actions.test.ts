@@ -11,6 +11,8 @@ import {
   executeCommands,
   findContainingSectionId,
   getPageStory,
+  planNodeDelete,
+  planNodeDuplicate,
   planSectionDelete,
   planSectionDuplicate,
   planSectionLayoutReplacement,
@@ -159,12 +161,70 @@ describe('section-first editor planners', () => {
     expect(undo(duplicated).document.nodes['section-1-copy']).toBeUndefined()
   })
 
-  it('rejects duplicate ID collisions without emitting a partial command', () => {
+  it('plans exact-node duplication for leaves and complete subtrees', () => {
+    const document = createSectionDocument()
+    const leaf = planNodeDuplicate(document, 'heading-1', sourceId => `${sourceId}-copy`)
+    expect(leaf).toMatchObject({
+      accepted: true,
+      command: {
+        type: 'DUPLICATE_NODE',
+        nodeId: 'heading-1',
+        newNodeId: 'heading-1-copy',
+        targetParentId: 'container-1',
+        index: 1,
+      },
+      rootNodeId: 'heading-1-copy',
+    })
+
+    const subtree = planNodeDuplicate(document, 'container-1', sourceId => `${sourceId}-copy`)
+    expect(subtree).toMatchObject({
+      accepted: true,
+      command: {
+        type: 'REPLACE_SUBTREE',
+        nodeId: 'container-1-copy',
+        rootNodeId: 'container-1-copy',
+        index: 1,
+      },
+      rootNodeId: 'container-1-copy',
+    })
+    if (!subtree.accepted) throw new Error('Expected subtree duplicate plan')
+    const duplicated = executeCommands(createEditorState(document), [subtree.command])
+    expect(duplicated.document.nodes['container-1-copy']?.children).toEqual([
+      'heading-1-copy', 'paragraph-1-copy', 'image-1-copy', 'button-1-copy',
+    ])
+    expect(validateDesignDocument(duplicated.document).success).toBe(true)
+  })
+
+  it('rejects exact-node duplicate collisions and root operations', () => {
     const document = createSectionDocument()
 
     expect(planSectionDuplicate(document, 'section-1', () => 'section-1')).toMatchObject({
       accepted: false,
       code: 'invalid_command',
+    })
+    expect(planNodeDuplicate(document, 'heading-1', () => 'heading-1')).toMatchObject({
+      accepted: false,
+      code: 'invalid_command',
+    })
+    expect(planNodeDuplicate(document, 'page-root', sourceId => `${sourceId}-copy`)).toMatchObject({
+      accepted: false,
+      code: 'root_operation_forbidden',
+    })
+  })
+
+  it('plans exact-node deletion while protecting page roots', () => {
+    const document = createSectionDocument()
+    expect(planNodeDelete(document, 'heading-1')).toMatchObject({
+      accepted: true,
+      command: { type: 'REMOVE_NODE', nodeId: 'heading-1' },
+    })
+    expect(planNodeDelete(document, 'page-root')).toMatchObject({
+      accepted: false,
+      code: 'root_operation_forbidden',
+    })
+    expect(planNodeDelete(document, 'missing')).toMatchObject({
+      accepted: false,
+      code: 'node_not_found',
     })
   })
 

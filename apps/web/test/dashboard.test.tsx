@@ -31,7 +31,7 @@ describe('authenticated dashboard', () => {
     render(<Dashboard />)
 
     expect(screen.getByRole('status')).toHaveTextContent('Đang tải dự án')
-    expect(await screen.findByText('Chưa có dự án')).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Chào mừng đến với ZenUI' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Tạo dự án' })).toBeVisible()
   })
 
@@ -53,31 +53,37 @@ describe('authenticated dashboard', () => {
   })
 
   it('creates, renames and deletes projects for an owner', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse({ data: { userId: 'owner', workspaceId, role: 'owner' } }))
-      .mockResolvedValueOnce(jsonResponse({ data: [] }))
-      .mockResolvedValueOnce(jsonResponse({ data: project }, 201))
-      .mockResolvedValueOnce(jsonResponse({ data: { ...project, name: 'Renamed' } }))
-      .mockResolvedValueOnce(jsonResponse({ data: { ...project, name: 'Renamed', status: 'archived' } }))
+    const fetchMock = vi.fn().mockImplementation((input: string, init?: RequestInit) => {
+      if (input === '/api/v1/session') return Promise.resolve(jsonResponse({ data: { userId: 'owner', workspaceId, role: 'owner' } }))
+      if (input.startsWith('/api/v1/projects?')) return Promise.resolve(jsonResponse({ data: [] }))
+      if (input === '/api/v1/projects' && init?.method === 'POST') return Promise.resolve(jsonResponse({ data: project }, 201))
+      if (input.startsWith(`/api/v1/projects/${project.id}?`)) return Promise.resolve(jsonResponse({ data: { document: null } }))
+      if (input === `/api/v1/projects/${project.id}` && init?.method === 'PATCH') return Promise.resolve(jsonResponse({ data: { ...project, name: 'Renamed' } }))
+      if (input === `/api/v1/projects/${project.id}` && init?.method === 'DELETE') return Promise.resolve(jsonResponse({ data: { ...project, name: 'Renamed', status: 'archived' } }))
+      throw new Error(`Unexpected request: ${input}`)
+    })
     vi.stubGlobal('fetch', fetchMock)
     const user = userEvent.setup()
     render(<Dashboard />)
 
-    await screen.findByText('Chưa có dự án')
+    await screen.findByRole('heading', { name: 'Chào mừng đến với ZenUI' })
     await user.type(screen.getByLabelText('Tên dự án'), 'Landing page')
     await user.click(screen.getByRole('button', { name: 'Tạo dự án' }))
     expect(await screen.findByRole('link', { name: 'Mở Landing page' })).toHaveAttribute('href', `/projects/${project.id}`)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
 
-    await user.click(screen.getByRole('button', { name: 'Đổi tên Landing page' }))
+    await user.click(screen.getByRole('button', { name: 'Tùy chọn cho Landing page' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Đổi tên Landing page' }))
     const rename = screen.getByLabelText('Đổi tên dự án')
     await user.clear(rename)
     await user.type(rename, 'Renamed')
-    await user.click(screen.getByRole('button', { name: 'Lưu tên dự án' }))
+    await user.click(screen.getByRole('button', { name: 'Lưu' }))
     expect(await screen.findByRole('link', { name: 'Mở Renamed' })).toBeVisible()
 
     expect(screen.queryByRole('button', { name: 'Lưu trữ Renamed' })).toBeNull()
-    await user.click(screen.getByRole('button', { name: 'Xóa Renamed' }))
-    expect(await screen.findByText('Chưa có dự án')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Tùy chọn cho Renamed' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Xóa Renamed' }))
+    expect(await screen.findByRole('heading', { name: 'Chào mừng đến với ZenUI' })).toBeVisible()
   })
 
   it('shows a safe create failure and keeps the empty state', async () => {
@@ -88,27 +94,35 @@ describe('authenticated dashboard', () => {
     const user = userEvent.setup()
     render(<Dashboard />)
 
-    await screen.findByText('Chưa có dự án')
+    await screen.findByRole('heading', { name: 'Chào mừng đến với ZenUI' })
     await user.type(screen.getByLabelText('Tên dự án'), 'Failed project')
     await user.click(screen.getByRole('button', { name: 'Tạo dự án' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Không thể hoàn tất yêu cầu')
-    expect(screen.getByText('Chưa có dự án')).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Chào mừng đến với ZenUI' })).toBeVisible()
   })
 
   it('shows safe mutation failures without discarding the current list', async () => {
-    vi.stubGlobal('fetch', vi.fn()
-      .mockResolvedValueOnce(jsonResponse({ data: { userId: 'owner', workspaceId, role: 'owner' } }))
-      .mockResolvedValueOnce(jsonResponse({ data: [project] }))
-      .mockResolvedValueOnce(jsonResponse({ error: { code: 'server_error', message: 'Unable to rename' } }, 500)))
+    const fetchMock = vi.fn().mockImplementation((input: string, init?: RequestInit) => {
+      if (input === '/api/v1/session') return Promise.resolve(jsonResponse({ data: { userId: 'owner', workspaceId, role: 'owner' } }))
+      if (input.startsWith('/api/v1/projects?')) return Promise.resolve(jsonResponse({ data: [project] }))
+      if (input.startsWith(`/api/v1/projects/${project.id}?`)) return Promise.resolve(jsonResponse({ data: { document: null } }))
+      if (input === `/api/v1/projects/${project.id}` && init?.method === 'PATCH') {
+        return Promise.resolve(jsonResponse({ error: { code: 'server_error', message: 'Unable to rename' } }, 500))
+      }
+      throw new Error(`Unexpected request: ${input}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
     const user = userEvent.setup()
     render(<Dashboard />)
 
     await screen.findByRole('link', { name: 'Mở Landing page' })
-    await user.click(screen.getByRole('button', { name: 'Đổi tên Landing page' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    await user.click(screen.getByRole('button', { name: 'Tùy chọn cho Landing page' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Đổi tên Landing page' }))
     await user.clear(screen.getByLabelText('Đổi tên dự án'))
     await user.type(screen.getByLabelText('Đổi tên dự án'), 'New name')
-    await user.click(screen.getByRole('button', { name: 'Lưu tên dự án' }))
+    await user.click(screen.getByRole('button', { name: 'Lưu' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Không thể hoàn tất yêu cầu')
     expect(screen.getByLabelText('Đổi tên dự án')).toHaveValue('New name')

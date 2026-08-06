@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes } from 'node:crypto'
 
 import { DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { GoogleGenAI } from '@google/genai'
+import { buildAssistantContextPack, planAssistantIntent } from '@zenui/ai-core'
 import { ASSET_QUEUE_NAME } from '@zenui/asset-core'
 import { createPexelsAdapter, detectRasterType, normalizeRasterImage } from '@zenui/asset-core/server'
 import {
@@ -38,12 +39,19 @@ import {
   createDesignDirectionProcessor,
   createExportProcessor,
   createGeminiImageGenerator,
+  createGeminiMediaIntelligenceProvider,
   createGeminiProvider,
   createGenerationProcessor,
+  createLayoutProposalV2Resolver,
+  createMediaProposalV2Resolver,
+  createSectionCompositionV2Resolver,
+  createStyleProposalV2Resolver,
   createHybridMediaResolver,
 } from './index.js'
 
+import type { AssistantObserver } from './index.js'
 import type { GenerateContentParameters } from '@google/genai'
+import type { DesignDocument } from '@zenui/design-schema'
 
 type WorkerService = 'generation' | 'asset' | 'export' | 'deployment'
 
@@ -56,12 +64,23 @@ interface AssetRuntimeConfig {
   maxOutputBytes: number
 }
 
+type AssistantRolloutMode = 'disabled' | 'shadow' | 'opt-in'
+
 interface GenerationRuntimeConfig {
   apiKey: string
   model: string
   imageGenerationEnabled: boolean
   imageModel: string | null
   maxImagesPerRun: number
+  assistantV2Enabled: boolean
+  assistantRolloutMode: AssistantRolloutMode
+  assistantShadowSamplePercent: number
+  assistantPlannerEnabled: boolean
+  assistantMediaJudgeEnabled: boolean
+  assistantMultiCandidateEnabled: boolean
+  assistantStyleEnabled: boolean
+  assistantLayoutEnabled: boolean
+  assistantCompositionEnabled: boolean
   concurrency: number
   timeoutMs: number
   generateMaxOutputTokens: number
@@ -144,6 +163,31 @@ function boolean(name: string, fallback = false): boolean {
   throw new Error(`${name} is invalid`)
 }
 
+function assistantRolloutConfig(): {
+  mode: AssistantRolloutMode
+  shadowSamplePercent: number
+} {
+  const mode = process.env.AI_ASSISTANT_ROLLOUT_MODE ?? 'disabled'
+  if (mode !== 'disabled' && mode !== 'shadow' && mode !== 'opt-in') {
+    throw new Error('AI_ASSISTANT_ROLLOUT_MODE is invalid')
+  }
+  const shadowSamplePercent = integer('AI_ASSISTANT_SHADOW_SAMPLE_PERCENT', 0, 0, 100)
+  if (mode !== 'shadow' && shadowSamplePercent !== 0) {
+    throw new Error('AI_ASSISTANT_SHADOW_SAMPLE_PERCENT requires shadow rollout mode')
+  }
+  return { mode, shadowSamplePercent }
+}
+
+export function shouldSampleAssistantShadow(runId: string, samplePercent: number): boolean {
+  if (!Number.isInteger(samplePercent) || samplePercent < 0 || samplePercent > 100) {
+    throw new Error('assistant_shadow_sample_percent_invalid')
+  }
+  if (samplePercent === 0) return false
+  if (samplePercent === 100) return true
+  const bucket = Number.parseInt(createHash('sha256').update(runId).digest('hex').slice(0, 8), 16) % 100
+  return bucket < samplePercent
+}
+
 function digestUuid(digest: string): string {
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`
 }
@@ -222,12 +266,72 @@ export function loadWorkerRuntimeConfig(): WorkerRuntimeConfig {
     maxOutputBytes: integer('ASSET_MAX_OUTPUT_BYTES', 8 * 1024 * 1024, 1024, 20 * 1024 * 1024),
   } : null
   const imageGenerationEnabled = services.includes('generation') && boolean('GOOGLE_IMAGE_GENERATION_ENABLED')
+  const assistantV2Enabled = boolean('AI_ASSISTANT_V2_ENABLED')
+  const assistantRollout = assistantRolloutConfig()
+  if (assistantV2Enabled && assistantRollout.mode !== 'opt-in') {
+    throw new Error('AI_ASSISTANT_V2_ENABLED requires opt-in rollout mode')
+  }
+  const assistantPlannerEnabled = boolean('AI_ASSISTANT_PLANNER_ENABLED')
+  const assistantMediaJudgeEnabled = boolean('AI_ASSISTANT_MEDIA_JUDGE_ENABLED')
+  const assistantMultiCandidateEnabled = boolean('AI_ASSISTANT_MULTI_CANDIDATE_ENABLED')
+  const assistantStyleEnabled = boolean('AI_ASSISTANT_STYLE_ENABLED')
+  const assistantLayoutEnabled = boolean('AI_ASSISTANT_LAYOUT_ENABLED')
+  const assistantCompositionEnabled = boolean('AI_ASSISTANT_COMPOSITION_ENABLED')
+  const maxImagesPerRun = integer('AI_IMAGE_MAX_PER_RUN', 4, 1, 4)
+  if (!assistantV2Enabled && (
+    assistantPlannerEnabled
+    || assistantMediaJudgeEnabled
+    || assistantMultiCandidateEnabled
+    || assistantStyleEnabled
+    || assistantLayoutEnabled
+    || assistantCompositionEnabled
+  )) {
+    const enabledLane = [
+      ['AI_ASSISTANT_PLANNER_ENABLED', assistantPlannerEnabled],
+      ['AI_ASSISTANT_MEDIA_JUDGE_ENABLED', assistantMediaJudgeEnabled],
+      ['AI_ASSISTANT_MULTI_CANDIDATE_ENABLED', assistantMultiCandidateEnabled],
+      ['AI_ASSISTANT_STYLE_ENABLED', assistantStyleEnabled],
+      ['AI_ASSISTANT_LAYOUT_ENABLED', assistantLayoutEnabled],
+      ['AI_ASSISTANT_COMPOSITION_ENABLED', assistantCompositionEnabled],
+    ].find(([, enabled]) => enabled)?.[0]
+    throw new Error(`${enabledLane} requires AI_ASSISTANT_V2_ENABLED`)
+  }
+  if (assistantMediaJudgeEnabled && !assistantPlannerEnabled) {
+    throw new Error('AI_ASSISTANT_MEDIA_JUDGE_ENABLED requires AI_ASSISTANT_PLANNER_ENABLED')
+  }
+  if (assistantStyleEnabled && !assistantPlannerEnabled) {
+    throw new Error('AI_ASSISTANT_STYLE_ENABLED requires AI_ASSISTANT_PLANNER_ENABLED')
+  }
+  if (assistantLayoutEnabled && !assistantPlannerEnabled) {
+    throw new Error('AI_ASSISTANT_LAYOUT_ENABLED requires AI_ASSISTANT_PLANNER_ENABLED')
+  }
+  if (assistantCompositionEnabled && !assistantPlannerEnabled) {
+    throw new Error('AI_ASSISTANT_COMPOSITION_ENABLED requires AI_ASSISTANT_PLANNER_ENABLED')
+  }
+  if (assistantMediaJudgeEnabled && !imageGenerationEnabled) {
+    throw new Error('AI_ASSISTANT_MEDIA_JUDGE_ENABLED requires GOOGLE_IMAGE_GENERATION_ENABLED')
+  }
+  if (assistantMultiCandidateEnabled && !assistantPlannerEnabled) {
+    throw new Error('AI_ASSISTANT_MULTI_CANDIDATE_ENABLED requires AI_ASSISTANT_PLANNER_ENABLED')
+  }
+  if (assistantMultiCandidateEnabled && maxImagesPerRun < 2) {
+    throw new Error('AI_ASSISTANT_MULTI_CANDIDATE_ENABLED requires AI_IMAGE_MAX_PER_RUN of at least 2')
+  }
   const generation: GenerationRuntimeConfig | null = services.includes('generation') ? {
     apiKey: required('GOOGLE_GENERATIVE_AI_API_KEY'),
     model: required('GEMINI_MODEL'),
     imageGenerationEnabled,
     imageModel: imageGenerationEnabled ? required('GOOGLE_IMAGE_MODEL') : null,
-    maxImagesPerRun: integer('AI_IMAGE_MAX_PER_RUN', 4, 1, 4),
+    maxImagesPerRun,
+    assistantV2Enabled,
+    assistantRolloutMode: assistantRollout.mode,
+    assistantShadowSamplePercent: assistantRollout.shadowSamplePercent,
+    assistantPlannerEnabled,
+    assistantMediaJudgeEnabled,
+    assistantMultiCandidateEnabled,
+    assistantStyleEnabled,
+    assistantLayoutEnabled,
+    assistantCompositionEnabled,
     concurrency: integer('AI_WORKER_CONCURRENCY', 2, 1, 16),
     timeoutMs: integer('AI_PROVIDER_TIMEOUT_MS', 30_000, 1_000, 120_000),
     generateMaxOutputTokens: integer('AI_GENERATE_MAX_OUTPUT_TOKENS', 4096, 256, 8192),
@@ -314,6 +418,31 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
     return { bytes, contentType: result.ContentType ?? 'application/octet-stream' }
   }
 
+  const metrics = createMetricRegistry('worker')
+  metrics.setGauge('zenui_service_up', { service: 'worker', operation: 'health_probe', outcome: 'completed' }, 1)
+  const observeAssistant: AssistantObserver = observation => {
+    metrics.increment(
+      observation.stage === 'text_tokens'
+        ? 'zenui_ai_text_tokens_total'
+        : observation.stage === 'candidate'
+          ? 'zenui_ai_candidates_total'
+          : observation.stage === 'image_generation'
+            ? 'zenui_ai_image_generations_total'
+            : observation.stage === 'repair'
+              ? 'zenui_ai_repairs_total'
+              : 'zenui_ai_operations_total',
+      {
+        service: 'worker',
+        operation: observation.stage === 'proposal' ? 'ai_proposal' : 'ai_provider_call',
+        outcome: observation.outcome,
+        ...(observation.lane ? { assistantLane: observation.lane } : {}),
+        assistantStage: observation.stage,
+        ...(observation.source ? { source: observation.source } : {}),
+      },
+      observation.count,
+    )
+  }
+
   const workers: Worker[] = []
   const queues: Queue[] = []
   let generationWorker: Worker | null = null
@@ -371,7 +500,70 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
       editMaxOutputTokens: config.generation.editMaxOutputTokens,
       generateContent: (input: GenerateContentParameters) => ai.models.generateContent(input),
     })
+    const activeAssistantProvider = config.generation.assistantV2Enabled
+      && config.generation.assistantRolloutMode === 'opt-in'
+      && config.generation.assistantPlannerEnabled
+      ? createGeminiMediaIntelligenceProvider({
+          model: config.generation.model,
+          maxOutputTokens: config.generation.editMaxOutputTokens,
+          generateContent: (input, signal) => ai.models.generateContent({
+            ...input as GenerateContentParameters,
+            config: {
+              ...(input.config as GenerateContentParameters['config']),
+              ...(signal ? { abortSignal: signal } : {}),
+            },
+          }),
+        })
+      : null
+    const shadowAssistantProvider = config.generation.assistantRolloutMode === 'shadow'
+      && config.generation.assistantShadowSamplePercent > 0
+      ? createGeminiMediaIntelligenceProvider({
+          model: config.generation.model,
+          maxOutputTokens: config.generation.editMaxOutputTokens,
+          generateContent: (input, signal) => ai.models.generateContent({
+            ...input as GenerateContentParameters,
+            config: {
+              ...(input.config as GenerateContentParameters['config']),
+              ...(signal ? { abortSignal: signal } : {}),
+            },
+          }),
+        })
+      : null
+    const mediaIntelligenceProvider = activeAssistantProvider
     const generationRepository = createGenerationRepository(database)
+    const runAssistantShadow = shadowAssistantProvider
+      ? async (input: {
+          context: { userId: string; workspaceId: string }
+          projectId: string
+          runId: string
+          targetNodeId: string
+          prompt: string
+          document: DesignDocument
+        }): Promise<void> => {
+          if (!shouldSampleAssistantShadow(input.runId, config.generation!.assistantShadowSamplePercent)) return
+          const context = buildAssistantContextPack({
+            document: input.document,
+            selectedNodeId: input.targetNodeId,
+            request: input.prompt,
+            locale: 'vi',
+          })
+          const planned = await planAssistantIntent({ context, provider: shadowAssistantProvider })
+          observeAssistant({
+            lane: planned.accepted ? planned.plan.intent : 'copy',
+            stage: 'planner',
+            outcome: planned.accepted ? 'completed' : 'rejected',
+            count: 1,
+          })
+          if (planned.accepted && planned.usage.totalTokens > 0) {
+            observeAssistant({
+              lane: planned.plan.intent,
+              stage: 'text_tokens',
+              outcome: 'completed',
+              count: planned.usage.totalTokens,
+            })
+          }
+        }
+      : null
     const imageGenerator = config.generation.imageGenerationEnabled && config.generation.imageModel
       ? createGeminiImageGenerator({
           model: config.generation.imageModel,
@@ -443,6 +635,61 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
           })(intent)
         }
       : null
+    const resolveStyleProposalV2 = mediaIntelligenceProvider
+      && config.generation.assistantStyleEnabled
+      ? createStyleProposalV2Resolver({ planner: mediaIntelligenceProvider })
+      : null
+    const resolveLayoutProposalV2 = mediaIntelligenceProvider
+      && config.generation.assistantLayoutEnabled
+      ? createLayoutProposalV2Resolver({ planner: mediaIntelligenceProvider })
+      : null
+    const resolveCompositionProposalV2 = mediaIntelligenceProvider
+      && config.generation.assistantCompositionEnabled
+      ? createSectionCompositionV2Resolver({ planner: mediaIntelligenceProvider })
+      : null
+    const resolveProposalMediaV2 = canResolveMedia
+      && imageGenerator
+      && mediaIntelligenceProvider
+      && config.generation.assistantMediaJudgeEnabled
+      ? createMediaProposalV2Resolver({
+          planner: mediaIntelligenceProvider,
+          generator: imageGenerator,
+          judge: mediaIntelligenceProvider,
+          maxImagesPerRun: config.generation.maxImagesPerRun,
+          multiCandidateEnabled: config.generation.assistantMultiCandidateEnabled,
+          observe: observation => observeAssistant({ ...observation, lane: 'media' }),
+          async importCandidate(input) {
+            const digest = createHash('sha256')
+              .update(`${input.runId}:${createHash('sha256').update(input.bytes).digest('hex')}:${input.candidateIndex}`)
+              .digest('hex')
+            const sourceObjectKey = `asset-sources/${input.context.workspaceId}/${digest.slice(0, 32)}`
+            await s3!.send(new PutObjectCommand({
+              Bucket: config.storage!.bucket,
+              Key: sourceObjectKey,
+              Body: input.bytes,
+              ContentType: input.mimeType,
+            }))
+            const asset = await assetRepository.create(input.context, {
+              projectId: input.projectId,
+              requestId: digestUuid(digest),
+              scope: 'project',
+              source: 'generated',
+              defaultAlt: input.alt,
+              sourceObjectKey,
+            })
+            const settled = asset.status === 'ready' ? asset : await assetProcessor!({ data: {
+              assetId: asset.id,
+              projectId: input.projectId,
+              workspaceId: input.context.workspaceId,
+              userId: input.context.userId,
+            } })
+            if (settled.status !== 'ready' || !settled.objectKey) return null
+            const normalized = await getObject(settled.objectKey)
+            if (!normalized) return null
+            return { assetId: settled.id, bytes: normalized.bytes, source: 'generated' as const }
+          },
+        })
+      : null
     generationWorker = new Worker(GENERATION_QUEUE_NAME, createGenerationProcessor({
       provider,
       repository: generationRepository,
@@ -461,6 +708,22 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
           return resolveOwnedMedia({ context, projectId, runId, intent: { slot, query: prompt, alt } })
         },
       } : {}),
+      ...(resolveProposalMediaV2 ? {
+        resolveProposalMediaV2,
+        assistantMediaV2Enabled: true,
+      } : {}),
+      ...(resolveStyleProposalV2 ? {
+        resolveStyleProposalV2,
+        assistantStyleV2Enabled: true,
+      } : {}),
+      ...(resolveLayoutProposalV2 ? {
+        resolveLayoutProposalV2,
+        assistantLayoutV2Enabled: true,
+      } : {}),
+      ...(resolveCompositionProposalV2 ? {
+        resolveCompositionProposalV2,
+        assistantCompositionV2Enabled: true,
+      } : {}),
       timeoutMs: config.generation.timeoutMs,
       generateMaxRepairAttempts: config.generation.generateMaxRepairAttempts,
       editMaxRepairAttempts: config.generation.editMaxRepairAttempts,
@@ -468,6 +731,8 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
       generateMaxTotalTokens: config.generation.generateMaxTotalTokens,
       editMaxTotalTokens: config.generation.editMaxTotalTokens,
       imagePolicy,
+      observe: observeAssistant,
+      ...(runAssistantShadow ? { runAssistantShadow } : {}),
     }), { connection: redis, concurrency: config.generation.concurrency, autorun: true })
     designDirectionWorker = new Worker(DESIGN_DIRECTION_QUEUE_NAME, createDesignDirectionProcessor({
       provider,
@@ -487,13 +752,21 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
     workers.push(assetWorker)
   }
 
-  if (config.export) {
+  if (config.export && config.storage) {
+    const exportRepository = createExportRepository(database)
+    const exportAssets = createAssetRepository(database)
     exportWorker = new Worker(EXPORT_QUEUE_NAME, createExportProcessor({
-      repository: createExportRepository(database),
+      repository: Object.assign(exportRepository, {
+        getPublicationAssets: (
+          context: Parameters<typeof exportAssets.getPublicationAssets>[0],
+          projectId: string,
+          assetIds: readonly string[],
+        ) => exportAssets.getPublicationAssets(context, projectId, assetIds),
+      }),
       imagePolicy,
-      assetOrigin: config.assetOrigin,
       maxArtifactBytes: config.export.maxArtifactBytes,
       store: { put: putArtifact, get: () => Promise.resolve(null) },
+      assetStore: { get: async key => (await getObject(key))?.bytes ?? null },
     }), { connection: redis, concurrency: config.export.concurrency, autorun: true })
     exportWorker.on('failed', () => console.error(JSON.stringify(createSafeWorkerFailureEvent('export'))))
     workers.push(exportWorker)
@@ -504,7 +777,14 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
       activeKeyVersion: config.deployment.credentialActiveKeyVersion,
       keys: JSON.parse(config.deployment.credentialKeys) as Record<number, string>,
     })
-    const deploymentRepository = createDeploymentRepository(database)
+    const deploymentAssets = createAssetRepository(database)
+    const deploymentRepository = Object.assign(createDeploymentRepository(database), {
+      getPublicationAssets: (
+        context: Parameters<typeof deploymentAssets.getPublicationAssets>[0],
+        projectId: string,
+        assetIds: readonly string[],
+      ) => deploymentAssets.getPublicationAssets(context, projectId, assetIds),
+    })
     const deploymentProvider = createVercelAdapter({
       clientId: config.deployment.clientId,
       clientSecret: config.deployment.clientSecret,
@@ -524,7 +804,6 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
     deploymentWorker = new Worker(DEPLOYMENT_QUEUE_NAME, createDeploymentProcessor({
       repository: deploymentRepository,
       imagePolicy,
-      assetOrigin: config.assetOrigin,
       maxArtifactBytes: config.storage.maxArtifactBytes,
       projectNameSecret: config.deployment.projectNameSecret,
       pollIntervalMs: config.deployment.pollIntervalMs,
@@ -532,6 +811,7 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
       provider: deploymentProvider,
       decryptCredential,
       store: { put: putArtifact, get: () => Promise.resolve(null) },
+      assetStore: { get: async key => (await getObject(key))?.bytes ?? null },
     }), { connection: redis, concurrency: config.deployment.concurrency, autorun: true })
     reconciliationWorker = new Worker(DEPLOYMENT_RECONCILIATION_QUEUE_NAME, createDeploymentReconciler({
       repository: deploymentRepository, provider: deploymentProvider, decryptCredential, deriveProjectName,
@@ -570,8 +850,6 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
   }
   const recoveryTimer = setInterval(runRecovery, config.recoveryIntervalSeconds * 1_000)
   recoveryTimer.unref()
-  const metrics = createMetricRegistry('worker')
-  metrics.setGauge('zenui_service_up', { service: 'worker', operation: 'health_probe', outcome: 'completed' }, 1)
   const probes: Partial<Record<'postgres' | 'redis' | 'object_store', () => Promise<boolean>>> = {
     postgres: async () => { await pool.query('SELECT 1'); return true },
     redis: async () => await redis.ping() === 'PONG',

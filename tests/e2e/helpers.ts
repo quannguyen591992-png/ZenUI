@@ -24,8 +24,9 @@ export async function createOnboardingProject(page: Page, name = 'E2E landing'):
 }
 
 export async function openAdvancedEditor(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Mở điều khiển nâng cao' }).click()
-  await page.getByRole('button', { name: 'Xác nhận mở nâng cao' }).click()
+  await page.getByRole('button', { name: 'Mở chỉnh sửa chuyên sâu' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Mở chỉnh sửa chuyên sâu?' })
+  await dialog.getByRole('button', { name: 'Mở chỉnh sửa chuyên sâu' }).click()
   await page.getByRole('tab', { name: 'Lớp' }).waitFor()
 }
 

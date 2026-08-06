@@ -207,6 +207,43 @@ describe('workspace-scoped project repository', () => {
     expect(await repository.archive(owner, first.id)).toMatchObject({ archived: true, status: 'ready' })
   })
 
+  it('loads only complete ready assets authorized for portable publication', async () => {
+    const database = drizzle(client, { schema })
+    const projects = createProjectRepository(database)
+    const project = await projects.create(owner, { name: 'Published project', document: createValidDesignFixture() })
+    const otherProject = await projects.create(owner, { name: 'Other project', document: createValidDesignFixture() })
+    const repository = createAssetRepository(database)
+    const projectAsset = await repository.create(owner, {
+      projectId: project.id, requestId: crypto.randomUUID(), scope: 'project', source: 'upload',
+      defaultAlt: 'Project image', sourceObjectKey: 'asset-sources/project-image',
+    })
+    const workspaceAsset = await repository.create(owner, {
+      requestId: crypto.randomUUID(), scope: 'workspace', source: 'upload',
+      defaultAlt: 'Workspace image', sourceObjectKey: 'asset-sources/workspace-image',
+    })
+    const otherAsset = await repository.create(owner, {
+      projectId: otherProject.id, requestId: crypto.randomUUID(), scope: 'project', source: 'upload',
+      defaultAlt: 'Other image', sourceObjectKey: 'asset-sources/other-image',
+    })
+    for (const [asset, checksum] of [[projectAsset, 'a'.repeat(64)], [workspaceAsset, 'b'.repeat(64)], [otherAsset, 'c'.repeat(64)]] as const) {
+      await repository.claim(owner, asset.id)
+      await repository.complete(owner, asset.id, {
+        objectKey: `assets/${asset.id}/image.webp`, contentType: 'image/webp', width: 1200, height: 800,
+        bytes: 4, checksum,
+      })
+    }
+
+    await expect(repository.getPublicationAssets(owner, project.id, [workspaceAsset.id, projectAsset.id]))
+      .resolves.toEqual([
+        { id: projectAsset.id, objectKey: `assets/${projectAsset.id}/image.webp`, contentType: 'image/webp', bytes: 4, checksum: 'a'.repeat(64) },
+        { id: workspaceAsset.id, objectKey: `assets/${workspaceAsset.id}/image.webp`, contentType: 'image/webp', bytes: 4, checksum: 'b'.repeat(64) },
+      ].sort((left, right) => left.id.localeCompare(right.id)))
+    await expect(repository.getPublicationAssets(owner, project.id, [otherAsset.id])).rejects.toThrow('asset_not_publishable')
+    await expect(repository.getPublicationAssets(outsider, project.id, [projectAsset.id])).rejects.toThrow('not_found')
+    await repository.archive(owner, workspaceAsset.id)
+    await expect(repository.getPublicationAssets(owner, project.id, [workspaceAsset.id])).rejects.toThrow('asset_not_publishable')
+  })
+
   it('creates derivatives only from ready assets in the same authorized scope', async () => {
     const database = drizzle(client, { schema })
     const project = await createProjectRepository(database).create(owner, {

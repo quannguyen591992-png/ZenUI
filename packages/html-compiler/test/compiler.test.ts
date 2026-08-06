@@ -199,6 +199,40 @@ describe('standalone HTML compiler', () => {
     expect(result.csp).toContain('img-src https://assets.example.com')
   })
 
+  it('resolves portable owned assets relative to root and nested pages', () => {
+    const document: DesignDocumentV2 = migrateDesignDocumentV1ToV2(createValidDesignFixture())
+    const assetId = '11111111-1111-4111-8111-111111111111'
+    document.nodes['image-1']!.props = { assetId, alt: 'Product dashboard', decorative: false }
+    document.nodes['about-root'] = {
+      id: 'about-root', type: 'page', parentId: null, children: ['about-section'], props: {}, style: {}, responsive: {},
+    }
+    document.nodes['about-section'] = {
+      id: 'about-section', type: 'section', parentId: 'about-root', children: ['about-image'],
+      props: { label: 'About' }, style: {}, responsive: {},
+    }
+    document.nodes['about-image'] = {
+      id: 'about-image', type: 'image', parentId: 'about-section', children: [],
+      props: { assetId, alt: 'Product dashboard', decorative: false }, style: {}, responsive: {},
+    }
+    document.pages.push({ id: 'about', name: 'About', slug: '/about', rootNodeId: 'about-root' })
+
+    const result = compileStaticSite(document, {
+      portableAssetPaths: { [assetId]: `assets/${assetId}.webp` },
+      assetOrigin: 'http://127.0.0.1:3002',
+    })
+
+    expect(result).toMatchObject({ success: true })
+    if (!result.success) return
+    expect(result.files.find(file => file.path === 'index.html')?.html)
+      .toContain(`src="assets/${assetId}.webp"`)
+    expect(result.files.find(file => file.path === 'about/index.html')?.html)
+      .toContain(`src="../assets/${assetId}.webp"`)
+    for (const file of result.files) {
+      expect(file.csp).toContain("img-src 'self'")
+      expect(file.html).not.toMatch(/localhost|127\.0\.0\.1|assets\/[^"']*\/image\.webp/)
+    }
+  })
+
   it('uses one remote-image policy for validation and exact CSP sources', () => {
     const policy = createRemoteImagePolicy('images.example.com,*.cdn.example.com')
     const result = compileStandaloneHtml(createValidDesignFixture(), { imagePolicy: policy })

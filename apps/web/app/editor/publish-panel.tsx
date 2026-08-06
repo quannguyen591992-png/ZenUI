@@ -8,6 +8,10 @@ import {
 } from '@zenui/deployment-core'
 import { useEffect, useRef, useState } from 'react'
 
+import { deploymentErrorLabel } from '../../lib/ui-copy'
+
+import { inspectProviderPopup, PROVIDER_POPUP_MAX_ATTEMPTS, PROVIDER_POPUP_POLL_INTERVAL_MS } from './provider-popup-monitor'
+
 import type { RevisionSummary } from './editor-app'
 
 export interface PublishApi {
@@ -116,31 +120,59 @@ export function PublishPanel({
   }
 
   const connect = async (): Promise<void> => {
+    const previousConnectionVersion = connection
+      ? `${connection.id}:${connection.connectedAt}:${connection.updatedAt}`
+      : null
+    const reconnecting = requiresReconnect
     setBusy(true)
     setError('')
     try {
       const result = await api.authorize({ workspaceId, returnPath: `/projects/${projectId}` })
       popup.current = window.open(result.url, 'zenui-publishing-connect', 'popup,width=720,height=720')
       if (!popup.current) throw new Error('popup_blocked')
+      let attempts = 0
+      const returnPath = `/projects/${projectId}`
       const poll = async (): Promise<void> => {
-        try {
-          const current = await api.getConnection(workspaceId)
-          setConnection(current)
-          if (current?.status === 'connected') {
-            setBusy(false)
-            popup.current?.close()
-            return
-          }
-        } catch {
-          // Callback có thể vẫn đang hoàn tất; tiếp tục vòng kiểm tra có giới hạn bởi popup.
+        const activePopup = popup.current
+        if (!activePopup) return
+        const state = inspectProviderPopup(activePopup, window.location.origin, returnPath)
+        if (state === 'misconfigured') {
+          activePopup.close()
+          setBusy(false)
+          setError('Redirect URL của Vercel chưa trỏ đến callback của ZenUI. Hãy cập nhật cấu hình rồi kết nối lại.')
+          return
         }
-        if (popup.current?.closed) {
+        if (state === 'closed') {
           setBusy(false)
           return
         }
-        timer.current = window.setTimeout(() => void poll(), 250)
+        try {
+          const current = await api.getConnection(workspaceId)
+          setConnection(current)
+          const currentConnectionVersion = current
+            ? `${current.id}:${current.connectedAt}:${current.updatedAt}`
+            : null
+          const connectionRenewed = current?.status === 'connected'
+            && (!reconnecting || currentConnectionVersion !== previousConnectionVersion)
+          if (connectionRenewed) {
+            setBusy(false)
+            if (reconnecting) setDeployment(null)
+            activePopup.close()
+            return
+          }
+        } catch {
+          // Callback có thể vẫn đang hoàn tất; tiếp tục vòng kiểm tra có giới hạn.
+        }
+        attempts += 1
+        if (attempts >= PROVIDER_POPUP_MAX_ATTEMPTS) {
+          activePopup.close()
+          setBusy(false)
+          setError('Kết nối Vercel mất quá nhiều thời gian. Hãy kiểm tra Redirect URL rồi thử lại.')
+          return
+        }
+        timer.current = window.setTimeout(() => void poll(), PROVIDER_POPUP_POLL_INTERVAL_MS)
       }
-      timer.current = window.setTimeout(() => void poll(), 250)
+      timer.current = window.setTimeout(() => void poll(), PROVIDER_POPUP_POLL_INTERVAL_MS)
     } catch (failure) {
       setBusy(false)
       setError(failure instanceof Error && failure.message === 'popup_blocked'
@@ -199,6 +231,7 @@ export function PublishPanel({
   }
 
   const connected = connection?.status === 'connected'
+  const requiresReconnect = deployment?.status === 'failed' && deployment.errorCode === 'provider_auth'
   const inProgress = deployment?.status === 'queued' || deployment?.status === 'uploading' || deployment?.status === 'building'
 
   return (
@@ -248,7 +281,14 @@ export function PublishPanel({
               <button type="button" onClick={() => void copy()}>Sao chép địa chỉ</button>
             </div>
           )}
-          {deployment?.status === 'failed' && <p role="alert">Không thể hoàn tất xuất bản. Website của bạn chưa được công khai; hãy thử lại.</p>}
+          {deployment?.status === 'failed' && deployment.errorCode && (
+            <div>
+              <p role="alert">{deploymentErrorLabel(deployment.errorCode)} Website của bạn chưa được công khai.</p>
+              {requiresReconnect ? (
+                <button type="button" disabled={busy} onClick={() => void connect()}>Kết nối lại Vercel</button>
+              ) : null}
+            </div>
+          )}
           {error && <p role="alert">{error}</p>}
 
           <details>

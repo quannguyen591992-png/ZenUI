@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto'
 import { readdir, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -7,6 +8,12 @@ import {
   designDirectionRunErrorCodeSchema,
   generationErrorCodeSchema,
   captureRemixConstraints,
+  mediaProposalReviewSchema,
+  publicMediaProposalReview,
+  appendProposalLineageTurn,
+  createProposalLineage,
+  proposalFeedbackCodeSchema,
+  proposalLineageSchema,
   proposalActionSchema,
   proposalIntentSchema,
   proposalScopeSchema,
@@ -22,8 +29,11 @@ import {
   type GenerationMode,
   type LlmUsage,
   type MaterializedDesignDirection,
+  type PublicMediaProposalReview,
   type ProposalAction,
+  type ProposalFeedbackCode,
   type ProposalIntent,
+  type ProposalLineage,
   type ProposalScope,
   type RemixConstraints,
   type SiteIntelligenceReview,
@@ -561,6 +571,43 @@ export function createAssetRepository(db: PgDatabase<PgQueryResultHKT, typeof sc
         eq(assets.id, assetId), eq(assets.status, 'ready'),
       )).limit(1)
       return row ? mapAsset(row) : null
+    },
+
+    async getPublicationAssets(context: AuthContext, projectId: string, assetIds: readonly string[]): Promise<Array<{
+      id: string
+      objectKey: string
+      contentType: 'image/webp'
+      bytes: number
+      checksum: string
+    }>> {
+      if (!await projectAuthorized(context, projectId)) throw new Error('not_found')
+      const ids = [...new Set(assetIds)].sort()
+      if (ids.length === 0) return []
+      if (!ids.every(id => z.string().uuid().safeParse(id).success)) throw new Error('asset_not_publishable')
+      const rows = await db.select().from(assets).where(and(
+        eq(assets.workspaceId, context.workspaceId),
+        inArray(assets.id, ids),
+        or(eq(assets.projectId, projectId), isNull(assets.projectId)),
+        eq(assets.status, 'ready'),
+        isNull(assets.archivedAt),
+        eq(assets.contentType, 'image/webp'),
+        isNotNull(assets.objectKey),
+        isNotNull(assets.bytes),
+        isNotNull(assets.checksum),
+      ))
+      if (rows.length !== ids.length) throw new Error('asset_not_publishable')
+      return rows.map(row => {
+        if (!row.objectKey || row.contentType !== 'image/webp' || !row.bytes || !row.checksum) {
+          throw new Error('asset_not_publishable')
+        }
+        return {
+          id: row.id,
+          objectKey: row.objectKey,
+          contentType: row.contentType,
+          bytes: row.bytes,
+          checksum: row.checksum,
+        }
+      }).sort((left, right) => left.id.localeCompare(right.id))
     },
 
     async list(context: AuthContext, projectId: string): Promise<AssetRecord[]> {
@@ -1380,6 +1427,10 @@ export interface GenerationRunRecord {
   scope: ProposalScope | null
   proposedDocument: DesignDocument | null
   proposalSummary: string | null
+  originalRequest: string | null
+  feedbackCodes: ProposalFeedbackCode[]
+  lineage: ProposalLineage | null
+  mediaReview: PublicMediaProposalReview | null
 }
 
 function mapGenerationRun(run: typeof generationRuns.$inferSelect): GenerationRunRecord {
@@ -1387,6 +1438,8 @@ function mapGenerationRun(run: typeof generationRuns.$inferSelect): GenerationRu
   const proposedDocument = validateDesignDocument(run.proposedDocument)
   const proposalIntent = proposalIntentSchema.safeParse(run.proposalIntent ?? 'standard')
   const proposalConstraints = remixConstraintsSchema.safeParse(run.proposalConstraints)
+  const feedbackCodes = z.array(proposalFeedbackCodeSchema).max(3).safeParse(run.proposalFeedbackCodes)
+  const mediaReview = mediaProposalReviewSchema.safeParse(run.proposalMediaReview)
   return {
     id: run.id,
     projectId: run.projectId,
@@ -1421,6 +1474,12 @@ function mapGenerationRun(run: typeof generationRuns.$inferSelect): GenerationRu
       ? proposedDocument.data
       : null,
     proposalSummary: run.proposalSummary,
+    originalRequest: run.originalRequest,
+    feedbackCodes: feedbackCodes.success ? feedbackCodes.data : [],
+    lineage: null,
+    mediaReview: (run.proposalStatus === 'ready' || run.proposalStatus === 'accepted') && mediaReview.success
+      ? publicMediaProposalReview(mediaReview.data)
+      : null,
   }
 }
 
@@ -1444,6 +1503,7 @@ const proposalCreateInputSchema = z.object({
   action: proposalActionSchema,
   intent: proposalIntentSchema.default('standard'),
   allowedChanges: z.array(remixAllowedChangeSchema).max(3).default([]),
+  feedbackCodes: z.array(z.enum(['wrong_topic', 'style_mismatch', 'layout_mismatch', 'unwanted_detail', 'copy_mismatch', 'other'])).max(3).optional(),
   selectedNodeId: z.string().min(1).max(100).optional(),
   prompt: z.string().trim().min(3).max(4000),
   expectedVersion: z.number().int().positive(),
@@ -1468,6 +1528,15 @@ const proposalCreateInputSchema = z.object({
   if (value.intent === 'replace-media' && value.scope.kind !== 'element') {
     context.addIssue({ code: 'custom', path: ['scope'], message: 'Media replacement requires element scope' })
   }
+  if (value.intent === 'style' && value.scope.kind !== 'element') {
+    context.addIssue({ code: 'custom', path: ['scope'], message: 'Style changes require element scope' })
+  }
+  if (value.intent === 'layout' && value.scope.kind !== 'section') {
+    context.addIssue({ code: 'custom', path: ['scope'], message: 'Layout changes require section scope' })
+  }
+  if (value.intent === 'composition' && value.scope.kind !== 'section') {
+    context.addIssue({ code: 'custom', path: ['scope'], message: 'Composition changes require section scope' })
+  }
   if (value.intent === 'standard' && value.allowedChanges.length > 0) {
     context.addIssue({ code: 'custom', path: ['allowedChanges'], message: 'Allowed changes require Remix intent' })
   }
@@ -1486,6 +1555,7 @@ const proposalCompletionSchema = z.object({
     totalTokens: z.number().int().nonnegative(),
   }).strict(),
   repairCount: z.number().int().min(0).max(2),
+  mediaReview: mediaProposalReviewSchema.optional(),
 }).strict()
 
 const usageInputSchema = z.object({
@@ -1586,6 +1656,7 @@ export function createGenerationRepository(
           })
         : null
       if (proposalConstraints && !proposalConstraints.accepted) throw new Error('invalid_proposal_input')
+      let previousRun: typeof generationRuns.$inferSelect | null = null
       if (parsed.data.previousProposalId) {
         const previous = await selectAuthorizedRun(context, parsed.data.previousProposalId)
         if (
@@ -1596,6 +1667,7 @@ export function createGenerationRepository(
           || previous.expectedVersion !== project.version
           || JSON.stringify(proposalScopeSchema.parse(previous.proposalScope)) !== JSON.stringify(parsed.data.scope)
         ) throw new Error('proposal_not_replaceable')
+        previousRun = previous
       }
       const [existing] = await db.select().from(generationRuns).where(and(
         eq(generationRuns.projectId, projectId),
@@ -1603,7 +1675,37 @@ export function createGenerationRepository(
       )).limit(1)
       if (existing) return mapGenerationRun(existing)
       const mode: GenerationMode = parsed.data.scope.kind === 'page' ? 'edit-page' : 'edit-selection'
+      const proposalId = randomUUID()
+      const originalRequest = previousRun?.originalRequest ?? parsed.data.prompt
+      const previousLineage = proposalLineageSchema.safeParse(previousRun?.proposalLineage)
+      const contextFingerprint = createHash('sha256')
+        .update(JSON.stringify({
+          projectId,
+          documentVersion: project.version,
+          targetNodeId: parsed.data.selectedNodeId ?? null,
+          scope: parsed.data.scope,
+        }))
+        .digest('hex')
+        .slice(0, 16)
+      const proposalLineage = previousLineage.success
+        ? appendProposalLineageTurn({
+            lineage: previousLineage.data,
+            proposalId,
+            action: parsed.data.action as Exclude<ProposalAction, 'request'>,
+            ...(parsed.data.feedbackCodes?.length
+              ? { feedback: { codes: parsed.data.feedbackCodes } }
+              : {}),
+          })
+        : createProposalLineage({
+            rootRequestId: proposalId,
+            originalRequest,
+            targetNodeId: parsed.data.selectedNodeId ?? null,
+            scope: parsed.data.scope,
+            contextFingerprint,
+            proposalId,
+          })
       const [created] = await db.insert(generationRuns).values({
+        id: proposalId,
         workspaceId: context.workspaceId,
         projectId,
         createdBy: context.userId,
@@ -1611,6 +1713,7 @@ export function createGenerationRepository(
         mode,
         ...(parsed.data.selectedNodeId ? { selectedNodeId: parsed.data.selectedNodeId } : {}),
         prompt: parsed.data.prompt,
+        originalRequest,
         expectedVersion: parsed.data.expectedVersion,
         delivery: 'proposal',
         proposalAction: parsed.data.action,
@@ -1619,6 +1722,8 @@ export function createGenerationRepository(
         proposalStatus: 'preparing',
         ...(parsed.data.previousProposalId ? { previousProposalId: parsed.data.previousProposalId } : {}),
         proposalScope: parsed.data.scope,
+        proposalFeedbackCodes: parsed.data.feedbackCodes ?? [],
+        proposalLineage,
       }).returning()
       if (!created) throw new Error('proposal_create_failed')
       return mapGenerationRun(created)
@@ -1774,7 +1879,16 @@ export function createGenerationRepository(
         const scope = proposalScopeSchema.safeParse(run.proposalScope)
         const proposed = validateDesignDocument(parsed.data.proposedDocument)
         if (!scope.success || !proposed.success) return { accepted: false, code: 'invalid_design_document' } as const
+        if (run.proposalIntent !== 'replace-media' && parsed.data.mediaReview) {
+          return { accepted: false, code: 'invalid_design_document' } as const
+        }
         const commands = parsed.data.commands as DesignCommand[]
+        if ((run.proposalIntent === 'style' || run.proposalIntent === 'layout') && commands.some(command => (
+          command.type !== 'UPDATE_STYLE'
+          && command.type !== 'UPDATE_RESPONSIVE_STYLE'
+        ))) {
+          return { accepted: false, code: 'scope_violation' } as const
+        }
         if (!proposalSnapshotMatches(draft.documentJson, commands, proposed.data)) {
           return { accepted: false, code: 'invalid_design_document' } as const
         }
@@ -1794,6 +1908,7 @@ export function createGenerationRepository(
           status: 'completed', proposalStatus: 'ready',
           proposalCommands: commands, proposedDocument: proposed.data,
           proposalSummary: parsed.data.summary, repairCount: parsed.data.repairCount,
+          ...(parsed.data.mediaReview ? { proposalMediaReview: parsed.data.mediaReview } : {}),
           inputTokens: parsed.data.usage.inputTokens, outputTokens: parsed.data.usage.outputTokens,
           totalTokens: parsed.data.usage.totalTokens, completedAt: new Date(),
           leaseExpiresAt: null, lastHeartbeatAt: null, updatedAt: new Date(),
@@ -2402,7 +2517,7 @@ export function createProviderConnectionRepository(db: PgDatabase<PgQueryResultH
       const parsed = providerConnectionInputSchema.safeParse(input)
       if (!parsed.success) throw new Error('invalid_provider_connection_input')
       const existing = await selectAuthorized(context, parsed.data.provider)
-      if (existing?.status === 'connected') throw new Error('provider_connection_exists')
+      if (existing?.status === 'connected' && existing.id !== parsed.data.id) throw new Error('provider_connection_exists')
       const now = new Date()
       if (existing) {
         const [updated] = await db.update(providerConnections).set({

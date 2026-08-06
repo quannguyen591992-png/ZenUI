@@ -57,6 +57,7 @@ export type DropPlan<TCommand extends DesignCommand = DesignCommand> =
 type InsertCommand = Extract<DesignCommand, { type: 'INSERT_NODE' }>
 type MoveCommand = Extract<DesignCommand, { type: 'MOVE_NODE' }>
 type RemoveCommand = Extract<DesignCommand, { type: 'REMOVE_NODE' }>
+type DuplicateNodeCommand = Extract<DesignCommand, { type: 'DUPLICATE_NODE' }>
 type ReplaceSubtreeCommand = Extract<DesignCommand, { type: 'REPLACE_SUBTREE' }>
 type UpdatePropsCommand = Extract<DesignCommand, { type: 'UPDATE_PROPS' }>
 
@@ -546,6 +547,91 @@ export function planSectionMove(
 
 function collectSubtree(document: DesignDocument, nodeId: string): DesignNode[] {
   return [nodeId, ...descendants(document, nodeId)].map(id => structuredClone(document.nodes[id]!))
+}
+
+type NodeDuplicatePlan =
+  | { accepted: true; command: DuplicateNodeCommand | ReplaceSubtreeCommand; rootNodeId: string }
+  | { accepted: false; code: CommandError['code']; message: string }
+
+export function planNodeDuplicate(
+  document: DesignDocument,
+  nodeId: string,
+  createId: (sourceId: string) => string,
+): NodeDuplicatePlan {
+  const node = document.nodes[nodeId]
+  if (!node) return { accepted: false, code: 'node_not_found', message: 'Node does not exist' }
+  if (!node.parentId) return { accepted: false, code: 'root_operation_forbidden', message: 'Root cannot be duplicated' }
+  const parent = document.nodes[node.parentId]
+  if (!parent) return { accepted: false, code: 'document_invalid', message: 'Parent is missing' }
+  const index = parent.children.indexOf(nodeId)
+  if (index < 0) return { accepted: false, code: 'document_invalid', message: 'Node is missing from its parent' }
+  const sourceNodes = collectSubtree(document, nodeId)
+  if (Object.keys(document.nodes).length + sourceNodes.length > DESIGN_LIMITS.maxNodes) {
+    return { accepted: false, code: 'document_invalid', message: 'Duplicating this node exceeds the document limit' }
+  }
+
+  const idMap = new Map<string, string>()
+  for (const source of sourceNodes) {
+    const duplicateId = createId(source.id)
+    if (!duplicateId || document.nodes[duplicateId] || [...idMap.values()].includes(duplicateId)) {
+      return { accepted: false, code: 'invalid_command', message: 'Generated duplicate IDs must be unique' }
+    }
+    idMap.set(source.id, duplicateId)
+  }
+  const rootNodeId = idMap.get(nodeId)!
+  if (node.children.length === 0) {
+    return {
+      accepted: true,
+      rootNodeId,
+      command: {
+        commandId: `duplicate-node-${nodeId}`,
+        documentVersion: document.version,
+        source: 'user',
+        type: 'DUPLICATE_NODE',
+        nodeId,
+        newNodeId: rootNodeId,
+        targetParentId: parent.id,
+        index: index + 1,
+      },
+    }
+  }
+
+  const nodes = sourceNodes.map(source => ({
+    ...source,
+    id: idMap.get(source.id)!,
+    parentId: source.id === nodeId ? parent.id : idMap.get(source.parentId ?? '') ?? null,
+    children: source.children.map(childId => idMap.get(childId)!),
+  })) as DesignNode[]
+  return {
+    accepted: true,
+    rootNodeId,
+    command: {
+      commandId: `duplicate-node-${nodeId}`,
+      documentVersion: document.version,
+      source: 'user',
+      type: 'REPLACE_SUBTREE',
+      nodeId: rootNodeId,
+      rootNodeId,
+      nodes,
+      index: index + 1,
+    },
+  }
+}
+
+export function planNodeDelete(document: DesignDocument, nodeId: string): DropPlan<RemoveCommand> {
+  const node = document.nodes[nodeId]
+  if (!node) return { accepted: false, code: 'node_not_found', message: 'Node does not exist' }
+  if (!node.parentId) return { accepted: false, code: 'root_operation_forbidden', message: 'Root cannot be deleted' }
+  return {
+    accepted: true,
+    command: {
+      commandId: `delete-node-${nodeId}`,
+      documentVersion: document.version,
+      source: 'user',
+      type: 'REMOVE_NODE',
+      nodeId,
+    },
+  }
 }
 
 export function planSectionDuplicate(

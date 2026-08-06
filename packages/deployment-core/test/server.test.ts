@@ -60,7 +60,7 @@ it('exchanges one-time codes and validates the installed configuration', async (
     .mockResolvedValueOnce(response({ access_token: 'provider-secret-token', team_id: 'team_test' }))
     .mockResolvedValueOnce(response({
       id: 'icfg_test', teamId: 'team_test', status: 'ready',
-      scopes: ['deployment:read-write', 'integration-configuration:read-write'],
+      scopes: ['read-write:deployment', 'read-write:integration-configuration', 'read-write:project'],
     }))
   const adapter = createVercelAdapter({
     fetch,
@@ -83,9 +83,12 @@ it('exchanges one-time codes and validates the installed configuration', async (
 
 it('creates one static Vercel deployment and maps provider status safely', async () => {
   const fetch = vi.fn()
-    .mockResolvedValueOnce(response({ id: 'dpl_test', readyState: 'QUEUED', url: 'zenui-test.vercel.app' }))
-    .mockResolvedValueOnce(response({ id: 'dpl_test', readyState: 'BUILDING', url: 'zenui-test.vercel.app' }))
-    .mockResolvedValueOnce(response({ id: 'dpl_test', readyState: 'READY', url: 'zenui-test.vercel.app' }))
+    .mockResolvedValueOnce(response({ id: 'dpl_test', readyState: 'QUEUED', url: 'zenui-a1b2c3d4-hash.vercel.app' }))
+    .mockResolvedValueOnce(response({ id: 'dpl_test', readyState: 'BUILDING', url: 'zenui-a1b2c3d4-hash.vercel.app' }))
+    .mockResolvedValueOnce(response({
+      id: 'dpl_test', readyState: 'READY', url: 'zenui-a1b2c3d4-hash.vercel.app',
+      target: 'production', aliasAssigned: true, alias: ['zenui-a1b2c3d4.vercel.app'],
+    }))
   const adapter = createVercelAdapter({
     fetch,
     clientId: 'client-id',
@@ -98,6 +101,7 @@ it('creates one static Vercel deployment and maps provider status safely', async
     name: 'zenui-a1b2c3d4',
     files: [
       { path: 'about/index.html', content: '<!doctype html><h1>About</h1>' },
+      { path: 'assets/11111111-1111-4111-8111-111111111111.webp', content: Uint8Array.from([0, 1, 2, 255]) },
       { path: 'index.html', content: '<!doctype html><h1>Immutable</h1>' },
     ],
     target: 'production',
@@ -108,23 +112,80 @@ it('creates one static Vercel deployment and maps provider status safely', async
   expect(request).toMatchObject({
     name: 'zenui-a1b2c3d4', target: 'production', projectSettings: { framework: null },
     files: [
-      { file: 'about/index.html', data: '<!doctype html><h1>About</h1>' },
-      { file: 'index.html', data: '<!doctype html><h1>Immutable</h1>' },
+      { file: 'about/index.html', data: '<!doctype html><h1>About</h1>', encoding: 'utf-8' },
+      { file: 'assets/11111111-1111-4111-8111-111111111111.webp', data: 'AAEC/w==', encoding: 'base64' },
+      { file: 'index.html', data: '<!doctype html><h1>Immutable</h1>', encoding: 'utf-8' },
     ],
   })
   expect(JSON.stringify(request)).not.toContain('provider-secret-token')
 
-  await expect(adapter.getDeployment('provider-secret-token', 'dpl_test', 'team_test'))
-    .resolves.toEqual({ state: 'building' })
-  await expect(adapter.getDeployment('provider-secret-token', 'dpl_test', 'team_test'))
-    .resolves.toEqual({ state: 'ready', url: 'https://zenui-test.vercel.app' })
+  await expect(adapter.getDeployment('provider-secret-token', 'dpl_test', 'team_test', {
+    projectName: 'zenui-a1b2c3d4', target: 'production',
+  })).resolves.toEqual({ state: 'building' })
+  await expect(adapter.getDeployment('provider-secret-token', 'dpl_test', 'team_test', {
+    projectName: 'zenui-a1b2c3d4', target: 'production',
+  })).resolves.toEqual({ state: 'ready', url: 'https://zenui-a1b2c3d4.vercel.app' })
+})
+
+it('keeps preview deployment URLs and waits for the exact assigned production alias', async () => {
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(response({
+      id: 'dpl_preview', readyState: 'READY', url: 'zenui-preview-hash.vercel.app', target: null,
+    }))
+    .mockResolvedValueOnce(response({
+      id: 'dpl_prod', readyState: 'READY', url: 'zenui-prod-hash.vercel.app',
+      target: 'production', aliasAssigned: false, alias: ['zenui-prod.vercel.app'],
+    }))
+    .mockResolvedValueOnce(response({
+      id: 'dpl_prod', readyState: 'READY', url: 'zenui-prod-hash.vercel.app',
+      target: 'production', aliasAssigned: true, alias: ['other-project.vercel.app'],
+    }))
+    .mockResolvedValueOnce(response({
+      id: 'dpl_prod', readyState: 'READY', url: 'zenui-prod-hash.vercel.app',
+      target: 'production', aliasAssigned: true,
+      alias: ['https://zenui-prod.vercel.app.evil.test', 'http://zenui-prod.vercel.app'],
+    }))
+  const adapter = createVercelAdapter({
+    fetch, clientId: 'client-id', clientSecret: 'client-secret', redirectUri: 'https://app.example.test/callback',
+  })
+
+  await expect(adapter.getDeployment('token', 'dpl_preview', null, {
+    projectName: 'zenui-preview', target: 'preview',
+  })).resolves.toEqual({ state: 'ready', url: 'https://zenui-preview-hash.vercel.app' })
+  await expect(adapter.getDeployment('token', 'dpl_prod', null, {
+    projectName: 'zenui-prod', target: 'production',
+  })).resolves.toEqual({ state: 'building' })
+  await expect(adapter.getDeployment('token', 'dpl_prod', null, {
+    projectName: 'zenui-prod', target: 'production',
+  })).resolves.toEqual({ state: 'building' })
+  await expect(adapter.getDeployment('token', 'dpl_prod', null, {
+    projectName: 'zenui-prod', target: 'production',
+  })).resolves.toEqual({ state: 'building' })
+})
+
+it('rejects deployment file and aggregate byte limits before contacting Vercel', async () => {
+  const fetch = vi.fn()
+  const adapter = createVercelAdapter({
+    fetch, clientId: 'client-id', clientSecret: 'client-secret', redirectUri: 'https://app.example.test/callback',
+  })
+
+  await expect(adapter.createDeployment('token', {
+    teamId: null, name: 'zenui-test1234',
+    files: [{ path: 'assets/image.webp', content: new Uint8Array(8 * 1024 * 1024 + 1) }],
+    target: 'preview', correlationId: 'local-id',
+  })).rejects.toMatchObject({ code: 'invalid_artifact' })
+  expect(fetch).not.toHaveBeenCalled()
 })
 
 it('finds deployment outcomes only by exact correlation metadata without creating again', async () => {
   const fetch = vi.fn()
     .mockResolvedValueOnce(response({ deployments: [
       { id: 'dpl_other', readyState: 'READY', url: 'other.vercel.app', meta: { zenuiDeploymentId: 'other' } },
-      { id: 'dpl_test', readyState: 'READY', url: 'zenui-test.vercel.app', meta: { zenuiDeploymentId: 'local-id' } },
+      {
+        id: 'dpl_test', readyState: 'READY', url: 'zenui-a1b2c3d4-hash.vercel.app',
+        target: 'production', aliasAssigned: true, alias: ['zenui-a1b2c3d4.vercel.app'],
+        meta: { zenuiDeploymentId: 'local-id' },
+      },
     ] }))
     .mockResolvedValueOnce(response({ deployments: [] }))
     .mockResolvedValueOnce(response({ deployments: [
@@ -138,7 +199,7 @@ it('finds deployment outcomes only by exact correlation metadata without creatin
   await expect(adapter.findDeploymentByCorrelation('token', {
     teamId: 'team_test', projectName: 'zenui-a1b2c3d4', correlationId: 'local-id',
   })).resolves.toEqual({ match: 'one', deployment: {
-    providerDeploymentId: 'dpl_test', state: 'ready', url: 'https://zenui-test.vercel.app',
+    providerDeploymentId: 'dpl_test', state: 'ready', url: 'https://zenui-a1b2c3d4.vercel.app',
   } })
   await expect(adapter.findDeploymentByCorrelation('token', {
     teamId: null, projectName: 'zenui-a1b2c3d4', correlationId: 'missing',
@@ -162,8 +223,9 @@ it('normalizes provider failures without leaking response bodies or credentials'
   await expect(adapter.getConfiguration('provider-secret-token', 'icfg_test', null)).rejects.toBeInstanceOf(VercelProviderError)
 
   fetch.mockResolvedValueOnce(response({ id: 'dpl_test', readyState: 'READY', url: 'attacker.example.test' }))
-  await expect(adapter.getDeployment('provider-secret-token', 'dpl_test', null))
-    .rejects.toMatchObject({ code: 'provider_error', message: 'provider_error' })
+  await expect(adapter.getDeployment('provider-secret-token', 'dpl_test', null, {
+    projectName: 'zenui-test', target: 'preview',
+  })).rejects.toMatchObject({ code: 'provider_error', message: 'provider_error' })
 })
 
 it('uses safe timeout and disconnect semantics', async () => {
@@ -213,7 +275,9 @@ it('validates malformed provider success payloads and terminal deployment states
   await expect(adapter.createDeployment('token', {
     teamId: null, name: 'zenui-test1234', files: [{ path: 'index.html', content: '<h1>Page</h1>' }], target: 'preview', correlationId: 'local-id',
   })).resolves.toEqual({ providerDeploymentId: 'dpl_test', state: 'ready', url: 'https://zenui-direct.vercel.app' })
-  await expect(adapter.getDeployment('token', 'dpl_test', null)).resolves.toEqual({ state: 'failed' })
+  await expect(adapter.getDeployment('token', 'dpl_test', null, {
+    projectName: 'zenui-test', target: 'preview',
+  })).resolves.toEqual({ state: 'failed' })
 })
 
 it('rejects invalid cipher configuration and empty credentials', () => {

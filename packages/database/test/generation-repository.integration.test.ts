@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite'
-import { deriveProposalScope, materializeProposal } from '@zenui/ai-core'
+import { deriveProposalScope, materializeMediaProposal, materializeProposal, mediaProposalReviewSchema } from '@zenui/ai-core'
 import { createValidDesignFixture } from '@zenui/design-schema'
 import { drizzle } from 'drizzle-orm/pglite'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -209,6 +209,101 @@ describe('workspace-scoped generation repository', () => {
     expect((await client.query('SELECT id FROM revisions WHERE generation_run_id = $1', [run.id])).rows).toEqual([])
   })
 
+  it('keeps legacy exact-image proposals compatible when no v2 media review is present', async () => {
+    const { project, repository } = await setup()
+    project.document.nodes['image-1']!.props = {
+      assetId: '55555555-5555-4555-8555-555555555555', alt: 'Current image', decorative: false,
+    }
+    await createProjectRepository(drizzle(client, { schema })).replaceDocument(owner, project.id, 1, project.document)
+    const document = { ...project.document, version: 2 }
+    const scope = deriveProposalScope(document, 'image-1')!
+    const run = await repository.createProposal(owner, project.id, {
+      requestId: crypto.randomUUID(), action: 'request', intent: 'replace-media',
+      prompt: 'Thay bằng một hình khác', expectedVersion: 2,
+      selectedNodeId: 'image-1', scope,
+    })
+    await repository.claim(owner, run.id, { provider: 'mock', model: 'legacy-media-v1', promptVersion: 'v2' })
+    const materialized = materializeMediaProposal({
+      document, targetNodeId: 'image-1',
+      assetId: '77777777-7777-4777-8777-777777777777',
+      alt: 'Replacement image', runId: run.id, expectedVersion: 2,
+      summary: 'Prepared a replacement image',
+    })
+    if (!materialized.accepted) throw new Error('expected media proposal')
+
+    expect(await repository.completeProposal(owner, run.id, {
+      commands: materialized.commands,
+      proposedDocument: materialized.proposedDocument,
+      summary: materialized.summary,
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      repairCount: 0,
+    })).toMatchObject({
+      accepted: true,
+      run: { proposalStatus: 'ready', mediaReview: null },
+    })
+  })
+
+  it('stores bounded media candidates and redacts internal visual brief fields from the public run', async () => {
+    const { project, repository } = await setup()
+    project.document.nodes['image-1']!.props = {
+      assetId: '55555555-5555-4555-8555-555555555555', alt: 'Current image', decorative: false,
+    }
+    const projectRepository = createProjectRepository(drizzle(client, { schema }))
+    await projectRepository.replaceDocument(owner, project.id, 1, project.document)
+    const scope = deriveProposalScope(project.document, 'image-1')!
+    const run = await repository.createProposal(owner, project.id, {
+      requestId: crypto.randomUUID(), action: 'request', intent: 'replace-media',
+      prompt: 'Thay bằng sơ đồ quy trình năm bước', expectedVersion: 2,
+      selectedNodeId: 'image-1', scope,
+    })
+    await repository.claim(owner, run.id, { provider: 'mock', model: 'mock-v1', promptVersion: 'v2' })
+    const materialized = materializeMediaProposal({
+      document: { ...project.document, version: 2 }, targetNodeId: 'image-1',
+      assetId: '77777777-7777-4777-8777-777777777777',
+      alt: 'Sơ đồ quy trình phát triển năm bước', runId: run.id, expectedVersion: 2,
+      summary: 'Prepared a process diagram',
+    })
+    if (!materialized.accepted) throw new Error('expected media proposal')
+    const review = mediaProposalReviewSchema.parse({
+      version: 'media-proposal-review-v1',
+      visualBrief: {
+        version: 'visual-brief-v1', subject: 'Quy trình phát triển', message: 'Năm bước',
+        representation: 'process-diagram', composition: 'Năm cột có mũi tên',
+        mustInclude: ['5 bước'], mustAvoid: ['người'], peoplePolicy: 'forbidden',
+        textPolicy: 'symbolic-only', style: 'editorial diagram', palette: ['#2563eb'],
+        aspectRatio: 'wide', focalArea: 'center',
+        generationPrompt: 'Five step process diagram, no people, no readable text',
+        searchQuery: null, alt: 'Sơ đồ quy trình phát triển năm bước',
+      },
+      candidates: [{
+        candidateId: 'candidate-1', assetId: '77777777-7777-4777-8777-777777777777',
+        source: 'generated', score: 0.91, passed: true, safeReason: 'Phù hợp với brief.',
+      }],
+      selectedCandidateId: 'candidate-1', rootRequestId: run.id,
+      previousProposalId: null, rejectedCandidateIds: [],
+    })
+    const completed = await repository.completeProposal(owner, run.id, {
+      commands: materialized.commands, proposedDocument: materialized.proposedDocument,
+      summary: materialized.summary, usage, repairCount: 0, mediaReview: review,
+    })
+    expect(completed).toMatchObject({
+      accepted: true,
+      run: {
+        proposalStatus: 'ready',
+        mediaReview: {
+          version: 'media-proposal-review-v1', representation: 'process-diagram',
+          candidates: [{ candidateId: 'candidate-1', assetId: '77777777-7777-4777-8777-777777777777' }],
+        },
+      },
+    })
+    expect(JSON.stringify(completed)).not.toMatch(/generationPrompt|searchQuery|mustAvoid|rootRequestId/)
+    const row = (await client.query<{ proposal_media_review: { visualBrief: { generationPrompt: string } } }>(
+      'SELECT proposal_media_review FROM generation_runs WHERE id = $1',
+      [run.id],
+    )).rows[0]
+    expect(row?.proposal_media_review.visualBrief.generationPrompt).toContain('Five step process diagram')
+  })
+
   it('discards proposals without mutation and atomically accepts the exact reviewed proposal once', async () => {
     const { project, repository } = await setup()
     const scope = deriveProposalScope(project.document, 'heading-1')!
@@ -293,11 +388,30 @@ describe('workspace-scoped generation repository', () => {
     const replacementRequestId = crypto.randomUUID()
     const replacementInput = {
       requestId: replacementRequestId, action: 'refine' as const, prompt: 'Make it shorter', expectedVersion: 1,
+      feedbackCodes: ['copy_mismatch' as const],
       selectedNodeId: 'heading-1', previousProposalId: original.id, scope,
     }
     const replacement = await repository.createProposal(owner, project.id, replacementInput)
     expect((await repository.createProposal(owner, project.id, replacementInput)).id).toBe(replacement.id)
-    expect(replacement).toMatchObject({ mode: 'edit-selection', previousProposalId: original.id })
+    expect(replacement).toMatchObject({
+      mode: 'edit-selection', previousProposalId: original.id, originalRequest: 'Improve heading',
+      feedbackCodes: ['copy_mismatch'],
+    })
+    const lineage = (await client.query<{
+      original_request: string
+      prompt: string
+      proposal_feedback_codes: string[]
+      proposal_lineage: unknown
+    }>(
+      'SELECT original_request, prompt, proposal_feedback_codes, proposal_lineage FROM generation_runs WHERE id = $1',
+      [replacement.id],
+    )).rows[0]
+    expect(lineage).toMatchObject({
+      original_request: 'Improve heading',
+      prompt: 'Make it shorter',
+      proposal_feedback_codes: ['copy_mismatch'],
+      proposal_lineage: { version: 'proposal-lineage-v1', rootRequestId: original.id },
+    })
     await repository.claim(owner, replacement.id, { provider: 'mock', model: 'mock-v1', promptVersion: 'v2' })
     const refinedProposal = materializeProposal({
       document: project.document, scope,

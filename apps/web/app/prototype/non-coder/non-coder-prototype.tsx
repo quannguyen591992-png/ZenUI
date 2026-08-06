@@ -313,7 +313,7 @@ function SimpleEditor({
           <button type="button" onClick={event => onDialog('share', event.currentTarget)}>Chia sẻ</button>
           <button type="button" className="prototype-primary-button" onClick={event => onDialog('publish', event.currentTarget)}>Xuất bản</button>
         </div>
-        <button type="button" onClick={onAdvanced}>Mở điều khiển nâng cao</button>
+        <button type="button" onClick={onAdvanced}>Mở chỉnh sửa chuyên sâu</button>
       </header>
       <div className="prototype-narrow-toolbar">
         <button type="button" onClick={event => onDialog('story', event.currentTarget)}>Câu chuyện</button>
@@ -342,7 +342,7 @@ function SimpleEditor({
 function AdvancedEditor({ document, viewport, onReturn }: { document: DesignDocument; viewport: RenderViewport; onReturn: () => void }) {
   return (
     <main className="prototype-advanced" aria-labelledby="advanced-heading">
-      <header><div><span>Chế độ nâng cao</span><h1 id="advanced-heading">Điều khiển nâng cao</h1></div><button type="button" onClick={onReturn}>Quay lại Đơn giản</button></header>
+      <header><div><span>Chỉnh sửa chuyên sâu</span><h1 id="advanced-heading">Kiểm soát thiết kế chi tiết</h1></div><button type="button" onClick={onReturn}>Quay lại thiết kế trực quan</button></header>
       <div className="prototype-advanced-layout">
         <aside><h2>Thành phần</h2><button type="button">Phần nội dung</button><button type="button">Khung chứa</button><button type="button">Tiêu đề</button><h2>Lớp</h2><p>Trang › Phần mở đầu › Nội dung</p></aside>
         <section aria-label="Khung thiết kế nâng cao"><PrototypeRenderer document={document} viewport={viewport} /></section>
