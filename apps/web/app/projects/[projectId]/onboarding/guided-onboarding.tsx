@@ -289,6 +289,22 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
     }
   }
 
+  const previewRadius = brief.designSystem.mode === 'custom'
+    ? brief.designSystem.radius === 'sharp' ? 8 : brief.designSystem.radius === 'balanced' ? 12 : 20
+    : 12
+  const previewPadding = brief.designSystem.mode === 'custom'
+    ? brief.designSystem.spacing === 'compact' ? 16 : brief.designSystem.spacing === 'balanced' ? 24 : 32
+    : 24
+  const previewGap = brief.designSystem.mode === 'custom'
+    ? brief.designSystem.spacing === 'compact' ? 8 : brief.designSystem.spacing === 'balanced' ? 12 : 16
+    : 12
+  const previewH3 = brief.designSystem.mode === 'custom'
+    ? brief.designSystem.typography === 'compact' ? 18 : brief.designSystem.typography === 'balanced' ? 22 : 26
+    : 22
+  const previewP = brief.designSystem.mode === 'custom'
+    ? brief.designSystem.typography === 'compact' ? 14 : brief.designSystem.typography === 'balanced' ? 15 : 16
+    : 15
+
   if (loading) return <main className="guided-onboarding-state" role="status">Đang tải bản mô tả website...</main>
 
   if (screen === 'brief') {
@@ -350,10 +366,21 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
                   <label><span>Mật độ bố cục</span><select aria-label="Mật độ bố cục" value={brief.designSystem.spacing} onChange={event => updateCustomDesignSystem({ spacing: event.target.value as typeof brief.designSystem.spacing })}>{GUIDED_SPACING_PRESET_IDS.map(value => <option key={value} value={value}>{value === 'compact' ? 'Gọn' : value === 'balanced' ? 'Cân bằng' : 'Thoáng'}</option>)}</select></label>
                   <label><span>Bo góc thành phần</span><select aria-label="Bo góc thành phần" value={brief.designSystem.radius} onChange={event => updateCustomDesignSystem({ radius: event.target.value as typeof brief.designSystem.radius })}>{GUIDED_RADIUS_PRESET_IDS.map(value => <option key={value} value={value}>{value === 'sharp' ? 'Vuông gọn' : value === 'balanced' ? 'Mềm vừa' : 'Bo tròn'}</option>)}</select></label>
                 </div>
-                <article aria-label="Xem trước hệ thống thiết kế" className="guided-design-system-preview" style={{ backgroundColor: brief.designSystem.colors.background, color: brief.designSystem.colors.text, fontFamily: brief.designSystem.fonts.body }}>
-                  <h3 style={{ fontFamily: brief.designSystem.fonts.heading }}>Thiết kế nhất quán từ đầu</h3>
-                  <p>Kiểu chữ, màu sắc và khoảng cách sẽ được áp dụng cho website được tạo.</p>
-                  <button type="button" style={{ backgroundColor: brief.designSystem.colors.primary }}>Hành động chính</button>
+                <article
+                  aria-label="Xem trước hệ thống thiết kế"
+                  className="guided-design-system-preview"
+                  style={{
+                    backgroundColor: brief.designSystem.colors.background,
+                    color: brief.designSystem.colors.text,
+                    fontFamily: brief.designSystem.fonts.body,
+                    borderRadius: `${previewRadius}px`,
+                    padding: `${previewPadding}px`,
+                    gap: `${previewGap}px`,
+                  }}
+                >
+                  <h3 style={{ fontFamily: brief.designSystem.fonts.heading, fontSize: `${previewH3}px`, transition: 'font-size 0.2s ease' }}>Thiết kế nhất quán từ đầu</h3>
+                  <p style={{ fontSize: `${previewP}px`, transition: 'font-size 0.2s ease' }}>Kiểu chữ, màu sắc và khoảng cách sẽ được áp dụng cho website được tạo.</p>
+                  <button type="button" style={{ backgroundColor: brief.designSystem.colors.primary, borderRadius: `${previewRadius}px`, padding: `${previewGap}px ${previewPadding}px`, fontSize: `${previewP}px`, transition: 'all 0.2s ease' }}>Hành động chính</button>
                 </article>
               </div>
             )}
