@@ -276,6 +276,90 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     expect(result).toEqual({ accepted: false, code: 'brief_mismatch' })
   })
 
+  it('materializes one custom Design System into all directions while preserving distinct layouts', () => {
+    const briefWithCustomSystem = {
+      ...vietnameseBrief,
+      designSystem: {
+        mode: 'custom',
+        colors: { primary: '#2563eb', background: '#ffffff', text: '#0f172a' },
+        fonts: { heading: 'Georgia', body: 'Arial' },
+        typography: 'expressive',
+        spacing: 'airy',
+        radius: 'soft',
+      },
+    } as WebsiteBrief
+
+    expect(websiteBriefSchema.safeParse(briefWithCustomSystem).success).toBe(true)
+    expect(websiteBriefSchema.safeParse({
+      ...briefWithCustomSystem,
+      designSystem: {
+        ...briefWithCustomSystem.designSystem,
+        colors: { primary: '#eeeeee', background: '#ffffff', text: '#dddddd' },
+      },
+    }).success).toBe(false)
+    expect(websiteBriefSchema.safeParse({
+      ...briefWithCustomSystem,
+      designSystem: { ...briefWithCustomSystem.designSystem, rawCss: 'body{display:none}' },
+    }).success).toBe(false)
+
+    const result = materializeDesignDirections({
+      brief: briefWithCustomSystem,
+      blueprint: content('vi'),
+      current: createValidDesignFixture(),
+      round: 0,
+    })
+
+    expect(result.accepted).toBe(true)
+    if (!result.accepted) return
+    expect(result.directions).toHaveLength(3)
+    expect(new Set(result.directions.map(direction => direction.contract.heroVariant)).size).toBe(3)
+    expect(new Set(result.directions.map(direction => JSON.stringify(direction.document.theme))).size).toBe(1)
+    for (const direction of result.directions) {
+      expect(direction.document.theme).toEqual({
+        colors: { primary: '#2563eb', background: '#ffffff', text: '#0f172a' },
+        fonts: { heading: 'Georgia', body: 'Arial' },
+        radius: { sm: 12, md: 20, lg: 28 },
+      })
+      expect(direction.document.nodes['hero-heading']?.style).toMatchObject({
+        fontFamily: 'Georgia',
+        fontSize: 72,
+      })
+      expect(direction.document.nodes['features-section']?.style).toMatchObject({
+        paddingTop: 96,
+        paddingBottom: 96,
+      })
+    }
+  })
+
+  it('keeps custom Design System out of the provider request', async () => {
+    const generateContentBlueprint = vi.fn().mockResolvedValue({
+      output: content('vi'),
+      usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+    })
+    const result = await runDesignDirectionGeneration({
+      provider: { name: 'mock', model: 'mock-v1', generateContentBlueprint },
+      brief: {
+        ...vietnameseBrief,
+        designSystem: {
+          mode: 'custom',
+          colors: { primary: '#2563eb', background: '#ffffff', text: '#0f172a' },
+          fonts: { heading: 'Georgia', body: 'Arial' },
+          typography: 'expressive', spacing: 'airy', radius: 'soft',
+        },
+      },
+      current: createValidDesignFixture(),
+      round: 0,
+    })
+
+    expect(result.accepted).toBe(true)
+    expect(generateContentBlueprint).toHaveBeenCalledWith(expect.objectContaining({
+      brief: expect.not.objectContaining({ designSystem: expect.anything() }),
+    }))
+    if (result.accepted) {
+      expect(result.directions.every(direction => direction.document.theme.fonts.heading === 'Georgia')).toBe(true)
+    }
+  })
+
   it('uses exactly one provider request and resolves at most four shared media slots without exposing provider data', async () => {
     const generateContentBlueprint = vi.fn().mockResolvedValue({
       output: content('vi'),

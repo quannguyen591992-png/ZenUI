@@ -620,8 +620,21 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .guided-brief-grid input { width: 100%; padding: 10px 12px; border: 1px solid #b8c5bc; border-radius: 10px; }
 .guided-brief-grid input[aria-invalid='true'] { border-color: #d92d20; }
 .guided-field-error { color: #b42318; font-size: 13px; font-weight: 650; }
-.guided-section-choices { display: flex; flex-wrap: wrap; gap: 12px 20px; margin: 24px 0 0; padding: 18px; border: 1px solid var(--guided-line); border-radius: 12px; }
-.guided-section-choices legend { padding: 0 7px; font-weight: 750; }
+.guided-section-choices, .guided-design-system-choice { display: flex; flex-wrap: wrap; gap: 12px 20px; margin: 24px 0 0; padding: 18px; border: 1px solid var(--guided-line); border-radius: 12px; }
+.guided-section-choices legend, .guided-design-system-choice legend { padding: 0 7px; font-weight: 750; }
+.guided-design-system-choice > p { width: 100%; margin: 0; color: var(--guided-muted); line-height: 1.5; }
+.guided-design-system-choice > label { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.guided-design-system-choice > label input { min-height: auto; }
+.guided-custom-design-system { display: grid; width: 100%; gap: 16px; padding-top: 8px; }
+.guided-custom-design-system > p { margin: 0; color: var(--guided-muted); }
+.guided-custom-design-system select { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #b8c5bc; border-radius: 10px; background: #fff; }
+.color-picker-input { display: flex; align-items: center; gap: 8px; }
+.color-picker-input input[type="color"] { flex: 0 0 44px; width: 44px; height: 44px; padding: 2px; border: 1px solid #b8c5bc; border-radius: 10px; cursor: pointer; background: #fff; }
+.color-picker-input input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.color-picker-input input[type="color"]::-webkit-color-swatch { border: 1px solid rgba(0,0,0,0.1); border-radius: 6px; }
+.guided-design-system-preview { display: grid; gap: 12px; padding: 24px; border: 1px solid var(--guided-line); border-radius: 16px; }
+.guided-design-system-preview h3, .guided-design-system-preview p { margin: 0; }
+.guided-design-system-preview button { width: fit-content; color: #fff; border-color: transparent; }
 .guided-section-choices label { display: flex; align-items: center; gap: 7px; }
 .guided-section-choices input { min-height: auto; }
 .guided-primary-actions { display: flex; justify-content: flex-end; margin-top: 24px; }

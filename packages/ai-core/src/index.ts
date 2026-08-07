@@ -104,10 +104,16 @@ export {
   type LandingPageProviderBlueprint,
 } from './provider-blueprint'
 export {
+  GUIDED_RADIUS_PRESET_IDS,
+  GUIDED_SPACING_PRESET_IDS,
+  GUIDED_TYPOGRAPHY_PRESET_IDS,
   WEBSITE_BRIEF_SECTION_IDS,
+  guidedDesignSystemSchema,
+  normalizeWebsiteBrief,
   prefillWebsiteBrief,
   websiteBriefSchema,
   websiteBriefSectionSchema,
+  type GuidedDesignSystem,
   type WebsiteBrief,
   type WebsiteBriefSection,
 } from './guided-brief'

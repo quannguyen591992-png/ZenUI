@@ -21,6 +21,8 @@ import {
   type BlueprintV2Section,
 } from './section-presets'
 
+import type { GuidedDesignSystem } from './guided-brief'
+
 const themeInputSchema = z.object({
   preset: z.enum(THEME_PRESET_IDS),
   mood: z.enum(MOOD_PRESET_IDS),
@@ -80,8 +82,11 @@ interface ResolvedTheme {
   headingFont: LandingPageBlueprintV2['theme']['headingFont']
   bodyFont: LandingPageBlueprintV2['theme']['bodyFont']
   radius: { sm: number; md: number; lg: number }
+  typography: { h1: number; h2: number; h3: number; body: number }
+  isCustom: boolean
   sectionPadding: number
   cardPadding: number
+  contentGap: number
   compactTypography: boolean
 }
 
@@ -102,20 +107,24 @@ function mixHex(left: string, right: string, rightWeight: number): string {
   return `#${mix(1)}${mix(3)}${mix(5)}`
 }
 
+function resolvedDensity(density: LandingPageBlueprintV2['theme']['density'], pagePreset: LandingPageBlueprintV2['pagePreset']) {
+  return pagePreset === 'saas'
+    ? {
+        compact: { sectionPadding: 56, cardPadding: 22, contentGap: 14 },
+        balanced: { sectionPadding: 72, cardPadding: 26, contentGap: 18 },
+        airy: { sectionPadding: 88, cardPadding: 30, contentGap: 24 },
+      }[density]
+    : {
+        compact: { sectionPadding: 64, cardPadding: 24, contentGap: 14 },
+        balanced: { sectionPadding: 84, cardPadding: 30, contentGap: 18 },
+        airy: { sectionPadding: 104, cardPadding: 34, contentGap: 24 },
+      }[density]
+}
+
 function resolveTheme(input: LandingPageBlueprintV2['theme'], pagePreset: LandingPageBlueprintV2['pagePreset']): ResolvedTheme {
   const palette = themePalettes[input.preset]
   const primary = input.mood === 'bold' ? mixHex(palette.primary, palette.text, 0.1) : palette.primary
-  const density = pagePreset === 'saas'
-    ? {
-        compact: { sectionPadding: 56, cardPadding: 22 },
-        balanced: { sectionPadding: 72, cardPadding: 26 },
-        airy: { sectionPadding: 88, cardPadding: 30 },
-      }[input.density]
-    : {
-        compact: { sectionPadding: 64, cardPadding: 24 },
-        balanced: { sectionPadding: 84, cardPadding: 30 },
-        airy: { sectionPadding: 104, cardPadding: 34 },
-      }[input.density]
+  const density = resolvedDensity(input.density, pagePreset)
   return {
     primary,
     background: palette.background,
@@ -129,6 +138,10 @@ function resolveTheme(input: LandingPageBlueprintV2['theme'], pagePreset: Landin
     onPrimary: '#ffffff',
     headingFont: pagePreset === 'saas' ? 'Manrope' : input.headingFont,
     bodyFont: input.bodyFont,
+    typography: pagePreset === 'saas'
+      ? { h1: 58, h2: 40, h3: 24, body: 16 }
+      : { h1: 64, h2: 44, h3: 25, body: 18 },
+    isCustom: false,
     compactTypography: pagePreset === 'saas',
     radius: input.mood === 'editorial'
       ? { sm: 4, md: 10, lg: 18 }
@@ -136,6 +149,42 @@ function resolveTheme(input: LandingPageBlueprintV2['theme'], pagePreset: Landin
         ? { sm: 12, md: 20, lg: 32 }
         : { sm: 8, md: 16, lg: 26 },
     ...density,
+  }
+}
+
+function resolveCustomDesignSystem(input: Extract<GuidedDesignSystem, { mode: 'custom' }>): ResolvedTheme {
+  const typography = {
+    compact: { compactTypography: true, contentGap: 14, typography: { h1: 52, h2: 36, h3: 22, body: 15 }, isCustom: true },
+    balanced: { compactTypography: false, contentGap: 18, typography: { h1: 64, h2: 44, h3: 26, body: 16 }, isCustom: true },
+    expressive: { compactTypography: false, contentGap: 24, typography: { h1: 72, h2: 52, h3: 30, body: 18 }, isCustom: true },
+  }[input.typography]
+  const spacing = {
+    compact: { sectionPadding: 48, cardPadding: 20 },
+    balanced: { sectionPadding: 64, cardPadding: 24 },
+    airy: { sectionPadding: 96, cardPadding: 32 },
+  }[input.spacing]
+  const radius = {
+    sharp: { sm: 4, md: 8, lg: 12 },
+    balanced: { sm: 6, md: 12, lg: 20 },
+    soft: { sm: 12, md: 20, lg: 28 },
+  }[input.radius]
+  const { primary, background, text } = input.colors
+  return {
+    primary,
+    background,
+    text,
+    surface: mixHex(background, primary, 0.035),
+    soft: mixHex(background, primary, 0.08),
+    border: mixHex(background, text, 0.14),
+    muted: mixHex(text, background, 0.34),
+    primaryDark: mixHex(primary, text, 0.24),
+    primarySoft: mixHex(background, primary, 0.13),
+    onPrimary: '#ffffff',
+    headingFont: input.fonts.heading,
+    bodyFont: input.fonts.body,
+    radius,
+    ...spacing,
+    ...typography,
   }
 }
 
@@ -192,11 +241,11 @@ function addSectionHeading(builder: DocumentBuilder, parentId: string, key: stri
     paddingTop: 8, paddingRight: 14, paddingBottom: 8, paddingLeft: 14, fontSize: 13, fontWeight: '700', letterSpacing: 0.5,
   })
   builder.create('heading', `${key}-heading`, stack.id, { text: input.heading, level: 2 }, {
-    maxWidth: 820, fontFamily: theme.headingFont, fontSize: input.compact ? 40 : 44, lineHeight: 1.14, fontWeight: '800', letterSpacing: -1,
+    maxWidth: 820, fontFamily: theme.headingFont, fontSize: theme.isCustom ? theme.typography.h2 : input.compact ? 40 : 44, lineHeight: 1.14, fontWeight: '800', letterSpacing: -1,
     textAlign: align, color: theme.text,
   }, { mobile: { fontSize: input.compact ? 30 : 32, textAlign: 'left', letterSpacing: -0.5 } })
   if (input.paragraph) builder.create('paragraph', `${key}-paragraph`, stack.id, { text: input.paragraph }, {
-    maxWidth: 700, fontFamily: theme.bodyFont, fontSize: 18, lineHeight: 1.65, textAlign: align, color: theme.muted,
+    maxWidth: 700, fontFamily: theme.bodyFont, fontSize: theme.isCustom ? theme.typography.body : 18, lineHeight: 1.65, textAlign: align, color: theme.muted,
   }, { mobile: { fontSize: 16, textAlign: 'left' } })
 }
 
@@ -317,7 +366,7 @@ function renderHero(
   })
   builder.create('heading', 'hero-heading', copy.id, { text: blueprint.hero.heading, level: 1 }, {
     maxWidth: centered ? 900 : 700, fontFamily: theme.headingFont,
-    fontSize: theme.compactTypography ? 58 : editorial ? 72 : 64,
+    fontSize: theme.isCustom ? theme.typography.h1 : theme.compactTypography ? 58 : editorial ? 72 : 64,
     lineHeight: theme.compactTypography ? 1.08 : 1.04, fontWeight: '800',
     letterSpacing: theme.compactTypography ? -1.7 : -2.1,
     textAlign: centered ? 'center' : 'left', color: theme.text,
@@ -326,7 +375,7 @@ function renderHero(
     mobile: { fontSize: theme.compactTypography ? 38 : 40, lineHeight: 1.1, letterSpacing: -0.9, textAlign: 'left' },
   })
   builder.create('paragraph', 'hero-paragraph', copy.id, { text: blueprint.hero.paragraph }, {
-    maxWidth: centered ? 720 : 620, fontFamily: theme.bodyFont, fontSize: 20, lineHeight: 1.65,
+    maxWidth: centered ? 720 : 620, fontFamily: theme.bodyFont, fontSize: theme.isCustom ? theme.typography.body : 20, lineHeight: 1.65,
     textAlign: centered ? 'center' : 'left', color: theme.muted,
   }, { mobile: { fontSize: 17, textAlign: 'left' } })
   const actions = builder.create('stack', 'hero-actions', copy.id, {}, {
@@ -423,7 +472,7 @@ function renderFeatures(
   addSectionHeading(builder, container.id, 'features', theme, { ...(section.eyebrow ? { eyebrow: section.eyebrow } : {}), heading: section.heading, paragraph: section.paragraph, compact: theme.compactTypography })
   const alternating = section.variant === 'alternating'
   const grid = builder.create('stack', 'features-grid', container.id, {}, {
-    display: alternating ? 'flex' : 'grid', flexDirection: 'column', gridColumns: section.variant === 'bento' ? 2 : 3, gap: 24,
+    display: alternating ? 'flex' : 'grid', flexDirection: 'column', gridColumns: section.variant === 'bento' ? 2 : 3, gap: theme.contentGap,
   }, { tablet: { gridColumns: 2 }, mobile: { gridColumns: 1, gap: 18 } })
   section.items.forEach((item, itemIndex) => {
     const featureSlots: readonly OwnedMediaSlot[] = ['feature-1', 'feature-2', 'feature-3']
@@ -454,7 +503,7 @@ function renderFeatures(
       borderRadius: theme.radius.sm, paddingTop: 11, paddingRight: 13, paddingBottom: 11, paddingLeft: 13, fontSize: 22,
     })
     builder.create('heading', `feature-heading-${itemIndex + 1}`, copy.id, { text: item.heading, level: 3 }, {
-      fontFamily: theme.headingFont, fontSize: 25, lineHeight: 1.25, fontWeight: '800', letterSpacing: -0.4, color: theme.text,
+      fontFamily: theme.headingFont, fontSize: theme.isCustom ? theme.typography.h3 : 25, lineHeight: 1.25, fontWeight: '800', letterSpacing: -0.4, color: theme.text,
     })
     builder.create('paragraph', `feature-paragraph-${itemIndex + 1}`, copy.id, { text: item.paragraph }, {
       fontFamily: theme.bodyFont, fontSize: 16, lineHeight: 1.65, color: theme.muted,
@@ -666,6 +715,7 @@ export function materializeLandingPageBlueprintV2(input: {
   imagePolicy?: RemoteImagePolicy
   heroImage?: OwnedImageProps
   ownedMedia?: OwnedMediaMap
+  designSystem?: GuidedDesignSystem
 }): { accepted: true; document: DesignDocument } | { accepted: false; issues: string[] } {
   const parsed = landingPageBlueprintV2Schema.safeParse(input.blueprint)
   if (!parsed.success) return { accepted: false, issues: ['invalid_blueprint'] }
@@ -678,7 +728,9 @@ export function materializeLandingPageBlueprintV2(input: {
     ownedMedia[slot as OwnedMediaSlot] = parsedImage.data
   }
   const blueprint = parsed.data
-  const theme = resolveTheme(blueprint.theme, blueprint.pagePreset)
+  const theme = input.designSystem?.mode === 'custom'
+    ? resolveCustomDesignSystem(input.designSystem)
+    : resolveTheme(blueprint.theme, blueprint.pagePreset)
   const builder = new DocumentBuilder()
   builder.create('page', 'page-root', null, {}, { width: 'full', backgroundColor: theme.background })
   renderNavbar(builder, blueprint, theme)

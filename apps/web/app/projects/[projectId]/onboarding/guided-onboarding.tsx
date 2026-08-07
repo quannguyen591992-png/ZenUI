@@ -1,6 +1,10 @@
 'use client'
 
 import {
+  GUIDED_RADIUS_PRESET_IDS,
+  GUIDED_SPACING_PRESET_IDS,
+  GUIDED_TYPOGRAPHY_PRESET_IDS,
+  normalizeWebsiteBrief,
   prefillWebsiteBrief,
   websiteBriefSchema,
   WEBSITE_BRIEF_SECTION_IDS,
@@ -8,6 +12,7 @@ import {
   type WebsiteBrief,
   type WebsiteBriefSection,
 } from '@zenui/ai-core'
+import { FONT_ALLOWLIST } from '@zenui/design-schema'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 
 import { DesignDocumentRenderer } from '../../../components/design-document-renderer'
@@ -50,7 +55,9 @@ interface GuidedOnboardingProps {
   }) => void
 }
 
-const emptyBrief: WebsiteBrief = {
+type GuidedBrief = WebsiteBrief & { designSystem: NonNullable<WebsiteBrief['designSystem']> }
+
+const emptyBrief: GuidedBrief = {
   description: '',
   offer: '',
   audience: '',
@@ -58,10 +65,22 @@ const emptyBrief: WebsiteBrief = {
   cta: '',
   tone: '',
   brandDetails: '',
+  designSystem: { mode: 'zenui' },
   mustHaveSections: ['introduction', 'benefits', 'contact'],
 }
 
-const fieldLabels: Record<Exclude<keyof WebsiteBrief, 'description' | 'mustHaveSections'>, string> = {
+type CustomDesignSystem = Extract<NonNullable<WebsiteBrief['designSystem']>, { mode: 'custom' }>
+
+const customDesignSystem: CustomDesignSystem = {
+  mode: 'custom',
+  colors: { primary: '#2563eb', background: '#ffffff', text: '#0f172a' },
+  fonts: { heading: 'Manrope', body: 'Arial' },
+  typography: 'balanced',
+  spacing: 'balanced',
+  radius: 'balanced',
+}
+
+const fieldLabels: Record<Exclude<keyof WebsiteBrief, 'description' | 'mustHaveSections' | 'designSystem'>, string> = {
   offer: 'Bạn cung cấp sản phẩm hoặc dịch vụ gì?',
   audience: 'Website này dành cho ai?',
   primaryGoal: 'Website này cần đạt được điều gì?',
@@ -139,7 +158,7 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
     () => suppliedApi ?? browserApi(projectId, workspaceId, expectedVersion),
     [suppliedApi, expectedVersion, projectId, workspaceId],
   )
-  const [brief, setBrief] = useState<WebsiteBrief>(emptyBrief)
+  const [brief, setBrief] = useState<GuidedBrief>(emptyBrief)
   const [errors, setErrors] = useState<Partial<Record<keyof WebsiteBrief, string>>>({})
   const [loading, setLoading] = useState(true)
   const [screen, setScreen] = useState<'brief' | 'gallery'>('brief')
@@ -155,7 +174,10 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
   useEffect(() => {
     let active = true
     void client.loadBrief()
-      .then(saved => { if (active && saved) setBrief(saved) })
+      .then(saved => {
+        const parsed = websiteBriefSchema.safeParse(saved)
+        if (active && parsed.success) setBrief(normalizeWebsiteBrief(parsed.data))
+      })
       .catch(() => undefined)
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false; closeSubscription.current?.() }
@@ -172,9 +194,34 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [preview])
 
-  const update = (field: keyof WebsiteBrief, value: string) => {
+  const update = <Field extends Exclude<keyof WebsiteBrief, 'designSystem' | 'mustHaveSections'>>(field: Field, value: WebsiteBrief[Field]) => {
     setBrief(current => ({ ...current, [field]: value }))
     setErrors(current => ({ ...current, [field]: undefined }))
+  }
+  const selectDesignSystemMode = (mode: 'zenui' | 'custom') => {
+    setBrief(current => ({
+      ...current,
+      designSystem: mode === 'custom' ? customDesignSystem : { mode: 'zenui' },
+    }))
+    setErrors({})
+  }
+  const updateCustomDesignSystem = (patch: {
+    colors?: Partial<CustomDesignSystem['colors']>
+    fonts?: Partial<CustomDesignSystem['fonts']>
+    typography?: CustomDesignSystem['typography']
+    spacing?: CustomDesignSystem['spacing']
+    radius?: CustomDesignSystem['radius']
+  }) => {
+    setBrief(current => current.designSystem.mode === 'custom' ? {
+      ...current,
+      designSystem: {
+        ...current.designSystem,
+        ...patch,
+        colors: { ...current.designSystem.colors, ...(patch.colors ?? {}) },
+        fonts: { ...current.designSystem.fonts, ...(patch.fonts ?? {}) },
+      },
+    } : current)
+    setErrors({})
   }
   const toggleSection = (section: WebsiteBriefSection) => {
     setBrief(current => ({
@@ -189,7 +236,7 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
   }
   const useDescription = () => {
     const values = prefillWebsiteBrief(brief.description)
-    setBrief(current => ({ ...current, ...values }))
+    setBrief(current => ({ ...current, ...values, designSystem: current.designSystem }))
     setErrors({})
   }
 
@@ -285,6 +332,32 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
               </label>
             ))}
           </div>
+          <fieldset className="guided-design-system-choice">
+            <legend>Thiết kế website</legend>
+            <p>Chọn để ZenUI đề xuất giao diện hoặc dùng quy chuẩn thương hiệu của bạn ngay từ khi tạo website.</p>
+            <label><input type="radio" name="design-system-mode" checked={brief.designSystem.mode === 'zenui'} onChange={() => selectDesignSystemMode('zenui')} /> Để ZenUI đề xuất thiết kế</label>
+            <label><input type="radio" name="design-system-mode" checked={brief.designSystem.mode === 'custom'} onChange={() => selectDesignSystemMode('custom')} /> Dùng thiết kế riêng</label>
+            {brief.designSystem.mode === 'custom' && (
+              <div className="guided-custom-design-system">
+                <p>Mọi hướng thiết kế sẽ dùng cùng màu sắc, kiểu chữ, khoảng cách và bo góc bạn đã chọn.</p>
+                <div className="guided-brief-grid">
+                  <label><span>Màu chính</span><div className="color-picker-input"><input type="color" aria-label="Bộ chọn màu chính" value={brief.designSystem.colors.primary} onChange={event => updateCustomDesignSystem({ colors: { primary: event.target.value } })} /><input aria-label="Mã màu chính" value={brief.designSystem.colors.primary} onChange={event => updateCustomDesignSystem({ colors: { primary: event.target.value } })} /></div></label>
+                  <label><span>Màu nền</span><div className="color-picker-input"><input type="color" aria-label="Bộ chọn màu nền" value={brief.designSystem.colors.background} onChange={event => updateCustomDesignSystem({ colors: { background: event.target.value } })} /><input aria-label="Mã màu nền" value={brief.designSystem.colors.background} onChange={event => updateCustomDesignSystem({ colors: { background: event.target.value } })} /></div></label>
+                  <label><span>Màu chữ</span><div className="color-picker-input"><input type="color" aria-label="Bộ chọn màu chữ" value={brief.designSystem.colors.text} onChange={event => updateCustomDesignSystem({ colors: { text: event.target.value } })} /><input aria-label="Mã màu chữ" value={brief.designSystem.colors.text} onChange={event => updateCustomDesignSystem({ colors: { text: event.target.value } })} /></div></label>
+                  <label><span>Font tiêu đề</span><select aria-label="Font tiêu đề" value={brief.designSystem.fonts.heading} onChange={event => updateCustomDesignSystem({ fonts: { heading: event.target.value as typeof brief.designSystem.fonts.heading } })}>{FONT_ALLOWLIST.map(font => <option key={font} value={font}>{font}</option>)}</select></label>
+                  <label><span>Font nội dung</span><select aria-label="Font nội dung" value={brief.designSystem.fonts.body} onChange={event => updateCustomDesignSystem({ fonts: { body: event.target.value as typeof brief.designSystem.fonts.body } })}>{FONT_ALLOWLIST.map(font => <option key={font} value={font}>{font}</option>)}</select></label>
+                  <label><span>Cỡ chữ</span><select aria-label="Cỡ chữ" value={brief.designSystem.typography} onChange={event => updateCustomDesignSystem({ typography: event.target.value as typeof brief.designSystem.typography })}>{GUIDED_TYPOGRAPHY_PRESET_IDS.map(value => <option key={value} value={value}>{value === 'compact' ? 'Gọn gàng' : value === 'balanced' ? 'Cân bằng' : 'Ấn tượng'}</option>)}</select></label>
+                  <label><span>Mật độ bố cục</span><select aria-label="Mật độ bố cục" value={brief.designSystem.spacing} onChange={event => updateCustomDesignSystem({ spacing: event.target.value as typeof brief.designSystem.spacing })}>{GUIDED_SPACING_PRESET_IDS.map(value => <option key={value} value={value}>{value === 'compact' ? 'Gọn' : value === 'balanced' ? 'Cân bằng' : 'Thoáng'}</option>)}</select></label>
+                  <label><span>Bo góc thành phần</span><select aria-label="Bo góc thành phần" value={brief.designSystem.radius} onChange={event => updateCustomDesignSystem({ radius: event.target.value as typeof brief.designSystem.radius })}>{GUIDED_RADIUS_PRESET_IDS.map(value => <option key={value} value={value}>{value === 'sharp' ? 'Vuông gọn' : value === 'balanced' ? 'Mềm vừa' : 'Bo tròn'}</option>)}</select></label>
+                </div>
+                <article aria-label="Xem trước hệ thống thiết kế" className="guided-design-system-preview" style={{ backgroundColor: brief.designSystem.colors.background, color: brief.designSystem.colors.text, fontFamily: brief.designSystem.fonts.body }}>
+                  <h3 style={{ fontFamily: brief.designSystem.fonts.heading }}>Thiết kế nhất quán từ đầu</h3>
+                  <p>Kiểu chữ, màu sắc và khoảng cách sẽ được áp dụng cho website được tạo.</p>
+                  <button type="button" style={{ backgroundColor: brief.designSystem.colors.primary }}>Hành động chính</button>
+                </article>
+              </div>
+            )}
+          </fieldset>
           <fieldset className="guided-section-choices">
             <legend>Website cần có những phần nào?</legend>
             <div className="guided-chips">
