@@ -55,6 +55,7 @@ import {
 
 import { createVietnameseStarterDocument } from '../../lib/starter-document'
 import { commandErrorLabel, componentLabel, newComponentProps, viewportLabel } from '../../lib/ui-copy'
+import { DesignIcon } from '../components/design-icon'
 
 import {
   browserAiProposalApi,
@@ -185,8 +186,6 @@ const browserEditorApi: EditorApi = {
     }
   },
 }
-
-const editorIconGlyphs = { 'arrow-right': '→', check: '✓', menu: '☰', star: '★' } as const
 
 type Viewport = 'desktop' | 'tablet' | 'mobile'
 
@@ -351,7 +350,7 @@ function CanvasNode({
   } else if ((node.type === 'heading' || node.type === 'paragraph' || node.type === 'badge') && 'text' in node.props) {
     children = node.props.text
   } else if (node.type === 'icon' && 'name' in node.props) {
-    children = editorIconGlyphs[node.props.name]
+    children = <DesignIcon name={node.props.name} />
   } else {
     children = node.children.map(childId => (
       <CanvasNode

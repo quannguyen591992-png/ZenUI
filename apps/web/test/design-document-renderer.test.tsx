@@ -29,7 +29,7 @@ describe('Design Document renderer', () => {
     expect(screen.getByRole('heading', { name: 'Build your next product' })).toBeVisible()
     expect(screen.getByRole('img', { name: 'Product preview' })).toHaveAttribute('referrerpolicy', 'no-referrer')
     expect(screen.getByRole('link', { name: 'Read docs' })).toHaveAttribute('href', '/docs')
-    expect(screen.getByLabelText('Featured')).toHaveTextContent('★')
+    expect(screen.getByLabelText('Featured').querySelector('svg path')).toHaveAttribute('d')
     expect(container.querySelector('[aria-hidden="true"]')).toBeInTheDocument()
     expect(container.querySelector('hr')).toBeInTheDocument()
   })

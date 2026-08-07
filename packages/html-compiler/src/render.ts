@@ -3,6 +3,7 @@ import {
   validateRegistryRelationships,
 } from '@zenui/component-registry'
 import {
+  ICON_PATHS,
   findPageByRoute,
   validateDesignDocument,
   type DesignDocument,
@@ -58,6 +59,7 @@ const semanticBrowserStyles: Partial<Record<DesignNode['type'], BrowserNodeStyle
   },
   link: { color: 'inherit', textDecoration: 'none' },
   badge: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 'max-content', lineHeight: '1.2' },
+  icon: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', lineHeight: '1' },
   image: { display: 'block', maxWidth: '100%', height: 'auto', backgroundColor: '#e2e8f0' },
   container: { marginLeft: 'auto', marginRight: 'auto' },
 }
@@ -73,6 +75,7 @@ export const RENDERER_SEMANTIC_CSS = [
   '[data-node-type="button"]:focus-visible,[data-node-type="link"]:focus-visible{outline:3px solid currentColor;outline-offset:3px}',
   '[data-node-type="link"]{transition:opacity .18s ease}[data-node-type="link"]:hover{opacity:.68}',
   '[data-node-type="badge"]{display:inline-flex;align-items:center;justify-content:center;width:max-content;line-height:1.2}',
+  '[data-node-type="icon"]{display:inline-flex;align-items:center;justify-content:center;font-size:24px;line-height:1}',
   '[data-node-type="feature-card"]{transition:transform .2s ease,box-shadow .2s ease}[data-node-type="feature-card"]:hover{transform:translateY(-4px)}',
 ].join('')
 
@@ -86,7 +89,31 @@ const shadows = {
   md: '0 12px 32px rgba(15,23,42,.10)',
   lg: '0 24px 64px rgba(15,23,42,.16)',
 } as const
-const iconGlyphs = { 'arrow-right': '→', check: '✓', menu: '☰', star: '★' } as const
+const iconStrokeAttributes = {
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  'stroke-width': '1.8',
+  'stroke-linecap': 'round',
+  'stroke-linejoin': 'round',
+  'aria-hidden': 'true',
+  focusable: 'false',
+} as const
+
+export function iconSvgChild(node: DesignNode): RenderPlanNode | null {
+  if (node.type !== 'icon' || !('name' in node.props)) return null
+  return {
+    tag: 'svg',
+    attributes: { ...iconStrokeAttributes, width: '1em', height: '1em' },
+    text: null,
+    children: ICON_PATHS[node.props.name].map(d => ({
+      tag: 'path',
+      attributes: { d },
+      text: null,
+      children: [],
+    })),
+  }
+}
 
 export interface RenderPlanNode {
   tag: string
@@ -246,18 +273,18 @@ function brandLogoChild(node: DesignNode, options: RenderAssetOptions): RenderPl
 function nodeText(node: DesignNode): string | null {
   if ((node.type === 'heading' || node.type === 'paragraph' || node.type === 'badge') && 'text' in node.props) return node.props.text
   if ((node.type === 'button' || node.type === 'link') && 'text' in node.props) return node.props.text
-  if (node.type === 'icon' && 'name' in node.props) return iconGlyphs[node.props.name]
+  if (node.type === 'icon' && 'name' in node.props) return null
   return null
 }
 
 function renderPlanNode(document: DesignDocument, nodeId: string, options: RenderAssetOptions): RenderPlanNode {
   const node = document.nodes[nodeId]!
-  const logo = brandLogoChild(node, options)
+  const synthetic = brandLogoChild(node, options) ?? iconSvgChild(node)
   return {
     tag: resolveNodeTag(node),
     attributes: nodeAttributes(document, node, options),
-    text: logo ? null : nodeText(node),
-    children: logo ? [logo] : node.children.flatMap(childId => {
+    text: synthetic ? null : nodeText(node),
+    children: synthetic ? [synthetic] : node.children.flatMap(childId => {
       const child = document.nodes[childId]
       return child && !isNodeHidden(child) ? [renderPlanNode(document, childId, options)] : []
     }),
