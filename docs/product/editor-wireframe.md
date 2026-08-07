@@ -174,6 +174,7 @@ Selecting a row opens one full-width field sheet. The sheet title repeats the qu
 | CTA | Yes | What should visitors do next? | Require visible action wording |
 | Tone/style | Yes | How should it feel? | Bounded choices plus editable description |
 | Brand details | No | Do you already have brand details? | Empty is valid and described as optional |
+| Design system | No | Should ZenUI propose the style, or do you have one? | `ZenUI` keeps automatic presets; `Custom` requires accessible primary/background/text colors, allowlisted fonts, and bounded type/spacing/radius scales. Local preview does not mutate the website. |
 | Must-have sections | Yes | What must the website include? | At least introduction and one primary-action surface |
 
 A natural-language description may prefill fields, but never locks them. The user reviews the structured summary before directions are prepared.
@@ -193,7 +194,7 @@ A natural-language description may prefill fields, but never locks them. The use
 
 ## 4. Design Direction Gallery
 
-The gallery compares three bounded materializations of the same accepted brief constraints. Differences must be visible in hierarchy, section layout and visual character, not only color.
+The gallery compares three bounded materializations of the same accepted brief constraints. Differences must be visible in hierarchy, section layout and visual character, not only color. When the user supplied a custom Design System, all three previews preserve its colors, fonts, typography scale, spacing and radius; only the bounded layout and narrative direction vary.
 
 ### 4.1. Desktop
 

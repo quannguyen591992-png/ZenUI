@@ -18,3 +18,4 @@
 | [0014](0014-versioned-assets-and-brand-kit.md) | Versioned owned assets and atomic Brand Kit application | accepted | 2026-07-29 |
 | [0015](0015-multi-page-document-and-static-site-boundary.md) | Multi-page Design Document and immutable static-site boundary | accepted | 2026-07-29 |
 | [0016](0016-bounded-ai-co-designer-v2.md) | Bounded AI Co-designer v2 planning and materialization | accepted | 2026-08-04 |
+| [0017](0017-guided-design-system-before-generation.md) | Guided Design System before direction generation | accepted | 2026-08-06 |

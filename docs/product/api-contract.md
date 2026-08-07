@@ -193,6 +193,14 @@ Prepare request:
     "cta": "visible next action",
     "tone": "desired character",
     "brandDetails": "optional notes",
+    "designSystem": {
+      "mode": "zenui | custom",
+      "colors": { "primary": "#2563eb", "background": "#ffffff", "text": "#0f172a" },
+      "fonts": { "heading": "Manrope", "body": "Arial" },
+      "typography": "compact | balanced | expressive",
+      "spacing": "compact | balanced | airy",
+      "radius": "sharp | balanced | soft"
+    },
     "mustHaveSections": ["introduction", "benefits", "contact"]
   }
 }
@@ -200,7 +208,9 @@ Prepare request:
 
 - Only onboarding projects and members with `mutateDocument` permission may save a brief, prepare directions, cancel or choose. Exact trusted Origin is required for every mutation; cross-tenant resources use not-found semantics.
 - One prepare/remix action reserves one bounded budget and queues local IDs only. Queue attempts are one; this lane has zero automatic semantic repair and zero transient provider retry, so one action cannot silently become multiple paid model calls.
-- Provider output is a strict content blueprint only. It cannot choose node IDs, raw style/theme/layout IDs, HTML/CSS/JavaScript or arbitrary URLs. The server owns versioned direction contracts and materializes exactly three validated documents all-or-nothing.
+- A Guided Brief may leave `designSystem` absent or use `{ mode: "zenui" }`, preserving ZenUI's existing visual presets. `{ mode: "custom" }` requires exactly three contrast-validated HEX colors, allowlisted heading/body fonts and bounded typography/spacing/radius presets. The browser preview and saving a brief never mutate a document, revision or autosave state.
+- Custom Design System tokens are persisted in the existing private brief/run JSONB snapshots, but queue payloads remain local IDs only. The provider receives a content-only brief without `designSystem`; it cannot choose user visual tokens.
+- Provider output is a strict content blueprint only. It cannot choose node IDs, raw style/theme/layout IDs, HTML/CSS/JavaScript or arbitrary URLs. The server owns versioned direction contracts and materializes exactly three validated documents all-or-nothing. In custom mode, every direction receives the same resolved colors/fonts/type scale/spacing/radius while retaining distinct bounded layout variants.
 - Public run DTOs contain lifecycle, safe error and exactly three `{ id, name, character, rationale, document }` directions after completion. Provider/model/prompt/usage/content-blueprint/storage details are redacted.
 - Preparing, viewing, replacing and cancelling directions do not mutate the current document, version or revisions. Choose accepts only a server-owned direction ID, revalidates current run/version/document, applies one `REPLACE_DOCUMENT` transaction and atomically creates one AI revision plus the onboarding-to-accepted transition.
 - Duplicate Choose for the same accepted direction is idempotent. Stale, failed, cancelled or superseded sets cannot be selected; browser-supplied documents and preset IDs are rejected.

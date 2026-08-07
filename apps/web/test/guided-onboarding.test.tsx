@@ -8,6 +8,7 @@ import {
   type GuidedOnboardingRun,
 } from '../app/projects/[projectId]/onboarding/guided-onboarding'
 
+import type { WebsiteBrief } from '@zenui/ai-core'
 import type { DesignDocument } from '@zenui/design-schema'
 
 const workspaceId = '22222222-2222-4222-8222-222222222222'
@@ -118,6 +119,40 @@ describe('production Guided Brief and Design Direction Gallery', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Hãy kiểm tra các chi tiết còn thiếu')
     expect(screen.getByLabelText('Bạn cung cấp sản phẩm hoặc dịch vụ gì?')).toHaveValue('NovaFlow')
     expect(screen.getByText('Hãy cho biết website này dành cho ai')).toBeVisible()
+  })
+
+  it('sends a validated custom Design System before generating directions', async () => {
+    const saveBrief = vi.fn((input: WebsiteBrief) => Promise.resolve(input))
+    const createRun = vi.fn(() => Promise.resolve({
+      id: runId, status: 'queued' as const, round: 0, errorCode: null, directions: null,
+    }))
+    render(<GuidedOnboarding projectId={projectId} workspaceId={workspaceId} expectedVersion={1} assetOrigin="http://127.0.0.1:3002" api={api({ saveBrief, createRun })} onAccepted={vi.fn()} />)
+    const user = userEvent.setup()
+    await screen.findByRole('heading', { name: 'Hãy cho chúng tôi biết website bạn muốn tạo' })
+
+    await user.click(screen.getByRole('radio', { name: 'Dùng thiết kế riêng' }))
+    expect(screen.getByLabelText('Mã màu chính')).toBeVisible()
+    expect(screen.getByLabelText('Xem trước hệ thống thiết kế')).toHaveStyle({ backgroundColor: '#ffffff' })
+    await user.selectOptions(screen.getByLabelText('Font tiêu đề'), 'Georgia')
+    await user.selectOptions(screen.getByLabelText('Cỡ chữ'), 'expressive')
+    await user.selectOptions(screen.getByLabelText('Mật độ bố cục'), 'airy')
+    await user.selectOptions(screen.getByLabelText('Bo góc thành phần'), 'soft')
+    await user.type(screen.getByLabelText('Bạn cung cấp sản phẩm hoặc dịch vụ gì?'), 'NovaFlow')
+    await user.type(screen.getByLabelText('Website này dành cho ai?'), 'Nhóm sản phẩm nhỏ')
+    await user.type(screen.getByLabelText('Website này cần đạt được điều gì?'), 'Nhận lịch tư vấn')
+    await user.type(screen.getByLabelText('Khách truy cập nên làm gì tiếp theo?'), 'Đặt lịch tư vấn')
+    await user.type(screen.getByLabelText('Website nên mang lại cảm giác như thế nào?'), 'Rõ ràng và hiện đại')
+    await user.click(screen.getByRole('button', { name: 'Tạo 3 hướng thiết kế' }))
+
+    await waitFor(() => expect(saveBrief).toHaveBeenCalledWith(expect.objectContaining({
+      designSystem: {
+        mode: 'custom',
+        colors: { primary: '#2563eb', background: '#ffffff', text: '#0f172a' },
+        fonts: { heading: 'Georgia', body: 'Arial' },
+        typography: 'expressive', spacing: 'airy', radius: 'soft',
+      },
+    })))
+    expect(createRun).toHaveBeenCalledOnce()
   })
 
   it('keeps preparation status and cancellation inside the gallery content width', async () => {

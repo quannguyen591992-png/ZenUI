@@ -7,7 +7,7 @@ import {
 import { z } from 'zod'
 
 import { materializeLandingPageBlueprintV2 } from './blueprint-v2'
-import { websiteBriefSchema, type WebsiteBrief } from './guided-brief'
+import { normalizeWebsiteBrief, websiteBriefSchema, type WebsiteBrief } from './guided-brief'
 import {
   PAGE_PRESET_IDS,
   type BlueprintV2Section,
@@ -328,12 +328,13 @@ export function materializeDesignDirections(input: {
   heroImage?: DesignDirectionOwnedImage
   ownedMedia?: OwnedMediaMap
 }): MaterializeDesignDirectionsResult {
-  const brief = websiteBriefSchema.safeParse(input.brief)
-  if (!brief.success) return { accepted: false, code: 'invalid_brief' }
+  const parsedBrief = websiteBriefSchema.safeParse(input.brief)
+  if (!parsedBrief.success) return { accepted: false, code: 'invalid_brief' }
+  const brief = normalizeWebsiteBrief(parsedBrief.data)
   const content = designDirectionContentBlueprintSchema.safeParse(input.blueprint)
   if (!content.success) return { accepted: false, code: 'invalid_blueprint' }
-  if (content.data.language !== briefLanguage(brief.data)) return { accepted: false, code: 'brief_mismatch' }
-  const required = requiredBlueprintSections(brief.data)
+  if (content.data.language !== briefLanguage(brief)) return { accepted: false, code: 'brief_mismatch' }
+  const required = requiredBlueprintSections(brief)
   if (required.some(type => !content.data.sectionOrder.includes(type as z.infer<typeof sectionTypeSchema>))) {
     return { accepted: false, code: 'brief_mismatch' }
   }
@@ -349,10 +350,11 @@ export function materializeDesignDirections(input: {
   const directions: MaterializedDesignDirection[] = []
   for (const preset of set) {
     const result = materializeLandingPageBlueprintV2({
-      blueprint: blueprintFor(brief.data, content.data, preset),
+      blueprint: blueprintFor(brief, content.data, preset),
       current: input.current,
       ...(input.imagePolicy ? { imagePolicy: input.imagePolicy } : {}),
       ...(Object.keys(ownedMedia).length > 0 ? { ownedMedia } : {}),
+      designSystem: brief.designSystem,
     })
     if (!result.accepted) return { accepted: false, code: 'invalid_direction' }
     directions.push({
@@ -378,8 +380,23 @@ export function materializeDesignDirections(input: {
   return { accepted: true, directions }
 }
 
+export type DesignDirectionContentBrief = Omit<WebsiteBrief, 'designSystem'>
+
+function contentBrief(brief: WebsiteBrief): DesignDirectionContentBrief {
+  return {
+    description: brief.description,
+    offer: brief.offer,
+    audience: brief.audience,
+    primaryGoal: brief.primaryGoal,
+    cta: brief.cta,
+    tone: brief.tone,
+    brandDetails: brief.brandDetails,
+    mustHaveSections: brief.mustHaveSections,
+  }
+}
+
 export interface DesignDirectionProviderRequest {
-  brief: WebsiteBrief
+  brief: DesignDirectionContentBrief
   promptVersion: 'directions-v1'
   signal: AbortSignal
 }
@@ -432,19 +449,20 @@ export async function runDesignDirectionGeneration(input: {
   timeoutMs?: number
 }): Promise<DesignDirectionGenerationResult> {
   const usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
-  const brief = websiteBriefSchema.safeParse(input.brief)
-  if (!brief.success) {
+  const parsedBrief = websiteBriefSchema.safeParse(input.brief)
+  if (!parsedBrief.success) {
     return {
       accepted: false, code: 'invalid_model_output', usage,
       provider: input.provider.name, model: input.provider.model, promptVersion: 'directions-v1',
     }
   }
+  const brief = normalizeWebsiteBrief(parsedBrief.data)
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), input.timeoutMs ?? 30_000)
   let response: DesignDirectionProviderResponse
   try {
     response = await input.provider.generateContentBlueprint({
-      brief: brief.data,
+      brief: contentBrief(brief),
       promptVersion: 'directions-v1',
       signal: controller.signal,
     })
@@ -495,7 +513,7 @@ export async function runDesignDirectionGeneration(input: {
     }
   }
   const materialized = materializeDesignDirections({
-    brief: brief.data,
+    brief,
     blueprint: blueprint.data,
     current: input.current,
     round: input.round,
