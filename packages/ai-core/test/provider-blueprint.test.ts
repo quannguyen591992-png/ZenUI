@@ -118,8 +118,8 @@ describe('Gemini-compatible Blueprint v2 provider DTO', () => {
     expect(result.document.nodes['pricing-name-1']?.props).toMatchObject({ text: 'Starter' })
     expect(result.document.nodes['pricing-name-2']?.props).toMatchObject({ text: 'Growth' })
     expect(result.document.nodes['pricing-name-3']?.props).toMatchObject({ text: 'Enterprise' })
-    expect(result.document.nodes['pricing-card-1']?.style.shadow).toBe('sm')
-    expect(result.document.nodes['pricing-card-2']?.style.shadow).toBe('lg')
+    expect(result.document.nodes['pricing-card-1']?.style.shadow).toBe('md')
+    expect(result.document.nodes['pricing-card-2']?.style.shadow).toBe('md')
     expect(Object.keys(result.document.nodes).length).toBeGreaterThan(90)
   })
 

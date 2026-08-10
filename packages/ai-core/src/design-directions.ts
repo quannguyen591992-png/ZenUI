@@ -144,11 +144,11 @@ export const designDirectionContractSchema = z.object({
   mood: z.enum(['confident', 'friendly', 'editorial', 'bold']),
   density: z.enum(['compact', 'balanced', 'airy']),
   navbarVariant: z.enum(['compact', 'centered', 'announcement']),
-  heroVariant: z.enum(['split', 'centered', 'product-shot', 'editorial']),
-  featuresVariant: z.enum(['grid', 'bento', 'alternating']),
-  testimonialsVariant: z.enum(['cards', 'spotlight']),
-  faqVariant: z.enum(['stacked', 'two-column']),
-  finalCtaVariant: z.enum(['panel', 'split']),
+  heroVariant: z.enum(['split', 'centered', 'product-shot', 'editorial', 'overlap']),
+  featuresVariant: z.enum(['grid', 'bento', 'alternating', 'icon-list']),
+  testimonialsVariant: z.enum(['cards', 'spotlight', 'quote-wall']),
+  faqVariant: z.enum(['stacked', 'two-column', 'accordion-cards']),
+  finalCtaVariant: z.enum(['panel', 'split', 'banner']),
   footerVariant: z.enum(['simple', 'columns']),
 }).strict()
 
@@ -163,21 +163,30 @@ export interface MaterializedDesignDirection {
   document: DesignDocument
 }
 
+type SectionRhythm = 'benefit-first' | 'proof-first' | 'offer-first'
+
 interface DirectionPreset extends DesignDirectionContract {
   id: string
   name: string
   character: string
   rationale: string
+  sectionRhythm: SectionRhythm
+}
+
+const sectionRhythms: readonly SectionRhythm[] = ['benefit-first', 'proof-first', 'offer-first']
+
+function directionSet(presets: readonly Omit<DirectionPreset, 'sectionRhythm'>[]): readonly DirectionPreset[] {
+  return presets.map((preset, index) => ({ ...preset, sectionRhythm: sectionRhythms[index]! }))
 }
 
 const directionPresetSets: readonly (readonly DirectionPreset[])[] = [
-  [
+  directionSet([
     {
       id: 'clear-momentum', name: 'Đà tiến rõ ràng', character: 'Trực tiếp và tập trung',
       rationale: 'Phân cấp trực tiếp làm nổi bật giá trị chính và hành động tiếp theo.',
       themePreset: 'indigo', mood: 'confident', density: 'balanced', navbarVariant: 'compact',
-      heroVariant: 'split', featuresVariant: 'grid', testimonialsVariant: 'cards', faqVariant: 'stacked',
-      finalCtaVariant: 'panel', footerVariant: 'simple',
+      heroVariant: 'overlap', featuresVariant: 'icon-list', testimonialsVariant: 'quote-wall', faqVariant: 'accordion-cards',
+      finalCtaVariant: 'banner', footerVariant: 'simple',
     },
     {
       id: 'trusted-advisor', name: 'Người bạn đáng tin', character: 'Ưu tiên bằng chứng',
@@ -193,8 +202,8 @@ const directionPresetSets: readonly (readonly DirectionPreset[])[] = [
       heroVariant: 'product-shot', featuresVariant: 'bento', testimonialsVariant: 'cards', faqVariant: 'two-column',
       finalCtaVariant: 'panel', footerVariant: 'columns',
     },
-  ],
-  [
+  ]),
+  directionSet([
     {
       id: 'calm-clarity', name: 'Rõ ràng và điềm tĩnh', character: 'Thoáng và an tâm',
       rationale: 'Nhịp nội dung thoáng giúp người xem hiểu đề nghị theo một trình tự bình tĩnh.',
@@ -216,7 +225,53 @@ const directionPresetSets: readonly (readonly DirectionPreset[])[] = [
       heroVariant: 'split', featuresVariant: 'bento', testimonialsVariant: 'spotlight', faqVariant: 'stacked',
       finalCtaVariant: 'split', footerVariant: 'columns',
     },
-  ],
+  ]),
+  directionSet([
+    {
+      id: 'precise-editorial', name: 'Biên tập chính xác', character: 'Sắc nét và có chiều sâu',
+      rationale: 'Ngôn ngữ biên tập cùng bố cục rõ ràng giúp thông điệp chuyên môn dễ được ghi nhớ.',
+      themePreset: 'violet', mood: 'editorial', density: 'balanced', navbarVariant: 'centered',
+      heroVariant: 'editorial', featuresVariant: 'grid', testimonialsVariant: 'spotlight', faqVariant: 'stacked',
+      finalCtaVariant: 'split', footerVariant: 'simple',
+    },
+    {
+      id: 'human-momentum', name: 'Động lực gần gũi', character: 'Cởi mở và giàu nhịp điệu',
+      rationale: 'Khối mở đầu trực diện kết hợp lợi ích xen kẽ tạo đà khám phá tự nhiên.',
+      themePreset: 'coral', mood: 'friendly', density: 'airy', navbarVariant: 'compact',
+      heroVariant: 'split', featuresVariant: 'alternating', testimonialsVariant: 'cards', faqVariant: 'two-column',
+      finalCtaVariant: 'panel', footerVariant: 'columns',
+    },
+    {
+      id: 'proof-command', name: 'Dẫn dắt bằng chứng', character: 'Quyết đoán và thực dụng',
+      rationale: 'Hình ảnh sản phẩm nổi bật và khối lợi ích cô đọng đưa bằng chứng vào trọng tâm.',
+      themePreset: 'graphite', mood: 'confident', density: 'compact', navbarVariant: 'announcement',
+      heroVariant: 'product-shot', featuresVariant: 'bento', testimonialsVariant: 'spotlight', faqVariant: 'two-column',
+      finalCtaVariant: 'split', footerVariant: 'columns',
+    },
+  ]),
+  directionSet([
+    {
+      id: 'focused-conversion', name: 'Chuyển đổi tập trung', character: 'Cô đọng và thuyết phục',
+      rationale: 'Thông điệp trung tâm và các điểm mạnh dạng khối giúp người xem quyết định nhanh hơn.',
+      themePreset: 'emerald', mood: 'confident', density: 'compact', navbarVariant: 'compact',
+      heroVariant: 'centered', featuresVariant: 'bento', testimonialsVariant: 'cards', faqVariant: 'stacked',
+      finalCtaVariant: 'panel', footerVariant: 'simple',
+    },
+    {
+      id: 'editorial-story', name: 'Câu chuyện biên tập', character: 'Điềm tĩnh và giàu ngữ cảnh',
+      rationale: 'Phần mở đầu như một trang biên tập dẫn vào chuỗi lợi ích theo nhịp kể chuyện mạch lạc.',
+      themePreset: 'graphite', mood: 'editorial', density: 'airy', navbarVariant: 'centered',
+      heroVariant: 'editorial', featuresVariant: 'alternating', testimonialsVariant: 'spotlight', faqVariant: 'two-column',
+      finalCtaVariant: 'split', footerVariant: 'columns',
+    },
+    {
+      id: 'vivid-product', name: 'Sản phẩm sống động', character: 'Nổi bật và giàu năng lượng',
+      rationale: 'Hình ảnh sản phẩm mạnh kết hợp lưới lợi ích rõ ràng tạo ấn tượng hiện đại.',
+      themePreset: 'indigo', mood: 'bold', density: 'balanced', navbarVariant: 'announcement',
+      heroVariant: 'product-shot', featuresVariant: 'grid', testimonialsVariant: 'cards', faqVariant: 'stacked',
+      finalCtaVariant: 'panel', footerVariant: 'columns',
+    },
+  ]),
 ]
 
 function briefLanguage(brief: WebsiteBrief): 'vi' | 'en' {
@@ -277,7 +332,17 @@ function sectionsFor(
   for (const type of required) {
     if (type !== 'footer' && !ordered.includes(type)) ordered.push(type)
   }
-  return [...ordered.map(type => sections[type]), sections.footer]
+  const priorities: Record<SectionRhythm, readonly NonFooterSectionType[]> = {
+    'benefit-first': ['features', 'stats', 'logo-cloud', 'testimonials', 'pricing', 'faq', 'final-cta'],
+    'proof-first': ['testimonials', 'logo-cloud', 'stats', 'features', 'pricing', 'faq', 'final-cta'],
+    'offer-first': ['pricing', 'features', 'stats', 'testimonials', 'logo-cloud', 'faq', 'final-cta'],
+  }
+  const rank = new Map(priorities[preset.sectionRhythm].map((type, index) => [type, index]))
+  const rhythmOrdered = ordered
+    .map((type, index) => ({ type, index }))
+    .sort((left, right) => (rank.get(left.type) ?? priorities[preset.sectionRhythm].length) - (rank.get(right.type) ?? priorities[preset.sectionRhythm].length) || left.index - right.index)
+    .map(({ type }) => type)
+  return [...rhythmOrdered.map(type => sections[type]), sections.footer]
 }
 
 function blueprintFor(
@@ -346,7 +411,8 @@ export function materializeDesignDirections(input: {
     if (!parsedImage.success) return { accepted: false, code: 'invalid_direction' }
     ownedMedia[slot as OwnedMediaSlot] = parsedImage.data
   }
-  const set = directionPresetSets[Math.abs(input.round) % directionPresetSets.length]!
+  const setIndex = ((input.round % directionPresetSets.length) + directionPresetSets.length) % directionPresetSets.length
+  const set = directionPresetSets[setIndex]!
   const directions: MaterializedDesignDirection[] = []
   for (const preset of set) {
     const result = materializeLandingPageBlueprintV2({

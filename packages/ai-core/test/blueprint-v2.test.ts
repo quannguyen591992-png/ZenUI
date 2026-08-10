@@ -1,4 +1,4 @@
-import { createRemoteImagePolicy, createValidDesignFixture, validateDesignDocument } from '@zenui/design-schema'
+import { DESIGN_LIMITS, createRemoteImagePolicy, createValidDesignFixture, validateDesignDocument } from '@zenui/design-schema'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -191,6 +191,113 @@ describe('Blueprint v2 and section presets', () => {
     expect(first.document.nodes['final-cta-section']).toBeDefined()
     expect(first.document.nodes['footer-section']).toBeDefined()
     expect(validateDesignDocument(first.document, { imagePolicy: policy }).success).toBe(true)
+  })
+
+  it('materializes every richer section variant into a valid bounded document', () => {
+    const richerBlueprint = {
+      ...blueprintV2,
+      hero: { ...blueprintV2.hero, variant: 'overlap' },
+      sections: blueprintV2.sections.map(section => {
+        if (section.type === 'features') return { ...section, variant: 'icon-list' }
+        if (section.type === 'testimonials') return { ...section, variant: 'quote-wall' }
+        if (section.type === 'faq') return { ...section, variant: 'accordion-cards' }
+        if (section.type === 'final-cta') return { ...section, variant: 'banner' }
+        return section
+      }),
+    }
+
+    expect(landingPageBlueprintV2Schema.safeParse(richerBlueprint).success).toBe(true)
+    const result = materializeLandingPageBlueprintV2({
+      blueprint: richerBlueprint,
+      current: createValidDesignFixture(),
+      imagePolicy: createRemoteImagePolicy('images.unsplash.com'),
+    })
+
+    expect(result).toMatchObject({ accepted: true })
+    if (!result.accepted) return
+    expect(result.document.nodes['hero-1']?.style.marginBottom).toBeLessThan(0)
+    expect(result.document.nodes['features-grid']?.style).toMatchObject({ display: 'flex', flexDirection: 'column' })
+    expect(result.document.nodes['feature-list-item-1']).toBeDefined()
+    expect(result.document.nodes['feature-card-1']).toBeUndefined()
+    expect(result.document.nodes['testimonials-grid']?.style.gridColumns).toBe(2)
+    expect(result.document.nodes['testimonial-card-1']?.style.minHeight).toBeLessThanOrEqual(200)
+    expect(result.document.nodes['faq-card-1']?.style).toMatchObject({ borderWidth: 1, shadow: 'md' })
+    expect(result.document.nodes['final-cta-section']?.style.backgroundColor).toBe(result.document.theme.colors.primary)
+    expect(validateDesignDocument(result.document).success).toBe(true)
+  })
+
+  it.each([
+    ['compact', 'sm'],
+    ['balanced', 'md'],
+    ['airy', 'lg'],
+  ] as const)('applies alternating section depth and %s card shadows without changing the schema', (density, shadow) => {
+    const themedBlueprint = {
+      ...blueprintV2,
+      theme: { ...blueprintV2.theme, density },
+    }
+    const result = materializeLandingPageBlueprintV2({
+      blueprint: themedBlueprint,
+      current: createValidDesignFixture(),
+      imagePolicy: createRemoteImagePolicy('images.unsplash.com'),
+    })
+
+    expect(result).toMatchObject({ accepted: true })
+    if (!result.accepted) return
+    const sectionIds = result.document.nodes['page-root']!.children
+      .filter(id => !['announcement-bar', 'navbar-1', 'hero-1', 'final-cta-section', 'footer-section'].includes(id))
+    expect(new Set(sectionIds.map(id => result.document.nodes[id]!.style.backgroundColor)).size).toBe(2)
+    for (const id of ['feature-card-1', 'testimonial-card-1', 'pricing-card-1', 'faq-card-1']) {
+      expect(result.document.nodes[id]?.style).toMatchObject({ borderWidth: 1, shadow })
+    }
+    expect(result.document.nodes['features-eyebrow']?.style).toMatchObject({
+      backgroundColor: expect.any(String), color: expect.any(String), borderRadius: result.document.theme.radius.sm,
+    })
+    expect(result.document.nodes['feature-icon-shell-1']?.style).toMatchObject({
+      backgroundColor: expect.any(String), borderRadius: result.document.theme.radius.sm,
+    })
+  })
+
+  it('adds one editorial divider after Hero and keeps the heaviest direction within document limits', () => {
+    const heavyBlueprint = {
+      ...blueprintV2,
+      theme: { ...blueprintV2.theme, mood: 'editorial' as const, density: 'airy' as const },
+      hero: { ...blueprintV2.hero, variant: 'editorial' as const },
+      sections: blueprintV2.sections.map(section => {
+        if (section.type === 'features') return {
+          ...section,
+          items: Array.from({ length: 6 }, (_, index) => ({
+            ...section.items[index % section.items.length]!,
+            heading: `Feature ${index + 1}`,
+          })),
+        }
+        if (section.type === 'pricing') return {
+          ...section,
+          plans: [...section.plans, { ...section.plans[0]!, name: 'Enterprise', highlighted: false }],
+        }
+        if (section.type === 'faq') return {
+          ...section,
+          items: Array.from({ length: 6 }, (_, index) => ({
+            ...section.items[index % section.items.length]!,
+            question: `Question ${index + 1}?`,
+          })),
+        }
+        return section
+      }),
+    }
+    const result = materializeLandingPageBlueprintV2({
+      blueprint: heavyBlueprint,
+      current: createValidDesignFixture(),
+      imagePolicy: createRemoteImagePolicy('images.unsplash.com'),
+    })
+
+    expect(result).toMatchObject({ accepted: true })
+    if (!result.accepted) return
+    const rootChildren = result.document.nodes['page-root']!.children
+    expect(rootChildren[rootChildren.indexOf('hero-1') + 1]).toBe('editorial-hero-divider-section')
+    expect(result.document.nodes['editorial-hero-divider']).toMatchObject({ type: 'divider' })
+    expect(Object.keys(result.document.nodes).length).toBeLessThanOrEqual(DESIGN_LIMITS.maxNodes)
+    expect(new TextEncoder().encode(JSON.stringify(result.document)).byteLength).toBeLessThanOrEqual(DESIGN_LIMITS.maxSerializedBytes)
+    expect(validateDesignDocument(result.document).success).toBe(true)
   })
 
   it('materializes bounded server-owned Hero and feature media independently of model URLs', () => {
