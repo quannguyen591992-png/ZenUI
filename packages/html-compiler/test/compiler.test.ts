@@ -127,7 +127,9 @@ describe('standalone HTML compiler', () => {
     if (!result.success) return
     expect(result.html).toContain('<a data-node-id="link-1" data-node-type="link" href="/docs">Read docs</a>')
     expect(result.html).toContain('aria-label="Featured"')
-    expect(result.html).toContain('★')
+    expect(result.html).toContain('<svg')
+    expect(result.html).toContain('<path d=')
+    expect(result.html).not.toContain('★')
     expect(result.html).toContain('height:24px')
     expect(result.html).toContain('@media(max-width:1024px)')
     expect(result.html).toContain('@media(max-width:640px)')

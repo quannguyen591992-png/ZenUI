@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   COMPONENT_TYPES,
   DESIGN_LIMITS,
+  ICON_ALLOWLIST,
+  ICON_PATHS,
   collectAssetReferences,
   collectBrokenPageReferences,
   collectLegacyRemoteImageReferences,
@@ -161,6 +163,22 @@ describe('Design Document v1', () => {
       id: 'icon-1', type: 'icon', parentId: 'container-1', children: [],
       props: { name: 'remote-svg', label: 'Unsafe' }, style: {}, responsive: {},
     }).success).toBe(false)
+  })
+
+  it('offers a richer server-owned icon set with a drawing path for every allowlisted name', () => {
+    expect(ICON_ALLOWLIST.length).toBeGreaterThanOrEqual(20)
+    for (const name of ['shield', 'sparkles', 'clock', 'chart', 'users', 'mail'] as const) {
+      expect(ICON_ALLOWLIST).toContain(name)
+      expect(designNodeSchema.safeParse({
+        id: 'icon-1', type: 'icon', parentId: 'container-1', children: [],
+        props: { name, label: 'Điểm nổi bật' }, style: {}, responsive: {},
+      }).success).toBe(true)
+    }
+    for (const name of ICON_ALLOWLIST) {
+      const paths = ICON_PATHS[name]
+      expect(paths.length).toBeGreaterThan(0)
+      for (const path of paths) expect(path).toMatch(/^[MmLlHhVvCcSsQqTtAaZz0-9 ,.-]+$/)
+    }
   })
 
   it('accepts the Phase 0 reference document', () => {

@@ -220,6 +220,66 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     expect(serialized).toContain(language === 'vi' ? 'Lập kế hoạch' : 'Build a course')
   })
 
+  it('rotates through four distinct preset sets and safely wraps every round', () => {
+    const directionsAt = (round: number) => {
+      const result = materializeDesignDirections({
+        brief: vietnameseBrief,
+        blueprint: content('vi'),
+        current: createValidDesignFixture(),
+        round,
+      })
+      expect(result.accepted).toBe(true)
+      if (!result.accepted) throw new Error(`Round ${round} was rejected`)
+      return result.directions
+    }
+    const ids = (round: number) => directionsAt(round).map(direction => direction.id)
+    const sets = [0, 1, 2, 3].map(directionsAt)
+
+    expect(new Set(sets.map(set => set.map(direction => direction.id).join('|'))).size).toBe(4)
+    expect(new Set(sets.flatMap(set => set.map(direction => direction.id))).size).toBe(12)
+    for (const set of sets) {
+      expect(set).toHaveLength(3)
+      expect(new Set(set.map(direction => direction.contract.heroVariant)).size).toBe(3)
+      expect(new Set(set.map(direction => direction.contract.featuresVariant)).size).toBe(3)
+      expect(new Set(set.map(direction => direction.contract.themePreset)).size).toBe(3)
+    }
+
+    expect(ids(-1)).toEqual(ids(3))
+    expect(ids(4)).toEqual(ids(0))
+    expect(ids(Number.MAX_SAFE_INTEGER)).toEqual(ids(3))
+  })
+
+  it('gives each direction a distinct story rhythm without changing provider content coverage', () => {
+    const result = materializeDesignDirections({
+      brief: vietnameseBrief,
+      blueprint: content('vi'),
+      current: createValidDesignFixture(),
+      round: 0,
+    })
+
+    expect(result.accepted).toBe(true)
+    if (!result.accepted) return
+    const sectionOrder = result.directions.map(direction => direction.document.nodes['page-root']!.children
+      .filter(nodeId => nodeId !== 'navbar-1' && nodeId !== 'hero-1'))
+    expect(new Set(sectionOrder.map(order => order.join('|'))).size).toBe(3)
+    expect(result.directions.map(direction => direction.contract)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        heroVariant: 'overlap', featuresVariant: 'icon-list', testimonialsVariant: 'quote-wall',
+        faqVariant: 'accordion-cards', finalCtaVariant: 'banner',
+      }),
+    ]))
+    for (const order of sectionOrder) {
+      expect(order.at(-1)).toBe('footer-section')
+      expect(order).toEqual(expect.arrayContaining([
+        'features-section', 'testimonials-section', 'faq-section', 'final-cta-section', 'footer-section',
+      ]))
+    }
+
+    const providerSchema = JSON.stringify(designDirectionContentBlueprintJsonSchema)
+    expect(providerSchema).not.toContain('sectionRhythm')
+    expect(JSON.stringify(result.directions.map(direction => direction.contract))).not.toContain('sectionRhythm')
+  })
+
   it('materializes one shared server-resolved media set into every direction without provider data', () => {
     const assetId = '55555555-5555-4555-8555-555555555555'
     const result = materializeDesignDirections({
@@ -276,7 +336,7 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     expect(result).toEqual({ accepted: false, code: 'brief_mismatch' })
   })
 
-  it('materializes one custom Design System into all directions while preserving distinct layouts', () => {
+  it('preserves one custom Design System across all four preset sets while layouts stay distinct', () => {
     const briefWithCustomSystem = {
       ...vietnameseBrief,
       designSystem: {
@@ -288,6 +348,21 @@ describe('Stage 5 guided brief and design direction contracts', () => {
         radius: 'soft',
       },
     } as WebsiteBrief
+    const expectedTheme = {
+      colors: { primary: '#2563eb', background: '#ffffff', text: '#0f172a' },
+      fonts: { heading: 'Georgia', body: 'Arial' },
+      radius: { sm: 12, md: 20, lg: 28 },
+    }
+    const sectionIds = new Set([
+      'logo-cloud-section',
+      'stats-section',
+      'features-section',
+      'testimonials-section',
+      'pricing-section',
+      'faq-section',
+      'final-cta-section',
+      'footer-section',
+    ])
 
     expect(websiteBriefSchema.safeParse(briefWithCustomSystem).success).toBe(true)
     expect(websiteBriefSchema.safeParse({
@@ -302,32 +377,51 @@ describe('Stage 5 guided brief and design direction contracts', () => {
       designSystem: { ...briefWithCustomSystem.designSystem, rawCss: 'body{display:none}' },
     }).success).toBe(false)
 
-    const result = materializeDesignDirections({
-      brief: briefWithCustomSystem,
-      blueprint: content('vi'),
-      current: createValidDesignFixture(),
-      round: 0,
+    const sets = [0, 1, 2, 3].map((round) => {
+      const result = materializeDesignDirections({
+        brief: briefWithCustomSystem,
+        blueprint: content('vi'),
+        current: createValidDesignFixture(),
+        round,
+      })
+
+      expect(result.accepted).toBe(true)
+      if (!result.accepted) throw new Error(`Custom Design System round ${round} was rejected`)
+      return result.directions
     })
 
-    expect(result.accepted).toBe(true)
-    if (!result.accepted) return
-    expect(result.directions).toHaveLength(3)
-    expect(new Set(result.directions.map(direction => direction.contract.heroVariant)).size).toBe(3)
-    expect(new Set(result.directions.map(direction => JSON.stringify(direction.document.theme))).size).toBe(1)
-    for (const direction of result.directions) {
-      expect(direction.document.theme).toEqual({
-        colors: { primary: '#2563eb', background: '#ffffff', text: '#0f172a' },
-        fonts: { heading: 'Georgia', body: 'Arial' },
-        radius: { sm: 12, md: 20, lg: 28 },
-      })
-      expect(direction.document.nodes['hero-heading']?.style).toMatchObject({
-        fontFamily: 'Georgia',
-        fontSize: 72,
-      })
-      expect(direction.document.nodes['features-section']?.style).toMatchObject({
-        paddingTop: 96,
-        paddingBottom: 96,
-      })
+    expect(new Set(sets.flatMap(set => set.map(direction => direction.id))).size).toBe(12)
+    expect(new Set(sets.flatMap(set => set.map(direction => JSON.stringify(direction.document.theme)))).size).toBe(1)
+    for (const directions of sets) {
+      expect(directions).toHaveLength(3)
+      expect(new Set(directions.map(direction => direction.contract.heroVariant)).size).toBe(3)
+      expect(new Set(directions.map(direction => direction.contract.featuresVariant)).size).toBe(3)
+      expect(new Set(directions.map(direction => [
+        direction.contract.heroVariant,
+        direction.contract.featuresVariant,
+        direction.contract.testimonialsVariant,
+        direction.contract.faqVariant,
+        direction.contract.finalCtaVariant,
+      ].join('|'))).size).toBe(3)
+      expect(new Set(directions.map(direction => direction.document.nodes['page-root']!.children
+        .filter(nodeId => sectionIds.has(nodeId))
+        .join('|'))).size).toBe(3)
+
+      for (const direction of directions) {
+        expect(direction.document.theme).toEqual(expectedTheme)
+        expect(direction.document.nodes['hero-heading']?.style).toMatchObject({
+          color: '#0f172a',
+          fontFamily: 'Georgia',
+          fontSize: 72,
+        })
+        expect(direction.document.nodes['features-section']?.style).toMatchObject({
+          paddingTop: 96,
+          paddingBottom: 96,
+        })
+        expect(direction.document.nodes['feature-icon-shell-1']?.style).toMatchObject({
+          borderRadius: 12,
+        })
+      }
     }
   })
 

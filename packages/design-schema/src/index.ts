@@ -82,7 +82,43 @@ export const COMPONENT_TYPES = [
 ] as const
 
 export const FONT_ALLOWLIST = ['Arial', 'Georgia', 'Manrope', 'system-ui'] as const
-export const ICON_ALLOWLIST = ['arrow-right', 'check', 'menu', 'star'] as const
+export const ICON_ALLOWLIST = [
+  'arrow-right', 'check', 'menu', 'star',
+  'shield', 'sparkles', 'clock', 'chart', 'users', 'mail', 'phone', 'play',
+  'zap', 'heart', 'globe', 'lock', 'search', 'settings', 'calendar', 'download',
+  'layers', 'target',
+] as const
+
+export type IconName = (typeof ICON_ALLOWLIST)[number]
+
+/**
+ * Server-owned outline paths on a 24x24 grid. These are compile-time constants:
+ * neither the AI provider nor the browser can contribute or override path data.
+ */
+export const ICON_PATHS: Record<IconName, readonly string[]> = {
+  'arrow-right': ['M5 12 h14', 'M13 5 l7 7 l-7 7'],
+  check: ['M20 6 L9 17 L4 12'],
+  menu: ['M4 6 h16', 'M4 12 h16', 'M4 18 h16'],
+  star: ['M12 3 l2.8 5.7 l6.2 0.9 l-4.5 4.4 l1.1 6.2 l-5.6 -2.9 l-5.6 2.9 l1.1 -6.2 l-4.5 -4.4 l6.2 -0.9 Z'],
+  shield: ['M12 3 l7.5 3 v5.5 c0 4.6 -3.1 8.2 -7.5 9.5 c-4.4 -1.3 -7.5 -4.9 -7.5 -9.5 V6 Z', 'M9 12 l2.2 2.2 l4 -4.4'],
+  sparkles: ['M12 3 l1.9 4.6 l4.6 1.9 l-4.6 1.9 l-1.9 4.6 l-1.9 -4.6 l-4.6 -1.9 l4.6 -1.9 Z', 'M18.5 16 l0.9 2.1 l2.1 0.9 l-2.1 0.9 l-0.9 2.1 l-0.9 -2.1 l-2.1 -0.9 l2.1 -0.9 Z'],
+  clock: ['M12 3 a9 9 0 1 0 0.1 0 Z', 'M12 7 v5.4 l3.6 2.1'],
+  chart: ['M4 20 h16', 'M7 20 v-6', 'M12 20 v-11', 'M17 20 v-8'],
+  users: ['M9 11 a3.6 3.6 0 1 0 0.1 0 Z', 'M3 20 c0 -3.4 2.7 -5.6 6 -5.6 c3.3 0 6 2.2 6 5.6', 'M16.5 5.4 a3.2 3.2 0 0 1 0 6.2', 'M17.5 14.8 c2.1 0.7 3.5 2.6 3.5 5.2'],
+  mail: ['M3 6 h18 v12 h-18 Z', 'M3 7 l9 6.4 l9 -6.4'],
+  phone: ['M6.5 3 h3.4 l1.7 4.2 l-2.3 1.6 c1 2.2 2.7 3.9 4.9 4.9 l1.6 -2.3 l4.2 1.7 v3.4 c0 1.1 -0.9 2 -2 2 C11.4 18.5 5.5 12.6 4.5 5 c0 -1.1 0.9 -2 2 -2 Z'],
+  play: ['M9 6 l9 6 l-9 6 Z'],
+  zap: ['M13.5 2 L5 13.5 h5.5 L9.5 22 L19 10.5 h-5.5 Z'],
+  heart: ['M12 20.5 C6 16.6 3 13.4 3 9.8 C3 7 5.1 5 7.7 5 c1.7 0 3.3 0.9 4.3 2.4 C13 5.9 14.6 5 16.3 5 C18.9 5 21 7 21 9.8 c0 3.6 -3 6.8 -9 10.7 Z'],
+  globe: ['M12 3 a9 9 0 1 0 0.1 0 Z', 'M3 12 h18', 'M12 3 c2.6 2.6 3.9 5.6 3.9 9 c0 3.4 -1.3 6.4 -3.9 9 c-2.6 -2.6 -3.9 -5.6 -3.9 -9 c0 -3.4 1.3 -6.4 3.9 -9 Z'],
+  lock: ['M5 11 h14 v10 h-14 Z', 'M8.2 11 V7.6 a3.8 3.8 0 0 1 7.6 0 V11'],
+  search: ['M11 4 a7 7 0 1 0 0.1 0 Z', 'M16.2 16.2 L21 21'],
+  settings: ['M12 8.4 a3.6 3.6 0 1 0 0.1 0 Z', 'M12 2.5 l1.6 2.3 l2.8 -0.5 l0.7 2.7 l2.6 1.1 l-0.9 2.7 l1.8 2.2 l-1.8 2.2 l0.9 2.7 l-2.6 1.1 l-0.7 2.7 l-2.8 -0.5 L12 21.5 l-1.6 -2.3 l-2.8 0.5 l-0.7 -2.7 l-2.6 -1.1 l0.9 -2.7 L3.4 11 l1.8 -2.2 l-0.9 -2.7 l2.6 -1.1 l0.7 -2.7 l2.8 0.5 Z'],
+  calendar: ['M4 6 h16 v15 h-16 Z', 'M4 11 h16', 'M8 3 v4', 'M16 3 v4'],
+  download: ['M12 4 v11', 'M7.5 10.5 L12 15 l4.5 -4.5', 'M4 20 h16'],
+  layers: ['M12 3 l9 4.6 l-9 4.6 l-9 -4.6 Z', 'M3 12.4 l9 4.6 l9 -4.6', 'M3 16.9 l9 4.6 l9 -4.6'],
+  target: ['M12 3 a9 9 0 1 0 0.1 0 Z', 'M12 7.5 a4.5 4.5 0 1 0 0.1 0 Z', 'M12 11 a1 1 0 1 0 0.1 0 Z'],
+}
 
 const nodeIdSchema = z.string().min(1).max(100).regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/)
 export const assetIdSchema = z.string().uuid()

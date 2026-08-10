@@ -1,6 +1,7 @@
 import {
   COMPONENT_TYPES,
   FONT_ALLOWLIST,
+  ICON_ALLOWLIST,
   buttonPropsSchema,
   createValidDesignFixture,
   imagePropsSchema,
@@ -193,9 +194,9 @@ const definitions: readonly ComponentDefinition[] = [
   {
     type: 'icon', displayName: 'Icon', category: 'content', isContainer: false,
     defaultProps: { name: 'star', label: 'Star' }, defaultStyle: {},
-    propSchema: z.object({ name: z.enum(['arrow-right', 'check', 'menu', 'star']), label: z.string().min(1).max(100) }).strict(), styleSchema,
+    propSchema: z.object({ name: z.enum(ICON_ALLOWLIST), label: z.string().min(1).max(100) }).strict(), styleSchema,
     allowedParents: [...contentParents, 'navbar'], allowedChildren: [], aiDescription: 'Accessible allowlisted icon.',
-    inspector: [{ key: 'name', label: 'Icon', control: 'select', options: ['arrow-right', 'check', 'menu', 'star'] }],
+    inspector: [{ key: 'name', label: 'Icon', control: 'select', options: [...ICON_ALLOWLIST] }],
     renderTag: 'span', template: undefined,
   },
   {

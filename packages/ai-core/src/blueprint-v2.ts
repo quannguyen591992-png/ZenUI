@@ -88,6 +88,7 @@ interface ResolvedTheme {
   cardPadding: number
   contentGap: number
   compactTypography: boolean
+  cardShadow: NonNullable<NodeStyle['shadow']>
 }
 
 const themePalettes = {
@@ -143,6 +144,7 @@ function resolveTheme(input: LandingPageBlueprintV2['theme'], pagePreset: Landin
       : { h1: 64, h2: 44, h3: 25, body: 18 },
     isCustom: false,
     compactTypography: pagePreset === 'saas',
+    cardShadow: { compact: 'sm', balanced: 'md', airy: 'lg' }[input.density] as NonNullable<NodeStyle['shadow']>,
     radius: input.mood === 'editorial'
       ? { sm: 4, md: 10, lg: 18 }
       : input.mood === 'friendly'
@@ -159,9 +161,9 @@ function resolveCustomDesignSystem(input: Extract<GuidedDesignSystem, { mode: 'c
     expressive: { compactTypography: false, contentGap: 24, typography: { h1: 72, h2: 52, h3: 30, body: 18 }, isCustom: true },
   }[input.typography]
   const spacing = {
-    compact: { sectionPadding: 48, cardPadding: 20 },
-    balanced: { sectionPadding: 64, cardPadding: 24 },
-    airy: { sectionPadding: 96, cardPadding: 32 },
+    compact: { sectionPadding: 48, cardPadding: 20, cardShadow: 'sm' as const },
+    balanced: { sectionPadding: 64, cardPadding: 24, cardShadow: 'md' as const },
+    airy: { sectionPadding: 96, cardPadding: 32, cardShadow: 'lg' as const },
   }[input.spacing]
   const radius = {
     sharp: { sm: 4, md: 8, lg: 12 },
@@ -237,7 +239,7 @@ function addSectionHeading(builder: DocumentBuilder, parentId: string, key: stri
     marginBottom: input.compact ? 36 : 44,
   }, { mobile: { alignItems: 'start', gap: 12, marginBottom: input.compact ? 26 : 30 } })
   if (input.eyebrow) builder.create('badge', `${key}-eyebrow`, stack.id, { text: input.eyebrow }, {
-    backgroundColor: theme.primarySoft, color: theme.primaryDark, borderRadius: 200,
+    backgroundColor: theme.primarySoft, color: theme.primaryDark, borderRadius: theme.radius.sm,
     paddingTop: 8, paddingRight: 14, paddingBottom: 8, paddingLeft: 14, fontSize: 13, fontWeight: '700', letterSpacing: 0.5,
   })
   builder.create('heading', `${key}-heading`, stack.id, { text: input.heading, level: 2 }, {
@@ -347,11 +349,16 @@ function renderHero(
 ): void {
   const centered = blueprint.hero.variant === 'centered'
   const editorial = blueprint.hero.variant === 'editorial'
+  const overlap = blueprint.hero.variant === 'overlap'
   const hero = builder.create('hero', 'hero-1', 'page-root', { label: 'Hero' }, {
     width: 'full', backgroundColor: editorial ? theme.background : theme.surface,
     paddingTop: theme.compactTypography ? 72 : editorial ? 104 : 84,
-    paddingBottom: theme.compactTypography ? 76 : editorial ? 108 : 88,
-  }, { tablet: { paddingTop: 60, paddingBottom: 64 }, mobile: { paddingTop: 44, paddingBottom: 50 } })
+    paddingBottom: theme.compactTypography ? 76 : editorial ? 108 : overlap ? 144 : 88,
+    marginBottom: overlap ? -64 : undefined,
+  }, {
+    tablet: { paddingTop: 60, paddingBottom: overlap ? 112 : 64, marginBottom: overlap ? -48 : 0 },
+    mobile: { paddingTop: 44, paddingBottom: overlap ? 82 : 50, marginBottom: overlap ? -32 : 0 },
+  })
   const container = addContainer(builder, hero.id, 'hero-container')
   const layout = builder.create('columns', 'hero-columns', container.id, {}, {
     display: centered ? 'flex' : 'grid', flexDirection: 'column', gridColumns: centered ? undefined : 2,
@@ -451,6 +458,7 @@ function renderStats(builder: DocumentBuilder, section: Extract<BlueprintV2Secti
       display: 'flex', flexDirection: 'column', gap: 8, backgroundColor: section.variant === 'cards' ? theme.background : theme.primarySoft,
       borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md,
       paddingTop: theme.cardPadding, paddingRight: theme.cardPadding, paddingBottom: theme.cardPadding, paddingLeft: theme.cardPadding,
+      shadow: theme.cardShadow,
     })
     builder.create('heading', `stat-value-${itemIndex + 1}`, card.id, { text: item.value, level: 3 }, {
       fontFamily: theme.headingFont, fontSize: 42, lineHeight: 1.05, fontWeight: '800', color: theme.primaryDark,
@@ -471,8 +479,9 @@ function renderFeatures(
   const container = addContainer(builder, shell.id, 'features-container')
   addSectionHeading(builder, container.id, 'features', theme, { ...(section.eyebrow ? { eyebrow: section.eyebrow } : {}), heading: section.heading, paragraph: section.paragraph, compact: theme.compactTypography })
   const alternating = section.variant === 'alternating'
+  const iconList = section.variant === 'icon-list'
   const grid = builder.create('stack', 'features-grid', container.id, {}, {
-    display: alternating ? 'flex' : 'grid', flexDirection: 'column', gridColumns: section.variant === 'bento' ? 2 : 3, gap: theme.contentGap,
+    display: alternating || iconList ? 'flex' : 'grid', flexDirection: 'column', gridColumns: section.variant === 'bento' ? 2 : 3, gap: iconList ? 18 : theme.contentGap,
   }, { tablet: { gridColumns: 2 }, mobile: { gridColumns: 1, gap: 18 } })
   section.items.forEach((item, itemIndex) => {
     const featureSlots: readonly OwnedMediaSlot[] = ['feature-1', 'feature-2', 'feature-3']
@@ -480,27 +489,36 @@ function renderFeatures(
     const image = (slot ? ownedMedia[slot] : undefined) ?? safeImage(item.image, imagePolicy)
     const bentoLead = section.variant === 'bento' && itemIndex === 0
     const bentoWide = section.variant === 'bento' && (bentoLead || itemIndex === section.items.length - 1 && section.items.length % 2 === 0)
-    const card = builder.create('feature-card', `feature-card-${itemIndex + 1}`, grid.id, { title: item.heading, description: item.paragraph }, {
-      minHeight: alternating ? 0 : bentoLead ? 340 : 250,
-      gridColumnSpan: bentoWide ? 2 : undefined,
-      gridRowSpan: bentoLead ? 2 : undefined,
-      display: alternating ? 'grid' : 'flex', gridColumns: alternating ? 2 : undefined, flexDirection: 'column', alignItems: 'start', gap: 18,
-      backgroundColor: itemIndex === 0 ? theme.primarySoft : theme.background, borderColor: theme.border, borderWidth: 1,
-      borderRadius: theme.radius.md, paddingTop: theme.cardPadding, paddingRight: theme.cardPadding,
-      paddingBottom: theme.cardPadding, paddingLeft: theme.cardPadding, shadow: 'sm',
-    }, {
-      ...(section.variant === 'bento' ? { tablet: { gridColumnSpan: bentoLead ? 2 : 1, gridRowSpan: 1 } } : {}),
-      mobile: {
-        display: 'flex', flexDirection: 'column', gridColumnSpan: 1, gridRowSpan: 1, minHeight: 0,
-        paddingTop: 24, paddingRight: 22, paddingBottom: 24, paddingLeft: 22,
-      },
-    })
-    const copy = alternating ? builder.create('stack', `feature-copy-${itemIndex + 1}`, card.id, {}, {
-      display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'start', gap: 16,
+    const card = iconList
+      ? builder.create('stack', `feature-list-item-${itemIndex + 1}`, grid.id, {}, {
+          display: 'flex', flexDirection: 'row', alignItems: 'start', gap: 18,
+          borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.sm,
+          paddingTop: 20, paddingRight: 22, paddingBottom: 20, paddingLeft: 22,
+        }, { mobile: { paddingTop: 18, paddingRight: 18, paddingBottom: 18, paddingLeft: 18 } })
+      : builder.create('feature-card', `feature-card-${itemIndex + 1}`, grid.id, { title: item.heading, description: item.paragraph }, {
+          minHeight: alternating ? 0 : bentoLead ? 340 : 250,
+          gridColumnSpan: bentoWide ? 2 : undefined,
+          gridRowSpan: bentoLead ? 2 : undefined,
+          display: alternating ? 'grid' : 'flex', gridColumns: alternating ? 2 : undefined, flexDirection: 'column', alignItems: 'start', gap: 18,
+          backgroundColor: itemIndex === 0 ? theme.primarySoft : theme.background, borderColor: theme.border, borderWidth: 1,
+          borderRadius: theme.radius.md, paddingTop: theme.cardPadding, paddingRight: theme.cardPadding,
+          paddingBottom: theme.cardPadding, paddingLeft: theme.cardPadding, shadow: theme.cardShadow,
+        }, {
+          ...(section.variant === 'bento' ? { tablet: { gridColumnSpan: bentoLead ? 2 : 1, gridRowSpan: 1 } } : {}),
+          mobile: {
+            display: 'flex', flexDirection: 'column', gridColumnSpan: 1, gridRowSpan: 1, minHeight: 0,
+            paddingTop: 24, paddingRight: 22, paddingBottom: 24, paddingLeft: 22,
+          },
+        })
+    const copy = alternating || iconList ? builder.create('stack', `feature-copy-${itemIndex + 1}`, card.id, {}, {
+      display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'start', gap: iconList ? 8 : 16,
     }) : card
-    builder.create('icon', `feature-icon-${itemIndex + 1}`, copy.id, { name: item.icon, label: item.heading }, {
-      backgroundColor: itemIndex === 0 ? theme.primary : theme.primarySoft, color: itemIndex === 0 ? theme.onPrimary : theme.primaryDark,
-      borderRadius: theme.radius.sm, paddingTop: 11, paddingRight: 13, paddingBottom: 11, paddingLeft: 13, fontSize: 22,
+    const iconShell = builder.create('stack', `feature-icon-shell-${itemIndex + 1}`, iconList ? card.id : copy.id, {}, {
+      display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: theme.primarySoft,
+      borderRadius: theme.radius.sm, paddingTop: 11, paddingRight: 13, paddingBottom: 11, paddingLeft: 13,
+    })
+    builder.create('icon', `feature-icon-${itemIndex + 1}`, iconShell.id, { name: item.icon, label: item.heading }, {
+      color: theme.primary, fontSize: 22,
     })
     builder.create('heading', `feature-heading-${itemIndex + 1}`, copy.id, { text: item.heading, level: 3 }, {
       fontFamily: theme.headingFont, fontSize: theme.isCustom ? theme.typography.h3 : 25, lineHeight: 1.25, fontWeight: '800', letterSpacing: -0.4, color: theme.text,
@@ -510,10 +528,10 @@ function renderFeatures(
     })
     if (image) {
       builder.create('image', `feature-image-${itemIndex + 1}`, card.id, image, {
-        width: 'full', aspectRatio: 'landscape', objectFit: 'cover', objectPosition: 'center',
-        borderRadius: theme.radius.sm, backgroundColor: theme.soft,
-      })
-    } else if (slot) {
+        width: 'full', maxWidth: iconList ? 180 : undefined, aspectRatio: iconList ? 'square' : 'landscape',
+        objectFit: 'cover', objectPosition: 'center', borderRadius: theme.radius.sm, backgroundColor: theme.soft,
+      }, { mobile: { maxWidth: iconList ? 120 : undefined } })
+    } else if (!iconList && slot) {
       builder.create('feature-card', `feature-media-slot-${itemIndex + 1}`, card.id, {
         title: item.heading,
         description: item.paragraph,
@@ -530,19 +548,20 @@ function renderTestimonials(builder: DocumentBuilder, section: Extract<Blueprint
   const shell = sectionShell(builder, 'testimonials-section', 'Testimonials', theme, index % 2 === 1)
   const container = addContainer(builder, shell.id, 'testimonials-container')
   addSectionHeading(builder, container.id, 'testimonials', theme, { ...(section.eyebrow ? { eyebrow: section.eyebrow } : {}), heading: section.heading, compact: theme.compactTypography })
+  const quoteWall = section.variant === 'quote-wall'
   const grid = builder.create('stack', 'testimonials-grid', container.id, {}, {
-    display: 'grid', gridColumns: section.variant === 'spotlight' ? 2 : Math.min(3, section.items.length), gap: 22,
-  }, { tablet: { gridColumns: section.variant === 'spotlight' ? 2 : Math.min(2, section.items.length) }, mobile: { gridColumns: 1, gap: 16 } })
+    display: 'grid', gridColumns: quoteWall ? 2 : section.variant === 'spotlight' ? 2 : Math.min(3, section.items.length), gap: quoteWall ? 16 : 22,
+  }, { tablet: { gridColumns: section.variant === 'spotlight' || quoteWall ? 2 : Math.min(2, section.items.length) }, mobile: { gridColumns: 1, gap: 16 } })
   section.items.forEach((item, itemIndex) => {
     const spotlightLead = section.variant === 'spotlight' && itemIndex === 0 && section.items.length === 3
     const card = builder.create('feature-card', `testimonial-card-${itemIndex + 1}`, grid.id, { title: item.name, description: item.quote }, {
-      minHeight: spotlightLead ? 320 : 250,
+      minHeight: quoteWall ? 180 : spotlightLead ? 320 : 250,
       gridColumnSpan: spotlightLead ? 1 : undefined,
       gridRowSpan: spotlightLead ? 2 : undefined,
       display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 26,
       backgroundColor: itemIndex === 0 ? theme.primaryDark : theme.background, borderColor: theme.border, borderWidth: 1,
       borderRadius: theme.radius.md, paddingTop: theme.cardPadding, paddingRight: theme.cardPadding,
-      paddingBottom: theme.cardPadding, paddingLeft: theme.cardPadding, shadow: itemIndex === 0 ? 'md' : 'sm',
+      paddingBottom: theme.cardPadding, paddingLeft: theme.cardPadding, shadow: theme.cardShadow,
     }, {
       tablet: { gridColumnSpan: 1, gridRowSpan: spotlightLead ? 2 : 1 },
       mobile: { gridColumnSpan: 1, gridRowSpan: 1, minHeight: 0 },
@@ -573,7 +592,7 @@ function renderPricing(builder: DocumentBuilder, section: Extract<BlueprintV2Sec
       display: 'flex', flexDirection: 'column', gap: 18, backgroundColor: plan.highlighted ? theme.primaryDark : theme.background,
       borderColor: plan.highlighted ? theme.primaryDark : theme.border, borderWidth: 1, borderRadius: theme.radius.md,
       paddingTop: theme.cardPadding, paddingRight: theme.cardPadding, paddingBottom: theme.cardPadding, paddingLeft: theme.cardPadding,
-      shadow: plan.highlighted ? 'lg' : 'sm',
+      shadow: theme.cardShadow,
     })
     if (plan.highlighted) builder.create('badge', `pricing-badge-${planIndex + 1}`, card.id, { text: 'Recommended' }, {
       backgroundColor: theme.primary, color: theme.onPrimary, borderRadius: 200,
@@ -618,6 +637,7 @@ function renderFaq(builder: DocumentBuilder, section: Extract<BlueprintV2Section
     const card = builder.create('feature-card', `faq-card-${itemIndex + 1}`, grid.id, { title: item.question, description: item.answer }, {
       display: 'flex', flexDirection: 'column', gap: 12, backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1,
       borderRadius: theme.radius.md, paddingTop: 24, paddingRight: 24, paddingBottom: 24, paddingLeft: 24,
+      shadow: theme.cardShadow,
     })
     builder.create('heading', `faq-question-${itemIndex + 1}`, card.id, { text: item.question, level: 3 }, {
       fontFamily: theme.headingFont, fontSize: 19, lineHeight: 1.35, fontWeight: '800', color: theme.text,
@@ -629,16 +649,19 @@ function renderFaq(builder: DocumentBuilder, section: Extract<BlueprintV2Section
 }
 
 function renderFinalCta(builder: DocumentBuilder, section: Extract<BlueprintV2Section, { type: 'final-cta' }>, theme: ResolvedTheme): void {
+  const banner = section.variant === 'banner'
   const shell = builder.create('section', 'final-cta-section', 'page-root', { label: 'Call to action' }, {
-    width: 'full', backgroundColor: theme.background, paddingTop: 32, paddingBottom: 96,
-  }, { mobile: { paddingTop: 20, paddingBottom: 64 } })
+    width: 'full', backgroundColor: banner ? theme.primary : theme.background,
+    paddingTop: banner ? 28 : 32, paddingBottom: banner ? 28 : 96,
+  }, { mobile: { paddingTop: banner ? 24 : 20, paddingBottom: banner ? 24 : 64 } })
   const container = addContainer(builder, shell.id, 'final-cta-container')
   const panel = builder.create('feature-card', 'final-cta-panel', container.id, { title: section.heading, description: section.paragraph }, {
-    display: section.variant === 'split' ? 'grid' : 'flex', gridColumns: section.variant === 'split' ? 2 : undefined,
-    flexDirection: 'column', alignItems: section.variant === 'split' ? 'start' : 'center', gap: 24,
-    backgroundColor: theme.primaryDark, borderRadius: theme.radius.lg, paddingTop: 68, paddingRight: 48,
-    paddingBottom: 68, paddingLeft: 48, shadow: 'lg',
-  }, { mobile: { display: 'flex', flexDirection: 'column', alignItems: 'start', paddingTop: 46, paddingRight: 24, paddingBottom: 46, paddingLeft: 24 } })
+    display: section.variant === 'split' || banner ? 'grid' : 'flex', gridColumns: section.variant === 'split' || banner ? 2 : undefined,
+    flexDirection: 'column', alignItems: section.variant === 'split' || banner ? 'start' : 'center', gap: 24,
+    backgroundColor: banner ? theme.primary : theme.primaryDark, borderRadius: banner ? theme.radius.sm : theme.radius.lg,
+    paddingTop: banner ? 32 : 68, paddingRight: banner ? 32 : 48,
+    paddingBottom: banner ? 32 : 68, paddingLeft: banner ? 32 : 48, shadow: banner ? undefined : 'lg',
+  }, { mobile: { display: 'flex', flexDirection: 'column', alignItems: 'start', paddingTop: banner ? 28 : 46, paddingRight: 24, paddingBottom: banner ? 28 : 46, paddingLeft: 24 } })
   const copy = builder.create('stack', 'final-cta-copy', panel.id, {}, {
     display: 'flex', flexDirection: 'column', alignItems: section.variant === 'split' ? 'start' : 'center', gap: 18,
   }, { mobile: { alignItems: 'start' } })
@@ -735,6 +758,15 @@ export function materializeLandingPageBlueprintV2(input: {
   builder.create('page', 'page-root', null, {}, { width: 'full', backgroundColor: theme.background })
   renderNavbar(builder, blueprint, theme)
   renderHero(builder, blueprint, theme, input.imagePolicy, ownedMedia.hero)
+  if (blueprint.theme.mood === 'editorial') {
+    const dividerSection = builder.create('section', 'editorial-hero-divider-section', 'page-root', { label: 'Editorial divider' }, {
+      width: 'full', backgroundColor: theme.background, paddingTop: 0, paddingBottom: 0,
+    })
+    const dividerContainer = addContainer(builder, dividerSection.id, 'editorial-hero-divider-container')
+    builder.create('divider', 'editorial-hero-divider', dividerContainer.id, {}, {
+      width: 'full', borderColor: theme.border, borderWidth: 1,
+    })
+  }
   blueprint.sections.forEach((section, index) => renderSection(
     builder, section, blueprint, theme, input.imagePolicy, index, ownedMedia,
   ))

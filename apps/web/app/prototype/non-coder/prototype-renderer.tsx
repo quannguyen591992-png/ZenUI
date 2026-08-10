@@ -1,9 +1,10 @@
 import { nodeToBrowserStyle, resolveNodeTag, type RenderViewport } from '@zenui/html-compiler/render'
 import { createElement, type ReactNode } from 'react'
 
+import { DesignIcon } from '../../components/design-icon'
+
 import type { DesignDocument, DesignNode } from '@zenui/design-schema'
 
-const iconGlyphs = { 'arrow-right': '→', check: '✓', menu: '☰', star: '★' } as const
 
 interface PrototypeRendererProps {
   document: DesignDocument
@@ -20,7 +21,7 @@ function visualContent(node: DesignNode, children: ReactNode): ReactNode {
   if (node.type === 'image') return null
   if (node.type === 'divider') return null
   if ('text' in node.props && typeof node.props.text === 'string') return node.props.text
-  if (node.type === 'icon' && 'name' in node.props) return iconGlyphs[node.props.name]
+  if (node.type === 'icon' && 'name' in node.props) return <DesignIcon name={node.props.name} />
   return children
 }
 
