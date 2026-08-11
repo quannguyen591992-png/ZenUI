@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite'
 import {
   materializeDesignDirections,
   type DesignDirectionContentBlueprint,
+  type DesignDirectionGenerationPlan,
   type WebsiteBrief,
 } from '@zenui/ai-core'
 import { createValidDesignFixture } from '@zenui/design-schema'
@@ -85,6 +86,16 @@ const blueprint: DesignDirectionContentBlueprint = {
   sectionOrder: ['logo-cloud', 'stats', 'features', 'testimonials', 'faq', 'final-cta', 'footer'],
 }
 
+const generationPlan: DesignDirectionGenerationPlan = {
+  version: 'design-directions-v2',
+  content: blueprint,
+  directions: [
+    { presetId: 'calm-clarity' },
+    { presetId: 'bold-launch' },
+    { presetId: 'proof-command' },
+  ],
+}
+
 describe('workspace-scoped Stage 5 design direction repository', () => {
   let client: PGlite
 
@@ -114,8 +125,15 @@ describe('workspace-scoped Stage 5 design direction repository', () => {
     return { db, project, projects: createProjectRepository(db), directions: createDesignDirectionRepository(db) }
   }
 
-  function directionDocuments() {
-    const result = materializeDesignDirections({ brief, blueprint, current: createValidDesignFixture(), round: 0 })
+  function directionDocuments(ownedMedia?: Parameters<typeof materializeDesignDirections>[0]['ownedMedia']) {
+    const result = materializeDesignDirections({
+      brief,
+      blueprint,
+      current: createValidDesignFixture(),
+      round: 0,
+      plannedPresetIds: generationPlan.directions.map(direction => direction.presetId),
+      ...(ownedMedia ? { ownedMedia } : {}),
+    })
     if (!result.accepted) throw new Error(result.code)
     return result.directions
   }
@@ -144,6 +162,30 @@ describe('workspace-scoped Stage 5 design direction repository', () => {
     expect(await directions.findById(outsider, first.id)).toBeNull()
     expect(await directions.getWorkerInput(outsider, first.id)).toBeNull()
     expect(await directions.loadBrief(owner, project.id)).toEqual(brief)
+    await expect(directions.getWorkerInput(owner, first.id)).resolves.toMatchObject({
+      previousDirectionIds: [],
+    })
+  })
+
+  it('loads only the latest completed run preset IDs for bounded remix exclusion', async () => {
+    const { project, directions } = await setup()
+    const first = await directions.create(owner, project.id, {
+      requestId: crypto.randomUUID(), expectedVersion: 1, brief, round: 0,
+    })
+    await directions.claim(owner, first.id, { provider: 'mock', model: 'mock-v2', promptVersion: 'directions-v2' })
+    await directions.complete(owner, first.id, {
+      blueprint: generationPlan,
+      directions: directionDocuments(),
+      usage,
+    })
+    const remix = await directions.create(owner, project.id, {
+      requestId: crypto.randomUUID(), expectedVersion: 1, brief, round: 1,
+    })
+
+    await expect(directions.getWorkerInput(owner, remix.id)).resolves.toMatchObject({
+      previousDirectionIds: generationPlan.directions.map(direction => direction.presetId),
+    })
+    await expect(directions.getWorkerInput(outsider, remix.id)).resolves.toBeNull()
   })
 
   it('completes transient directions without changing document version or project history', async () => {
@@ -154,7 +196,7 @@ describe('workspace-scoped Stage 5 design direction repository', () => {
     expect(await directions.claim(owner, run.id, { provider: 'mock', model: 'mock-v1', promptVersion: 'directions-v1' }))
       .toMatchObject({ status: 'running' })
     expect(await directions.complete(owner, run.id, {
-      blueprint,
+      blueprint: generationPlan,
       directions: directionDocuments(),
       usage,
     })).toMatchObject({ accepted: true, run: { status: 'completed' } })
@@ -174,7 +216,7 @@ describe('workspace-scoped Stage 5 design direction repository', () => {
     })
     await directions.claim(owner, run.id, { provider: 'mock', model: 'mock-v1', promptVersion: 'directions-v1' })
     const generated = directionDocuments()
-    const completed = await directions.complete(owner, run.id, { blueprint, directions: generated, usage })
+    const completed = await directions.complete(owner, run.id, { blueprint: generationPlan, directions: generated, usage })
     expect(completed.accepted).toBe(true)
 
     const chosen = await directions.accept(owner, project.id, run.id, generated[1]!.id)
@@ -190,6 +232,54 @@ describe('workspace-scoped Stage 5 design direction repository', () => {
       .toBe(generated[1]!.document.theme.colors.primary)
   })
 
+  it('chooses a direction with one Hero and three owned feature images atomically', async () => {
+    const { project, projects, directions } = await setup()
+    const run = await directions.create(owner, project.id, {
+      requestId: crypto.randomUUID(), expectedVersion: 1, brief, round: 0,
+    })
+    await directions.claim(owner, run.id, { provider: 'mock', model: 'mock-v2', promptVersion: 'directions-v2' })
+    const generated = directionDocuments({
+      hero: {
+        assetId: '55555555-5555-4555-8555-555555555555',
+        alt: 'Nhóm sản phẩm cùng lập kế hoạch ra mắt',
+        decorative: false,
+      },
+      'feature-1': {
+        assetId: '66666666-6666-4666-8666-666666666666',
+        alt: 'Bảng lộ trình ra mắt sản phẩm',
+        decorative: false,
+      },
+      'feature-2': {
+        assetId: '77777777-7777-4777-8777-777777777777',
+        alt: 'Nhóm xem lại các cột mốc',
+        decorative: false,
+      },
+      'feature-3': {
+        assetId: '88888888-8888-4888-8888-888888888888',
+        alt: 'Bàn giao kế hoạch ra mắt',
+        decorative: false,
+      },
+    })
+    await directions.complete(owner, run.id, { blueprint: generationPlan, directions: generated, usage })
+
+    const chosen = await directions.accept(owner, project.id, run.id, generated[0]!.id)
+    const duplicate = await directions.accept(owner, project.id, run.id, generated[0]!.id)
+
+    expect(chosen).toMatchObject({ accepted: true, version: 2, directionId: generated[0]!.id })
+    expect(duplicate).toEqual(chosen)
+    if (!chosen.accepted) throw new Error(chosen.code)
+    expect(['hero-image', 'feature-image-1', 'feature-image-2', 'feature-image-3'].map(nodeId => {
+      const node = chosen.document.nodes[nodeId]
+      return node?.type === 'image' && 'assetId' in node.props ? node.props.assetId : null
+    })).toEqual([
+      '55555555-5555-4555-8555-555555555555',
+      '66666666-6666-4666-8666-666666666666',
+      '77777777-7777-4777-8777-777777777777',
+      '88888888-8888-4888-8888-888888888888',
+    ])
+    expect(await projects.listRevisions(owner, project.id)).toHaveLength(1)
+  })
+
   it('cancels or supersedes safely and rejects stale/foreign direction acceptance', async () => {
     const { project, directions } = await setup()
     const cancelled = await directions.create(owner, project.id, {
@@ -203,7 +293,7 @@ describe('workspace-scoped Stage 5 design direction repository', () => {
     })
     await directions.claim(owner, stale.id, { provider: 'mock', model: 'mock-v1', promptVersion: 'directions-v1' })
     const generated = directionDocuments()
-    await directions.complete(owner, stale.id, { blueprint, directions: generated, usage })
+    await directions.complete(owner, stale.id, { blueprint: generationPlan, directions: generated, usage })
     expect(await directions.supersede(owner, stale.id)).toMatchObject({ status: 'superseded' })
     expect(await directions.accept(owner, project.id, stale.id, generated[0]!.id))
       .toEqual({ accepted: false, code: 'run_not_selectable' })
@@ -236,13 +326,13 @@ describe('workspace-scoped Stage 5 design direction repository', () => {
     expect(await directions.claim(owner, run.id, { provider: '', model: '', promptVersion: '' })).toBeNull()
     expect(await directions.getWorkerInput(owner, crypto.randomUUID())).toBeNull()
     expect(await directions.complete(owner, crypto.randomUUID(), {
-      blueprint, directions: directionDocuments(), usage,
+      blueprint: generationPlan, directions: directionDocuments(), usage,
     })).toEqual({ accepted: false, code: 'not_found' })
     expect(await directions.complete(owner, run.id, {
       blueprint: {}, directions: directionDocuments(), usage,
     })).toEqual({ accepted: false, code: 'invalid_output' })
     expect(await directions.complete(owner, run.id, {
-      blueprint, directions: [], usage,
+      blueprint: generationPlan, directions: [], usage,
     })).toEqual({ accepted: false, code: 'invalid_output' })
     expect(await directions.fail(owner, run.id, { errorCode: 'unknown', usage })).toBeNull()
     expect(await directions.fail(owner, run.id, {
@@ -260,7 +350,7 @@ describe('workspace-scoped Stage 5 design direction repository', () => {
     })
     await directions.claim(owner, run.id, { provider: 'mock', model: 'mock-v1', promptVersion: 'directions-v1' })
     const generated = directionDocuments()
-    await directions.complete(owner, run.id, { blueprint, directions: generated, usage })
+    await directions.complete(owner, run.id, { blueprint: generationPlan, directions: generated, usage })
 
     expect(await directions.accept(owner, project.id, run.id, 'missing-direction'))
       .toEqual({ accepted: false, code: 'direction_not_found' })

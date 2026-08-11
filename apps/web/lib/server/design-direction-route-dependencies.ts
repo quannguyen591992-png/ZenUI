@@ -1,7 +1,9 @@
 import {
   designDirectionContentBlueprintSchema,
+  designDirectionGenerationPlanSchema,
   runDesignDirectionGeneration,
   type DesignDirectionContentBlueprint,
+  type DesignDirectionPresetId,
   type WebsiteBrief,
 } from '@zenui/ai-core'
 import {
@@ -55,6 +57,17 @@ function deterministicContentBlueprint(brief: WebsiteBrief): DesignDirectionCont
       query: isVietnamese ? 'team collaborating artificial intelligence course' : 'professional team collaborating workspace',
       alt: isVietnamese ? 'Nhóm học viên cùng thực hành trong khóa học' : 'Professional team collaborating in a shared workspace',
     },
+    contentImages: isVietnamese
+      ? [
+          { slot: 'feature-1', query: 'team clarifying audience value', alt: 'Nhóm làm rõ giá trị dành cho người xem' },
+          { slot: 'feature-2', query: 'customers reviewing trusted results', alt: 'Khách hàng xem lại những kết quả đáng tin cậy' },
+          { slot: 'feature-3', query: 'customer taking a clear next step', alt: 'Khách hàng thực hiện bước tiếp theo rõ ràng' },
+        ]
+      : [
+          { slot: 'feature-1', query: 'team clarifying audience value', alt: 'Team clarifying value for its audience' },
+          { slot: 'feature-2', query: 'customers reviewing trusted results', alt: 'Customers reviewing trusted results' },
+          { slot: 'feature-3', query: 'customer taking a clear next step', alt: 'Customer taking a clear next step' },
+        ],
     logos: ['Acme', 'Orbit', 'Luma'],
     statsHeading: isVietnamese ? 'Giá trị có thể nhìn thấy' : 'Value your audience can see',
     stats: isVietnamese
@@ -94,6 +107,31 @@ function deterministicContentBlueprint(brief: WebsiteBrief): DesignDirectionCont
   })
 }
 
+const deterministicPresetSets = [
+  ['calm-clarity', 'bold-launch', 'proof-command'],
+  ['precise-editorial', 'friendly-guide', 'vivid-product'],
+  ['focused-conversion', 'human-momentum', 'decisive-proof'],
+  ['editorial-story', 'clear-momentum', 'trusted-advisor'],
+] as const satisfies readonly (readonly DesignDirectionPresetId[])[]
+
+function deterministicGenerationPlan(
+  brief: WebsiteBrief,
+  round: number,
+  excludedPresetIds: readonly DesignDirectionPresetId[],
+) {
+  const content = deterministicContentBlueprint(brief)
+  const excluded = new Set(excludedPresetIds)
+  const preferredSet = deterministicPresetSets[((round % deterministicPresetSets.length) + deterministicPresetSets.length) % deterministicPresetSets.length]!
+  const presetIds = [...preferredSet, ...deterministicPresetSets.flat()]
+    .filter((id, index, values) => !excluded.has(id) && values.indexOf(id) === index)
+    .slice(0, 3)
+  return designDirectionGenerationPlanSchema.parse({
+    version: 'design-directions-v2',
+    content,
+    directions: presetIds.map(presetId => ({ presetId })),
+  })
+}
+
 export function createDesignDirectionRouteDependencies(): DesignDirectionApiDependencies {
   const database = getDatabase()
   const projects = createProjectRepository(database)
@@ -129,16 +167,20 @@ export function createDesignDirectionRouteDependencies(): DesignDirectionApiDepe
               const input = await directions.getWorkerInput(context, job.designDirectionRunId)
               if (!input) return
               const claimed = await directions.claim(context, input.id, {
-                provider: 'mock', model: 'mock-directions-v1', promptVersion: 'directions-v1',
+                provider: 'mock', model: 'mock-directions-v2', promptVersion: 'directions-v2',
               })
               if (!claimed) return
               const provider = {
                 name: 'mock',
-                model: 'mock-directions-v1',
+                model: 'mock-directions-v2',
                 generateContentBlueprint: () => {
                   recordE2eDirectionProviderCall()
                   return Promise.resolve({
-                    output: deterministicContentBlueprint(input.brief),
+                    output: deterministicGenerationPlan(
+                      input.brief,
+                      input.round,
+                      input.previousDirectionIds,
+                    ),
                     usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
                   })
                 },
@@ -148,6 +190,7 @@ export function createDesignDirectionRouteDependencies(): DesignDirectionApiDepe
                 brief: input.brief,
                 current: input.document,
                 round: input.round,
+                excludedPresetIds: input.previousDirectionIds,
               })
               if (!result.accepted) {
                 await directions.fail(context, input.id, { errorCode: result.code, usage: result.usage })

@@ -143,7 +143,7 @@ A user describes their business in ordinary language, reviews a structured brief
 
 - Brief fields: business/offer, audience, primary goal, CTA, tone/style, supplied brand details and must-have sections.
 - Natural-language input can populate the brief, but every field remains directly editable.
-- Generate one bounded content blueprint and materialize three server-owned combinations of theme/layout/preset; do not make three paid model calls.
+- Make one bounded structured planner call for a shared content blueprint with one Hero plus exactly three feature-image intents and three allowlisted preset-ID proposals; ZenUI deterministically repairs duplicates/recent/similar choices, resolves one shared four-asset media map and materializes three structurally distinct server-owned documents without a second model call.
 - Show concise rationale plus desktop/mobile previews; support choose, regenerate directions and remix constraints.
 
 **Non-goals**

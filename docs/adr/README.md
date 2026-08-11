@@ -20,3 +20,4 @@
 | [0016](0016-bounded-ai-co-designer-v2.md) | Bounded AI Co-designer v2 planning and materialization | accepted | 2026-08-04 |
 | [0017](0017-guided-design-system-before-generation.md) | Guided Design System before direction generation | accepted | 2026-08-06 |
 | [0018](0018-server-owned-richer-design-directions.md) | Server-owned richer Design Directions | accepted | 2026-08-10 |
+| [0019](0019-bounded-gemini-design-direction-planner.md) | Bounded Gemini Design Direction planning | accepted | 2026-08-10 |

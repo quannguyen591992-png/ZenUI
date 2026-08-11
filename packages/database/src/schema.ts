@@ -13,7 +13,7 @@ import {
 } from 'drizzle-orm/pg-core'
 
 import type {
-  DesignDirectionContentBlueprint,
+  DesignDirectionGenerationPlan,
   DesignDirectionRunErrorCode,
   DesignDirectionRunStatus,
   GenerationErrorCode,
@@ -314,7 +314,7 @@ export const designDirectionRuns = pgTable('design_direction_runs', {
   model: text('model'),
   promptVersion: text('prompt_version'),
   errorCode: text('error_code').$type<DesignDirectionRunErrorCode>(),
-  contentBlueprint: jsonb('content_blueprint').$type<DesignDirectionContentBlueprint>(),
+  contentBlueprint: jsonb('content_blueprint').$type<DesignDirectionGenerationPlan>(),
   directionSnapshots: jsonb('direction_snapshots').$type<MaterializedDesignDirection[]>(),
   selectedDirectionId: text('selected_direction_id'),
   inputTokens: integer('input_tokens').notNull().default(0),

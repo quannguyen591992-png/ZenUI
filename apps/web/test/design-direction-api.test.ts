@@ -241,6 +241,8 @@ describe('Stage 5 design direction API', () => {
       ['not_found', 404],
       ['stale_document_version', 409],
       ['direction_not_found', 422],
+      ['run_not_selectable', 422],
+      ['invalid_design_document', 422],
     ] as const) {
       const choose = createDirectionChooseHandler(dependencies({
         directions: {
@@ -248,8 +250,25 @@ describe('Stage 5 design direction API', () => {
           accept: () => Promise.resolve({ accepted: false, code }),
         },
       }))
-      expect((await choose(request('/x', 'POST', { workspaceId, directionId: 'direction-0' }), context)).status).toBe(status)
+      const response = await choose(request('/x', 'POST', { workspaceId, directionId: 'direction-0' }), context)
+      expect(response.status).toBe(status)
+      await expect(response.json()).resolves.toMatchObject({ error: { code } })
     }
+
+    const unexpected = createDirectionChooseHandler(dependencies({
+      directions: {
+        ...dependencies().directions,
+        accept: () => Promise.reject(new Error('database internal')),
+      },
+    }))
+    const unexpectedResponse = await unexpected(
+      request('/x', 'POST', { workspaceId, directionId: 'direction-0' }),
+      context,
+    )
+    expect(unexpectedResponse.status).toBe(500)
+    await expect(unexpectedResponse.json()).resolves.toEqual({
+      error: { code: 'internal_error', message: 'An unexpected error occurred' },
+    })
   })
 
   it('polls non-terminal SSE runs, emits changes and heartbeats, then closes', async () => {

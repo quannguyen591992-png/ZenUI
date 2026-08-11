@@ -14,7 +14,7 @@ The product needs more visible variety without allowing the AI provider to autho
 
 ZenUI owns Design Direction variety on the server. Four fixed preset sets provide twelve unique directions; each set contains three distinct bounded layouts, section variants and narrative rhythms. Richer variants, alternating surfaces, token-based borders and shadows, eyebrow and icon treatments, and editorial dividers are materialized only through the existing Design Document schema.
 
-Icons use an allowlisted set of server-owned inline SVG paths. Neither the provider nor user input can supply SVG paths. The provider continues to supply bounded content and media intent only; it does not choose visual tokens, layout variants or section rhythm.
+Icons use an allowlisted set of server-owned inline SVG paths. Neither the provider nor user input can supply SVG paths. The provider supplies bounded content and media intent only and cannot choose visual tokens or section rhythm. ADR-0019 supersedes only the original visual-selection restriction: the provider may propose allowlisted server-owned preset IDs, while ZenUI validates, repairs and materializes the final trio.
 
 A custom Guided Design System remains authoritative across all preset sets: all twelve documents preserve the same validated colors, fonts, typography, spacing and radius while server-owned layout, variant and story rhythm remain diverse. No gradient capability or arbitrary styling field is added to the Design Document contract.
 

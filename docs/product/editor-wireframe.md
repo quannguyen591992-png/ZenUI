@@ -174,7 +174,7 @@ Selecting a row opens one full-width field sheet. The sheet title repeats the qu
 | CTA | Yes | What should visitors do next? | Require visible action wording |
 | Tone/style | Yes | How should it feel? | Bounded choices plus editable description |
 | Brand details | No | Do you already have brand details? | Empty is valid and described as optional |
-| Design system | No | Should ZenUI propose the style, or do you have one? | `ZenUI` keeps automatic presets; `Custom` requires accessible primary/background/text colors, allowlisted fonts, and bounded type/spacing/radius scales. Local preview does not mutate the website. |
+| Design system | No | Should ZenUI propose the style, or do you have one? | `ZenUI` keeps automatic presets; `Custom` requires structurally valid primary/background/text HEX colors, allowlisted fonts, and bounded type/spacing/radius scales. Low contrast shows a non-blocking readability warning; ZenUI preserves the exact colors and still allows generation. Local preview does not mutate the website. |
 | Must-have sections | Yes | What must the website include? | At least introduction and one primary-action surface |
 
 A natural-language description may prefill fields, but never locks them. The user reviews the structured summary before directions are prepared.
@@ -194,9 +194,9 @@ A natural-language description may prefill fields, but never locks them. The use
 
 ## 4. Design Direction Gallery
 
-The gallery compares three bounded materializations of the same accepted brief constraints. Differences must be visible in hierarchy, section layout, narrative rhythm, visual depth and icon treatment, not only color. ZenUI rotates through four server-owned preset sets (twelve unique directions total); each visible set contains three distinct Hero and Features variants and three story rhythms, while the provider continues to supply bounded content and media intent only. `Try three other directions` advances to the next set and wraps after the fourth.
+The gallery compares three bounded materializations of the same accepted brief constraints. Differences must be visible in hierarchy, section layout, narrative rhythm, visual depth and icon treatment, not only color. ZenUI owns twelve preset IDs; one structured planner call may propose exactly three allowlisted IDs and distinct Hero intents. ZenUI then deterministically replaces duplicate, recently shown or structurally similar choices before materializing the final trio. `Try three other directions` requests a new bounded plan while excluding the most recently displayed IDs where the catalog permits.
 
-When the user supplied a custom Design System, every direction across all four sets preserves its colors, fonts, typography scale, spacing and radius; only server-owned layout, section variants and narrative rhythm vary. Icons are rendered from allowlisted server-owned inline SVG paths. Provider or user content never supplies SVG paths, CSS, visual tokens or rhythm, and the gallery introduces no gradient or arbitrary-style capability.
+When the user supplied a custom Design System, every direction preserves its exact primary/background/text colors, fonts, typography scale, spacing and radius—even after a low-contrast warning; only server-owned layout, section variants and narrative rhythm vary. Icons are rendered from allowlisted server-owned inline SVG paths. Provider or user content never supplies SVG paths, CSS, visual tokens or rhythm, and the gallery introduces no gradient or arbitrary-style capability.
 
 ### 4.1. Desktop
 
@@ -257,17 +257,18 @@ The mobile gallery uses one card at a time instead of shrinking three cards. Pre
 
 1. Every card states why the direction supports the same brief in one or two sentences.
 2. Desktop/Mobile changes only the preview surface; it does not create another direction.
-3. `Try three other directions` confirms that the current transient set will be replaced, then advances through four deterministic preset sets and wraps safely while preserving the brief unchanged.
-4. Within every set, Hero and Features variants, theme presets and benefit-first/proof-first/offer-first story rhythms remain distinct. Richer server-owned variants may also change Testimonials, FAQ and Final CTA composition.
-5. Visual depth uses only existing Design Document capabilities: token-based alternating surfaces, borders, shadows, radius, spacing and a bounded editorial divider. No direction can introduce gradients, raw CSS or JavaScript.
-6. Inline icons resolve only from the server-owned SVG allowlist and inherit document color/size tokens; user/provider props cannot supply SVG paths.
-7. `Adjust brief` returns to editable fields. Preparing again replaces the transient set.
-8. `Choose this direction` is the only gallery action that creates an accepted website.
-9. Guided content asks AI only for a bounded media plan: one Hero intent and at most three content-image intents (`query` + localized `alt` + stable slot). ZenUI resolves the shared plan once for all three visual directions, preferring a generated image and falling back to the server-owned Pexels/import pipeline; AI never supplies a URL, provider result ID or asset ID.
-10. If generation, search or import is unavailable, every direction remains usable with its deterministic media fallback. Partial success is allowed and no reload, resize or direction switch starts new image requests.
-11. In Simple mode the exact clicked image or server-owned media slot remains the contextual AI target. Image language such as “đổi hình” or “tạo ảnh” is routed to a `replace-media` proposal, while an alt-description request remains a text proposal. The worker prepares an owned image first, and only explicit Accept applies the validated `UPDATE_PROPS` or `REPLACE_SUBTREE`; Discard, stale version and provider failure leave the accepted document unchanged.
-12. Unchosen or replaced directions never appear in website history.
-13. Double click, swipe or merely viewing a card never chooses it.
+3. `Try three other directions` confirms that the current transient set will be replaced, then makes one new structured planner call with up to the three most recently displayed allowlisted IDs excluded; the brief remains unchanged.
+4. The provider may propose only three server-owned preset IDs. ZenUI rejects unknown/extra authority fields and deterministically substitutes duplicate, recent or structurally similar choices; repair never issues a second provider call and the visible trio never relaxes its structural-diversity threshold.
+5. Within every visible trio, Hero and Features variants, theme presets and benefit-first/proof-first/offer-first story rhythms remain distinct. Richer server-owned variants may also change Testimonials, FAQ and Final CTA composition.
+6. Visual depth uses only existing Design Document capabilities: token-based alternating surfaces, borders, shadows, radius, spacing and a bounded editorial divider. No direction can introduce gradients, raw CSS or JavaScript.
+7. Inline icons resolve only from the server-owned SVG allowlist and inherit document color/size tokens; user/provider props cannot supply SVG paths.
+8. `Adjust brief` returns to editable fields. Preparing again replaces the transient set.
+9. `Choose this direction` is the only gallery action that creates an accepted website; prepare/remix do not change the project version or revision list.
+10. The one planner response contains one shared Hero intent and exactly three shared feature-image intents (`feature-1`, `feature-2`, `feature-3`; each `query` + localized `alt`); direction entries contain only preset IDs. ZenUI generates stable private keys `shared-hero`, `shared-feature-1`, `shared-feature-2`, `shared-feature-3`, resolves exactly four intents per run in batches of two, prefers generated images and falls back to the server-owned Pexels/import pipeline; AI never supplies a key, URL, provider result ID or asset ID.
+11. ZenUI materializes the same successful owned media map into all three directions so comparison focuses on layout and Design System treatment. If generation, search or import is unavailable, failure remains isolated to that slot: a missing feature image creates no empty media panel, Hero may retain its deterministic geometric fallback, and no reload, resize or direction switch starts new image requests.
+12. In Simple mode the exact clicked image or server-owned media slot remains the contextual AI target. Image language such as “đổi hình” or “tạo ảnh” is routed to a `replace-media` proposal, while an alt-description request remains a text proposal. The worker prepares an owned image first, and only explicit Accept applies the validated `UPDATE_PROPS` or `REPLACE_SUBTREE`; Discard, stale version and provider failure leave the accepted document unchanged.
+13. Unchosen or replaced directions never appear in website history.
+14. Double click, swipe or merely viewing a card never chooses it.
 
 ### 4.4. Gallery states
 

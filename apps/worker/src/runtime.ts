@@ -147,6 +147,12 @@ function required(name: string): string {
   return value
 }
 
+function providerSetting(name: string): string {
+  const value = required(name)
+  if (/^replace-with-/i.test(value)) throw new Error(`${name} is not configured`)
+  return value
+}
+
 function integer(name: string, fallback: number, min: number, max: number): number {
   const value = process.env[name]
   if (!value) return fallback
@@ -278,6 +284,9 @@ export function loadWorkerRuntimeConfig(): WorkerRuntimeConfig {
   const assistantLayoutEnabled = boolean('AI_ASSISTANT_LAYOUT_ENABLED')
   const assistantCompositionEnabled = boolean('AI_ASSISTANT_COMPOSITION_ENABLED')
   const maxImagesPerRun = integer('AI_IMAGE_MAX_PER_RUN', 4, 1, 4)
+  if (services.includes('generation') && maxImagesPerRun !== 4) {
+    throw new Error('AI_IMAGE_MAX_PER_RUN must be 4 for Design Directions')
+  }
   if (!assistantV2Enabled && (
     assistantPlannerEnabled
     || assistantMediaJudgeEnabled
@@ -318,8 +327,8 @@ export function loadWorkerRuntimeConfig(): WorkerRuntimeConfig {
     throw new Error('AI_ASSISTANT_MULTI_CANDIDATE_ENABLED requires AI_IMAGE_MAX_PER_RUN of at least 2')
   }
   const generation: GenerationRuntimeConfig | null = services.includes('generation') ? {
-    apiKey: required('GOOGLE_GENERATIVE_AI_API_KEY'),
-    model: required('GEMINI_MODEL'),
+    apiKey: providerSetting('GOOGLE_GENERATIVE_AI_API_KEY'),
+    model: providerSetting('GEMINI_MODEL'),
     imageGenerationEnabled,
     imageModel: imageGenerationEnabled ? required('GOOGLE_IMAGE_MODEL') : null,
     maxImagesPerRun,
@@ -579,7 +588,7 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
           context: { userId: string; workspaceId: string }
           projectId: string
           runId: string
-          intent: { slot: 'hero' | 'feature-1' | 'feature-2' | 'feature-3'; query: string; alt: string }
+          intent: { key: string; slot: 'hero' | 'feature-1' | 'feature-2' | 'feature-3'; query: string; alt: string }
         }) => {
           const { context, projectId, runId, intent } = input
           const processAsset = async (asset: Awaited<ReturnType<typeof assetRepository.create>>) => {
@@ -601,7 +610,7 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
                 aspectRatio: intent.slot === 'hero' ? '16:9' : '4:3',
                 signal: new AbortController().signal,
               })
-              const digest = createHash('sha256').update(`${runId}:${intent.slot}:generated`).digest('hex')
+              const digest = createHash('sha256').update(`${runId}:${intent.key}:generated`).digest('hex')
               const sourceObjectKey = `asset-sources/${context.workspaceId}/${digest.slice(0, 32)}`
               await s3!.send(new PutObjectCommand({
                 Bucket: config.storage!.bucket,
@@ -622,7 +631,7 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
               const results = await assetProvider!.search(intent.query, 12)
               const selected = results.find(result => result.width > result.height) ?? results[0]
               if (!selected) return null
-              const digest = createHash('sha256').update(`${runId}:${intent.slot}:pexels`).digest('hex')
+              const digest = createHash('sha256').update(`${runId}:${intent.key}:pexels`).digest('hex')
               return processAsset(await assetRepository.create(context, {
                 projectId,
                 requestId: digestUuid(digest),
@@ -705,7 +714,12 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
           const alt = target?.type === 'image' && 'alt' in target.props && target.props.alt.trim()
             ? target.props.alt
             : 'Relevant website image'
-          return resolveOwnedMedia({ context, projectId, runId, intent: { slot, query: prompt, alt } })
+          return resolveOwnedMedia({
+            context,
+            projectId,
+            runId,
+            intent: { key: `proposal-${targetNodeId}-${slot}`, slot, query: prompt, alt },
+          })
         },
       } : {}),
       ...(resolveProposalMediaV2 ? {
@@ -739,6 +753,7 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
       repository: createDesignDirectionRepository(database),
       ...(resolveOwnedMedia ? { resolveMedia: resolveOwnedMedia } : {}),
       timeoutMs: config.generation.timeoutMs,
+      maxMediaPerRun: config.generation.maxImagesPerRun,
       imagePolicy,
     }), { connection: redis, concurrency: config.generation.concurrency, autorun: true })
     generationWorker.on('failed', () => console.error(JSON.stringify(createSafeWorkerFailureEvent('generation'))))

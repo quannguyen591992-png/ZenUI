@@ -4,11 +4,15 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   designDirectionContentBlueprintJsonSchema,
   designDirectionContentBlueprintSchema,
+  designDirectionGenerationPlanJsonSchema,
+  designDirectionGenerationPlanSchema,
   designDirectionJobSchema,
   designDirectionRunErrorCodeSchema,
   designDirectionRunStatusSchema,
+  guidedDesignSystemWarnings,
   materializeDesignDirections,
   prefillWebsiteBrief,
+  resolveDesignDirectionPresetIds,
   runDesignDirectionGeneration,
   websiteBriefSchema,
   type DesignDirectionContentBlueprint,
@@ -36,6 +40,8 @@ const englishBrief: WebsiteBrief = {
   brandDetails: '',
   mustHaveSections: ['introduction', 'benefits', 'pricing', 'faq', 'contact'],
 }
+
+const plannedPresetIds = ['calm-clarity', 'bold-launch', 'proof-command'] as const
 
 function content(language: 'vi' | 'en'): DesignDirectionContentBlueprint {
   const vi = language === 'vi'
@@ -128,12 +134,21 @@ function content(language: 'vi' | 'en'): DesignDirectionContentBlueprint {
   }
 }
 
+function generationPlan(language: 'vi' | 'en') {
+  return {
+    version: 'design-directions-v2' as const,
+    content: content(language),
+    directions: plannedPresetIds.map(presetId => ({ presetId })),
+  }
+}
+
 describe('Stage 5 guided brief and design direction contracts', () => {
   it('validates durable direction run metadata without carrying brief or documents in the queue', () => {
     expect(designDirectionRunStatusSchema.options).toEqual([
       'queued', 'running', 'completed', 'failed', 'cancelled', 'superseded', 'accepted',
     ])
     expect(designDirectionRunErrorCodeSchema.options).toContain('invalid_model_output')
+    expect(designDirectionRunErrorCodeSchema.options).toContain('provider_bad_request')
     const job = {
       designDirectionRunId: '11111111-1111-4111-8111-111111111111',
       projectId: '22222222-2222-4222-8222-222222222222',
@@ -193,6 +208,54 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     expect(schema.length).toBeLessThan(21_000)
   })
 
+  it('validates a strict bounded v2 visual plan without provider-owned visual authority', () => {
+    const plan = generationPlan('vi')
+    const schema = JSON.stringify(designDirectionGenerationPlanJsonSchema)
+
+    expect(designDirectionGenerationPlanSchema.safeParse(plan).success).toBe(true)
+    expect(designDirectionGenerationPlanSchema.safeParse({
+      ...plan,
+      directions: [plan.directions[0], plan.directions[0], plan.directions[2]],
+    }).success).toBe(true)
+    expect(designDirectionGenerationPlanSchema.safeParse({
+      ...plan,
+      directions: [{
+        ...plan.directions[0],
+        presetId: 'unknown-preset',
+        themePreset: 'coral',
+        rawCss: 'body{display:none}',
+        nodeId: 'page-root',
+      }, ...plan.directions.slice(1)],
+    }).success).toBe(false)
+    for (const contentImages of [
+      content('vi').contentImages.slice(0, 2),
+      [
+        content('vi').contentImages[0]!,
+        content('vi').contentImages[0]!,
+        content('vi').contentImages[2]!,
+      ],
+    ]) {
+      expect(designDirectionGenerationPlanSchema.safeParse({
+        ...plan,
+        content: { ...plan.content, contentImages },
+      }).success).toBe(false)
+    }
+    expect(designDirectionGenerationPlanSchema.safeParse({
+      ...plan,
+      directions: plan.directions.map((direction, index) => ({
+        ...direction,
+        heroImage: {
+          query: `${plan.content.heroImage.query} composition ${index + 1}`,
+          alt: `${plan.content.heroImage.alt} ${index + 1}`,
+        },
+      })),
+    }).success).toBe(false)
+    expect(schema).toContain('design-directions-v2')
+    expect(schema).toContain('presetId')
+    expect(schema).toContain('calm-clarity')
+    expect(schema).not.toMatch(/rawCss|javascript|nodeId|parentId|providerResultId|assetId|themePreset/i)
+  })
+
   it.each([
     ['vi', vietnameseBrief],
     ['en', englishBrief],
@@ -200,6 +263,7 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     const result = materializeDesignDirections({
       brief,
       blueprint: content(language),
+      plannedPresetIds,
       current: createValidDesignFixture(),
       round: 0,
     })
@@ -207,9 +271,15 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     expect(result.accepted).toBe(true)
     if (!result.accepted) return
     expect(result.directions).toHaveLength(3)
-    expect(new Set(result.directions.map(direction => direction.contract.heroVariant)).size).toBe(3)
-    expect(new Set(result.directions.map(direction => direction.contract.featuresVariant)).size).toBe(3)
-    expect(new Set(result.directions.map(direction => direction.document.theme.colors.primary)).size).toBe(3)
+    expect(result.directions.map(direction => direction.id)).toEqual(plannedPresetIds)
+    expect(new Set(result.directions.map(direction => [
+      direction.contract.heroVariant,
+      direction.contract.featuresVariant,
+      direction.contract.testimonialsVariant,
+      direction.contract.faqVariant,
+      direction.contract.finalCtaVariant,
+    ].join('|'))).size).toBe(3)
+    expect(new Set(result.directions.map(direction => JSON.stringify(direction.document.theme))).size).toBeGreaterThan(1)
     for (const direction of result.directions) {
       expect(direction.document.nodes['navbar-cta']?.props).toMatchObject({ text: brief.cta })
       expect(direction.document.nodes['hero-primary-cta']?.props).toMatchObject({ text: brief.cta })
@@ -220,33 +290,38 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     expect(serialized).toContain(language === 'vi' ? 'Lập kế hoạch' : 'Build a course')
   })
 
-  it('rotates through four distinct preset sets and safely wraps every round', () => {
-    const directionsAt = (round: number) => {
-      const result = materializeDesignDirections({
-        brief: vietnameseBrief,
-        blueprint: content('vi'),
-        current: createValidDesignFixture(),
-        round,
-      })
-      expect(result.accepted).toBe(true)
-      if (!result.accepted) throw new Error(`Round ${round} was rejected`)
-      return result.directions
+  it('deterministically repairs recent or overly similar plans into three diverse catalog presets', () => {
+    const input = {
+      brief: vietnameseBrief,
+      round: 1,
+      plannedPresetIds: ['clear-momentum', 'trusted-advisor', 'bold-launch'] as const,
+      excludedPresetIds: ['clear-momentum', 'trusted-advisor', 'bold-launch'] as const,
     }
-    const ids = (round: number) => directionsAt(round).map(direction => direction.id)
-    const sets = [0, 1, 2, 3].map(directionsAt)
+    const first = resolveDesignDirectionPresetIds(input)
+    const repeated = resolveDesignDirectionPresetIds(input)
 
-    expect(new Set(sets.map(set => set.map(direction => direction.id).join('|'))).size).toBe(4)
-    expect(new Set(sets.flatMap(set => set.map(direction => direction.id))).size).toBe(12)
-    for (const set of sets) {
-      expect(set).toHaveLength(3)
-      expect(new Set(set.map(direction => direction.contract.heroVariant)).size).toBe(3)
-      expect(new Set(set.map(direction => direction.contract.featuresVariant)).size).toBe(3)
-      expect(new Set(set.map(direction => direction.contract.themePreset)).size).toBe(3)
-    }
+    expect(first).toEqual(repeated)
+    expect(first).toHaveLength(3)
+    expect(new Set(first).size).toBe(3)
+    expect(first).not.toEqual(expect.arrayContaining([...input.excludedPresetIds]))
 
-    expect(ids(-1)).toEqual(ids(3))
-    expect(ids(4)).toEqual(ids(0))
-    expect(ids(Number.MAX_SAFE_INTEGER)).toEqual(ids(3))
+    const result = materializeDesignDirections({
+      brief: vietnameseBrief,
+      blueprint: content('vi'),
+      current: createValidDesignFixture(),
+      round: 1,
+      plannedPresetIds: first,
+    })
+    expect(result.accepted).toBe(true)
+    if (!result.accepted) return
+    expect(new Set(result.directions.map(direction => direction.contract.heroVariant)).size).toBe(3)
+    expect(new Set(result.directions.map(direction => [
+      direction.contract.heroVariant,
+      direction.contract.featuresVariant,
+      direction.contract.testimonialsVariant,
+      direction.contract.faqVariant,
+      direction.contract.finalCtaVariant,
+    ].join('|'))).size).toBe(3)
   })
 
   it('gives each direction a distinct story rhythm without changing provider content coverage', () => {
@@ -280,30 +355,37 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     expect(JSON.stringify(result.directions.map(direction => direction.contract))).not.toContain('sectionRhythm')
   })
 
-  it('materializes one shared server-resolved media set into every direction without provider data', () => {
-    const assetId = '55555555-5555-4555-8555-555555555555'
+  it('materializes one shared Hero and three shared feature assets without provider data', () => {
+    const assets = {
+      hero: '55555555-5555-4555-8555-555555555555',
+      'feature-1': '66666666-6666-4666-8666-666666666666',
+      'feature-2': '77777777-7777-4777-8777-777777777777',
+      'feature-3': '88888888-8888-4888-8888-888888888888',
+    } as const
     const result = materializeDesignDirections({
       brief: vietnameseBrief,
       blueprint: content('vi'),
+      plannedPresetIds,
       current: createValidDesignFixture(),
       round: 0,
       ownedMedia: {
-        hero: { assetId, alt: 'Nhóm sản phẩm cùng lập kế hoạch ra mắt', decorative: false },
-        'feature-1': { assetId: '66666666-6666-4666-8666-666666666666', alt: 'Bảng lộ trình ra mắt sản phẩm', decorative: false },
-        'feature-2': { assetId: '77777777-7777-4777-8777-777777777777', alt: 'Nhóm xem lại các cột mốc', decorative: false },
-        'feature-3': { assetId: '88888888-8888-4888-8888-888888888888', alt: 'Bàn giao kế hoạch ra mắt', decorative: false },
+        hero: { assetId: assets.hero, alt: 'Nhóm lập kế hoạch ra mắt', decorative: false },
+        'feature-1': { assetId: assets['feature-1'], alt: 'Bảng lộ trình ra mắt', decorative: false },
+        'feature-2': { assetId: assets['feature-2'], alt: 'Nhóm xem lại cột mốc', decorative: false },
+        'feature-3': { assetId: assets['feature-3'], alt: 'Nhóm bàn giao kế hoạch', decorative: false },
       },
     })
 
     expect(result.accepted).toBe(true)
     if (!result.accepted) return
     for (const direction of result.directions) {
-      expect(direction.document.nodes['hero-image']?.props).toEqual({
-        assetId, alt: 'Nhóm sản phẩm cùng lập kế hoạch ra mắt', decorative: false,
-      })
-      expect(direction.document.nodes['feature-image-1']?.props).toMatchObject({ assetId: '66666666-6666-4666-8666-666666666666' })
-      expect(direction.document.nodes['feature-image-2']?.props).toMatchObject({ assetId: '77777777-7777-4777-8777-777777777777' })
-      expect(direction.document.nodes['feature-image-3']?.props).toMatchObject({ assetId: '88888888-8888-4888-8888-888888888888' })
+      expect(direction.document.nodes['hero-image']?.props).toMatchObject({ assetId: assets.hero })
+      for (const slot of [1, 2, 3] as const) {
+        expect(direction.document.nodes[`feature-image-${slot}`]?.props).toMatchObject({
+          assetId: assets[`feature-${slot}`],
+        })
+        expect(direction.document.nodes[`feature-media-slot-${slot}`]).toBeUndefined()
+      }
       expect(direction.document.nodes['hero-product-card']).toBeUndefined()
       expect(JSON.stringify(direction.document)).not.toMatch(/pexels|https?:\/\//i)
     }
@@ -336,12 +418,12 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     expect(result).toEqual({ accepted: false, code: 'brief_mismatch' })
   })
 
-  it('preserves one custom Design System across all four preset sets while layouts stay distinct', () => {
+  it('preserves one low-contrast custom Design System across all four preset sets while layouts stay distinct', () => {
     const briefWithCustomSystem = {
       ...vietnameseBrief,
       designSystem: {
         mode: 'custom',
-        colors: { primary: '#2563eb', background: '#ffffff', text: '#0f172a' },
+        colors: { primary: '#24eb94', background: '#ffffff', text: '#2c56ba' },
         fonts: { heading: 'Georgia', body: 'Arial' },
         typography: 'expressive',
         spacing: 'airy',
@@ -349,7 +431,7 @@ describe('Stage 5 guided brief and design direction contracts', () => {
       },
     } as WebsiteBrief
     const expectedTheme = {
-      colors: { primary: '#2563eb', background: '#ffffff', text: '#0f172a' },
+      colors: { primary: '#24eb94', background: '#ffffff', text: '#2c56ba' },
       fonts: { heading: 'Georgia', body: 'Arial' },
       radius: { sm: 12, md: 20, lg: 28 },
     }
@@ -365,11 +447,18 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     ])
 
     expect(websiteBriefSchema.safeParse(briefWithCustomSystem).success).toBe(true)
+    expect(guidedDesignSystemWarnings(briefWithCustomSystem.designSystem!)).toEqual([
+      expect.objectContaining({
+        code: 'primary_background_contrast',
+        path: ['colors', 'primary'],
+        minimum: 3,
+      }),
+    ])
     expect(websiteBriefSchema.safeParse({
       ...briefWithCustomSystem,
       designSystem: {
         ...briefWithCustomSystem.designSystem,
-        colors: { primary: '#eeeeee', background: '#ffffff', text: '#dddddd' },
+        colors: { primary: '#24eb', background: '#ffffff', text: '#2c56ba' },
       },
     }).success).toBe(false)
     expect(websiteBriefSchema.safeParse({
@@ -410,7 +499,7 @@ describe('Stage 5 guided brief and design direction contracts', () => {
       for (const direction of directions) {
         expect(direction.document.theme).toEqual(expectedTheme)
         expect(direction.document.nodes['hero-heading']?.style).toMatchObject({
-          color: '#0f172a',
+          color: '#2c56ba',
           fontFamily: 'Georgia',
           fontSize: 72,
         })
@@ -427,7 +516,7 @@ describe('Stage 5 guided brief and design direction contracts', () => {
 
   it('keeps custom Design System out of the provider request', async () => {
     const generateContentBlueprint = vi.fn().mockResolvedValue({
-      output: content('vi'),
+      output: generationPlan('vi'),
       usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
     })
     const result = await runDesignDirectionGeneration({
@@ -454,18 +543,34 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     }
   })
 
-  it('uses exactly one provider request and resolves at most four shared media slots without exposing provider data', async () => {
+  it('uses one provider request and resolves one shared Hero plus three shared feature images', async () => {
+    const insufficientBudgetProvider = vi.fn()
+    const insufficientBudgetResolver = vi.fn()
+    await expect(runDesignDirectionGeneration({
+      provider: { name: 'mock', model: 'mock-v1', generateContentBlueprint: insufficientBudgetProvider },
+      brief: vietnameseBrief,
+      current: createValidDesignFixture(),
+      round: 0,
+      maxMediaPerRun: 3,
+      resolveMedia: insufficientBudgetResolver,
+    })).resolves.toMatchObject({ accepted: false, code: 'invalid_model_output', usage: {
+      inputTokens: 0, outputTokens: 0, totalTokens: 0,
+    } })
+    expect(insufficientBudgetProvider).not.toHaveBeenCalled()
+    expect(insufficientBudgetResolver).not.toHaveBeenCalled()
+
     const generateContentBlueprint = vi.fn().mockResolvedValue({
-      output: content('vi'),
+      output: generationPlan('vi'),
       usage: { inputTokens: 100, outputTokens: 200, totalTokens: 300 },
     })
-    const resolveMedia = vi.fn().mockImplementation((intent: { slot: string; alt: string }) => Promise.resolve({
-      assetId: ({
-        hero: '55555555-5555-4555-8555-555555555555',
-        'feature-1': '66666666-6666-4666-8666-666666666666',
-        'feature-2': '77777777-7777-4777-8777-777777777777',
-        'feature-3': '88888888-8888-4888-8888-888888888888',
-      } as Record<string, string>)[intent.slot],
+    const assetByKey = {
+      'shared-hero': '55555555-5555-4555-8555-555555555555',
+      'shared-feature-1': '66666666-6666-4666-8666-666666666666',
+      'shared-feature-2': '77777777-7777-4777-8777-777777777777',
+      'shared-feature-3': '88888888-8888-4888-8888-888888888888',
+    } as const
+    const resolveMedia = vi.fn().mockImplementation((intent: { key: keyof typeof assetByKey; alt: string }) => Promise.resolve({
+      assetId: assetByKey[intent.key],
       alt: intent.alt,
       decorative: false as const,
     }))
@@ -479,15 +584,47 @@ describe('Stage 5 guided brief and design direction contracts', () => {
 
     expect(successful.accepted).toBe(true)
     expect(generateContentBlueprint).toHaveBeenCalledOnce()
+    expect(generateContentBlueprint).toHaveBeenCalledWith(expect.objectContaining({
+      promptVersion: 'directions-v2', round: 0, excludedPresetIds: [],
+    }))
     expect(resolveMedia).toHaveBeenCalledTimes(4)
-    expect(resolveMedia.mock.calls.map(call => (call[0] as { slot: string }).slot)).toEqual(['hero', 'feature-1', 'feature-2', 'feature-3'])
+    expect(resolveMedia.mock.calls.map(call => (call[0] as { key: string }).key)).toEqual([
+      'shared-hero', 'shared-feature-1', 'shared-feature-2', 'shared-feature-3',
+    ])
     if (successful.accepted) {
-      expect(successful.directions.every(direction => {
-        const image = direction.document.nodes['hero-image']
-        return image?.type === 'image'
-          && 'assetId' in image.props
-          && image.props.assetId === '55555555-5555-4555-8555-555555555555'
-      })).toBe(true)
+      expect(successful.promptVersion).toBe('directions-v2')
+      expect(successful.blueprint.version).toBe('design-directions-v2')
+      for (const direction of successful.directions) {
+        expect(direction.document.nodes['hero-image']?.props).toMatchObject({ assetId: assetByKey['shared-hero'] })
+        for (const slot of [1, 2, 3] as const) {
+          expect(direction.document.nodes[`feature-image-${slot}`]?.props).toMatchObject({
+            assetId: assetByKey[`shared-feature-${slot}`],
+          })
+        }
+      }
+    }
+
+    const partialResolver = vi.fn().mockImplementation((intent: { key: keyof typeof assetByKey; alt: string }) => (
+      intent.key === 'shared-feature-2'
+        ? Promise.resolve(null)
+        : Promise.resolve({ assetId: assetByKey[intent.key], alt: intent.alt, decorative: false as const })
+    ))
+    const partial = await runDesignDirectionGeneration({
+      provider: { name: 'mock', model: 'mock-v1', generateContentBlueprint },
+      brief: vietnameseBrief,
+      current: createValidDesignFixture(),
+      round: 0,
+      resolveMedia: partialResolver,
+    })
+    expect(partial.accepted).toBe(true)
+    if (partial.accepted) {
+      for (const direction of partial.directions) {
+        expect(direction.document.nodes['hero-image']).toBeDefined()
+        expect(direction.document.nodes['feature-image-1']).toBeDefined()
+        expect(direction.document.nodes['feature-image-2']).toBeUndefined()
+        expect(direction.document.nodes['feature-image-3']).toBeDefined()
+        expect(direction.document.nodes['feature-media-slot-2']).toBeUndefined()
+      }
     }
 
     resolveMedia.mockRejectedValue(new Error('provider credential detail'))
@@ -501,6 +638,14 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     expect(fallback.accepted).toBe(true)
     if (fallback.accepted) {
       expect(fallback.directions.every(direction => direction.document.nodes['hero-product-card'] !== undefined)).toBe(true)
+      expect(fallback.directions.every(direction => (
+        direction.document.nodes['feature-image-1'] === undefined
+        && direction.document.nodes['feature-image-2'] === undefined
+        && direction.document.nodes['feature-image-3'] === undefined
+        && direction.document.nodes['feature-media-slot-1'] === undefined
+        && direction.document.nodes['feature-media-slot-2'] === undefined
+        && direction.document.nodes['feature-media-slot-3'] === undefined
+      ))).toBe(true)
       expect(JSON.stringify(fallback.directions)).not.toContain('provider credential detail')
     }
 
@@ -516,6 +661,29 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     })
     expect(invalid).toMatchObject({ accepted: false, code: 'invalid_model_output' })
     expect(invalidProvider).toHaveBeenCalledOnce()
+
+    const missingContentImages: Partial<DesignDirectionContentBlueprint> = { ...content('vi') }
+    delete missingContentImages.contentImages
+    const missingContentImagesProvider = vi.fn().mockResolvedValue({
+      output: missingContentImages,
+      usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+    })
+    const missingContentImagesResult = await runDesignDirectionGeneration({
+      provider: { name: 'mock', model: 'mock-v1', generateContentBlueprint: missingContentImagesProvider },
+      brief: vietnameseBrief,
+      current: createValidDesignFixture(),
+      round: 0,
+    })
+    expect(missingContentImagesResult).toMatchObject({ accepted: false, code: 'invalid_model_output' })
+
+    const badRequestProvider = vi.fn().mockRejectedValue(Object.assign(new Error('bad request'), { code: 'provider_bad_request' }))
+    const badRequest = await runDesignDirectionGeneration({
+      provider: { name: 'mock', model: 'mock-v1', generateContentBlueprint: badRequestProvider },
+      brief: vietnameseBrief,
+      current: createValidDesignFixture(),
+      round: 0,
+    })
+    expect(badRequest).toMatchObject({ accepted: false, code: 'provider_bad_request' })
 
     const transientProvider = vi.fn().mockRejectedValue(Object.assign(new Error('temporary'), { code: 'provider_transient' }))
     const failed = await runDesignDirectionGeneration({

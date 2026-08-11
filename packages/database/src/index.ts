@@ -4,7 +4,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
-  designDirectionContentBlueprintSchema,
+  designDirectionGenerationPlanSchema,
+  designDirectionPresetIdSchema,
   designDirectionRunErrorCodeSchema,
   generationErrorCodeSchema,
   captureRemixConstraints,
@@ -1148,8 +1149,29 @@ export function createDesignDirectionRepository(
         .where(eq(designDocuments.projectId, run.projectId))
         .limit(1)
       const brief = websiteBriefSchema.safeParse(run.briefSnapshot)
+      const [previousRun] = await db.select({ directionSnapshots: designDirectionRuns.directionSnapshots })
+        .from(designDirectionRuns)
+        .where(and(
+          eq(designDirectionRuns.workspaceId, context.workspaceId),
+          eq(designDirectionRuns.projectId, run.projectId),
+          sql`${designDirectionRuns.id} <> ${run.id}`,
+          inArray(designDirectionRuns.status, ['completed', 'superseded', 'accepted']),
+          isNotNull(designDirectionRuns.directionSnapshots),
+        ))
+        .orderBy(desc(designDirectionRuns.createdAt))
+        .limit(1)
+      const previousDirectionIds = (validDirectionSnapshots(previousRun?.directionSnapshots) ?? [])
+        .map(direction => designDirectionPresetIdSchema.safeParse(direction.id))
+        .filter(result => result.success)
+        .map(result => result.data)
+        .slice(0, 3)
       return draft && brief.success
-        ? { ...mapDesignDirectionRun(run), brief: brief.data, document: draft.document }
+        ? {
+            ...mapDesignDirectionRun(run),
+            brief: brief.data,
+            document: draft.document,
+            previousDirectionIds,
+          }
         : null
     },
 
@@ -1193,10 +1215,15 @@ export function createDesignDirectionRepository(
       accepted: false
       code: 'not_found' | 'invalid_output' | 'stale_document_version'
     }> {
-      const blueprint = designDirectionContentBlueprintSchema.safeParse(input.blueprint)
+      const blueprint = designDirectionGenerationPlanSchema.safeParse(input.blueprint)
       const usage = usageInputSchema.safeParse(input.usage)
       const directions = validDirectionSnapshots(input.directions)
-      if (!blueprint.success || !usage.success || !directions) return { accepted: false, code: 'invalid_output' }
+      if (!usage.success || !directions) return { accepted: false, code: 'invalid_output' }
+      if (!blueprint.success) {
+        return await selectAuthorizedRun(context, runId)
+          ? { accepted: false, code: 'invalid_output' }
+          : { accepted: false, code: 'not_found' }
+      }
       return db.transaction(async transaction => {
         const [run] = await transaction.select().from(designDirectionRuns).where(and(
           eq(designDirectionRuns.id, runId),

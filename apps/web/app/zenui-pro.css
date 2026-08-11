@@ -149,6 +149,7 @@
 .publish-popover > button, .ai-proposal-compare-button, .contextual-ai > button {
   background: var(--pro-accent) !important;
   border-color: var(--pro-accent) !important;
+  color: #ffffff !important;
   box-shadow: 0 4px 14px rgba(79, 70, 229, 0.3) !important;
   font-weight: 600 !important;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
@@ -978,7 +979,7 @@ body.is-preview-open {
 .guided-onboarding-pro .step-badge {
   font-size: 14px;
   font-weight: 600;
-  color: #6366f1;
+  color: #4338ca;
   background: #e0e7ff;
   padding: 6px 12px;
   border-radius: 20px;
@@ -1256,7 +1257,7 @@ body.is-preview-open {
   border-radius: 8px;
   font-size: 14px;
   font-weight: 600;
-  color: #64748b;
+  color: #475569;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -2364,7 +2365,7 @@ body.is-preview-open {
   border-radius: 8px;
   font-size: 12px;
   font-weight: 600;
-  color: #64748b;
+  color: #475569;
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -2409,11 +2410,11 @@ body.is-preview-open {
 }
 .site-intel-pro .intel-bento-card.warning .bento-badge {
   background: #fef3c7;
-  color: #d97706;
+  color: #92400e;
 }
 .site-intel-pro .intel-bento-card.suggestion .bento-badge {
   background: #d1fae5;
-  color: #059669;
+  color: #047857;
 }
 .site-intel-pro .intel-bento-card h3 {
   font-size: 14px;

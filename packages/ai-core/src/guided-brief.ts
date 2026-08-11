@@ -29,11 +29,11 @@ function luminance(color: string): number {
     + 0.0722 * channel(parsed[1].slice(4, 6))
 }
 
-function meetsContrast(left: string, right: string, minimum: number): boolean {
+function contrastRatio(left: string, right: string): number | null {
   const leftValue = luminance(left)
   const rightValue = luminance(right)
-  if (!Number.isFinite(leftValue) || !Number.isFinite(rightValue)) return false
-  return (Math.max(leftValue, rightValue) + 0.05) / (Math.min(leftValue, rightValue) + 0.05) >= minimum
+  if (!Number.isFinite(leftValue) || !Number.isFinite(rightValue)) return null
+  return (Math.max(leftValue, rightValue) + 0.05) / (Math.min(leftValue, rightValue) + 0.05)
 }
 
 export const GUIDED_TYPOGRAPHY_PRESET_IDS = ['compact', 'balanced', 'expressive'] as const
@@ -54,20 +54,52 @@ const customGuidedDesignSystemSchema = z.object({
   typography: z.enum(GUIDED_TYPOGRAPHY_PRESET_IDS),
   spacing: z.enum(GUIDED_SPACING_PRESET_IDS),
   radius: z.enum(GUIDED_RADIUS_PRESET_IDS),
-}).strict().superRefine((value, context) => {
-  if (!meetsContrast(value.colors.text, value.colors.background, 4.5)) {
-    context.addIssue({ code: 'custom', path: ['colors', 'text'], message: 'Text and background require at least 4.5:1 contrast' })
-  }
-  if (!meetsContrast(value.colors.primary, value.colors.background, 3)) {
-    context.addIssue({ code: 'custom', path: ['colors', 'primary'], message: 'Primary and background require at least 3:1 contrast' })
-  }
-})
+}).strict()
 
 export const guidedDesignSystemSchema = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('zenui') }).strict(),
   customGuidedDesignSystemSchema,
 ])
 export type GuidedDesignSystem = z.infer<typeof guidedDesignSystemSchema>
+
+export interface GuidedDesignSystemWarning {
+  code: 'text_background_contrast' | 'primary_background_contrast'
+  path: readonly ['colors', 'text' | 'primary']
+  ratio: number
+  minimum: 4.5 | 3
+}
+
+export function guidedDesignSystemWarnings(
+  input: GuidedDesignSystem,
+): GuidedDesignSystemWarning[] {
+  if (input.mode !== 'custom') return []
+
+  const warnings: GuidedDesignSystemWarning[] = []
+  const textRatio = contrastRatio(input.colors.text, input.colors.background)
+  if (textRatio !== null && textRatio < 4.5) {
+    warnings.push({
+      code: 'text_background_contrast',
+      path: ['colors', 'text'],
+      ratio: Number(textRatio.toFixed(2)),
+      minimum: 4.5,
+    })
+  }
+
+  const primaryRatio = contrastRatio(
+    input.colors.primary,
+    input.colors.background,
+  )
+  if (primaryRatio !== null && primaryRatio < 3) {
+    warnings.push({
+      code: 'primary_background_contrast',
+      path: ['colors', 'primary'],
+      ratio: Number(primaryRatio.toFixed(2)),
+      minimum: 3,
+    })
+  }
+
+  return warnings
+}
 
 export const websiteBriefSchema = z.object({
   description: z.string().trim().max(2000),
