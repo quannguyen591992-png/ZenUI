@@ -1,6 +1,7 @@
 # ADR-0017: Guided Design System before direction generation
 
 **Date**: 2026-08-06
+**Amended**: 2026-08-11
 **Status**: accepted
 **Deciders**: Project owner, engineering
 
@@ -12,9 +13,11 @@ The product needs a small, demonstrable Design System capability without allowin
 
 ## Decision
 
-ZenUI accepts a bounded Design System as part of the Guided Brief before directions are generated. The user chooses either ZenUI-generated styling or a custom set of contrast-validated primary/background/text colors, allowlisted fonts, and typography, spacing and radius presets.
+ZenUI accepts a bounded Design System as part of the Guided Brief before directions are generated. The user chooses either ZenUI-generated styling or a custom set of structurally validated primary/background/text HEX colors, allowlisted fonts, and typography, spacing and radius presets.
 
 The provider receives only the content portion of the brief. Server-owned materialization applies the validated custom tokens to every direction while direction presets continue to determine layout and narrative variants. The chosen direction remains the only accepted-document mutation through the existing atomic `REPLACE_DOCUMENT` transaction.
+
+As amended on 2026-08-11, contrast checks for a Guided custom Design System are advisory rather than blocking. ZenUI warns when text/background is below 4.5:1 or primary/background is below 3:1, but preserves the exact user-selected primary, background and text colors and still generates the directions. This amendment does not change Brand Kit validation policy.
 
 ## Alternatives Considered
 
@@ -45,6 +48,6 @@ The provider receives only the content portion of the brief. Server-owned materi
 - Guided Brief adds more inputs and validation states for users choosing custom styling.
 
 ### Risks
-- Insufficient contrast can reduce accessibility; input validation enforces WCAG-like text/background and primary/background thresholds.
+- Insufficient contrast can reduce accessibility; Guided Brief presents a non-blocking warning and makes clear that the exact colors will remain unchanged. The user may proceed with the readability risk.
 - Design system data could leak into provider prompts; the provider request explicitly projects out `designSystem`, with regression coverage.
 - Legacy briefs lack this field; parsing normalizes missing values to ZenUI mode before UI/materialization.

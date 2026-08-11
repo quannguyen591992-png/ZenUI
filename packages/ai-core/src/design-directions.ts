@@ -27,6 +27,21 @@ const sectionTypeSchema = z.enum([
   'logo-cloud', 'stats', 'features', 'testimonials', 'pricing', 'faq', 'final-cta', 'footer',
 ])
 
+export const DESIGN_DIRECTION_PRESET_IDS = [
+  'clear-momentum', 'trusted-advisor', 'bold-launch',
+  'calm-clarity', 'friendly-guide', 'decisive-proof',
+  'precise-editorial', 'human-momentum', 'proof-command',
+  'focused-conversion', 'editorial-story', 'vivid-product',
+] as const
+
+export const designDirectionPresetIdSchema = z.enum(DESIGN_DIRECTION_PRESET_IDS)
+export type DesignDirectionPresetId = z.infer<typeof designDirectionPresetIdSchema>
+
+const mediaIntentSchema = z.object({
+  query: z.string().trim().min(2).max(160),
+  alt: z.string().trim().min(1).max(300),
+}).strict()
+
 export const designDirectionContentBlueprintSchema = z.object({
   version: z.literal(1),
   language: z.enum(['vi', 'en']),
@@ -39,15 +54,10 @@ export const designDirectionContentBlueprintSchema = z.object({
   heroParagraph: z.string().trim().min(1).max(1200),
   heroSecondaryCta: shortTextSchema,
   heroProof: shortTextSchema,
-  heroImage: z.object({
-    query: z.string().trim().min(2).max(160),
-    alt: z.string().trim().min(1).max(300),
-  }).strict(),
-  contentImages: z.array(z.object({
+  heroImage: mediaIntentSchema,
+  contentImages: z.array(mediaIntentSchema.extend({
     slot: z.enum(['feature-1', 'feature-2', 'feature-3']),
-    query: z.string().trim().min(2).max(160),
-    alt: z.string().trim().min(1).max(300),
-  }).strict()).max(3),
+  }).strict()).length(3),
   logos: z.array(shortTextSchema).min(3).max(8),
   statsHeading: z.string().trim().min(1).max(220),
   stats: z.array(z.object({
@@ -110,7 +120,22 @@ export const designDirectionContentBlueprintSchema = z.object({
 })
 
 export type DesignDirectionContentBlueprint = z.infer<typeof designDirectionContentBlueprintSchema>
+
+export const designDirectionGenerationPlanSchema = z.object({
+  version: z.literal('design-directions-v2'),
+  content: designDirectionContentBlueprintSchema,
+  directions: z.array(z.object({
+    presetId: designDirectionPresetIdSchema,
+  }).strict()).length(3),
+}).strict()
+export type DesignDirectionGenerationPlan = z.infer<typeof designDirectionGenerationPlanSchema>
+export const designDirectionGenerationPlanJsonSchema = z.toJSONSchema(
+  designDirectionGenerationPlanSchema,
+  { target: 'draft-7' },
+)
+
 export type DesignDirectionMediaIntent = {
+  key: string
   slot: OwnedMediaSlot
   query: string
   alt: string
@@ -122,7 +147,7 @@ export const designDirectionRunStatusSchema = z.enum([
 ])
 export type DesignDirectionRunStatus = z.infer<typeof designDirectionRunStatusSchema>
 export const designDirectionRunErrorCodeSchema = z.enum([
-  'invalid_model_output', 'brief_mismatch', 'provider_auth', 'provider_rate_limit',
+  'invalid_model_output', 'brief_mismatch', 'provider_bad_request', 'provider_auth', 'provider_rate_limit',
   'provider_timeout', 'provider_transient', 'provider_error', 'budget_exceeded', 'queue_unavailable',
   'stale_document_version',
 ])
@@ -166,7 +191,7 @@ export interface MaterializedDesignDirection {
 type SectionRhythm = 'benefit-first' | 'proof-first' | 'offer-first'
 
 interface DirectionPreset extends DesignDirectionContract {
-  id: string
+  id: DesignDirectionPresetId
   name: string
   character: string
   rationale: string
@@ -273,6 +298,16 @@ const directionPresetSets: readonly (readonly DirectionPreset[])[] = [
     },
   ]),
 ]
+
+const directionPresetCatalog = directionPresetSets.flat()
+const directionPresetById = new Map(directionPresetCatalog.map(preset => [preset.id, preset]))
+
+export const designDirectionPlannerCatalog = directionPresetCatalog.map(preset => ({
+  id: preset.id,
+  name: preset.name,
+  character: preset.character,
+  rationale: preset.rationale,
+}))
 
 function briefLanguage(brief: WebsiteBrief): 'vi' | 'en' {
   const content = [brief.description, brief.offer, brief.audience, brief.primaryGoal, brief.cta, brief.tone].join(' ')
@@ -384,14 +419,93 @@ export type MaterializeDesignDirectionsResult =
   | { accepted: true; directions: MaterializedDesignDirection[] }
   | { accepted: false; code: 'invalid_brief' | 'invalid_blueprint' | 'brief_mismatch' | 'invalid_direction' }
 
+function validatedOwnedMedia(input: OwnedMediaMap | undefined): OwnedMediaMap | null {
+  const ownedMedia: OwnedMediaMap = {}
+  for (const [slot, image] of Object.entries(input ?? {})) {
+    if (!['hero', 'feature-1', 'feature-2', 'feature-3'].includes(slot)) return null
+    const parsedImage = ownedImagePropsSchema.safeParse(image)
+    if (!parsedImage.success) return null
+    ownedMedia[slot as OwnedMediaSlot] = parsedImage.data
+  }
+  return ownedMedia
+}
+
+function presetDistance(left: DirectionPreset, right: DirectionPreset): number {
+  const dimensions = [
+    left.heroVariant !== right.heroVariant,
+    left.featuresVariant !== right.featuresVariant,
+    left.sectionRhythm !== right.sectionRhythm,
+    left.density !== right.density,
+    left.mood !== right.mood,
+    left.navbarVariant !== right.navbarVariant,
+    left.testimonialsVariant !== right.testimonialsVariant,
+    left.faqVariant !== right.faqVariant,
+    left.finalCtaVariant !== right.finalCtaVariant,
+    left.footerVariant !== right.footerVariant,
+  ]
+  return dimensions.filter(Boolean).length
+}
+
+function briefSeed(brief: WebsiteBrief, round: number): number {
+  const input = `${brief.offer}|${brief.audience}|${brief.primaryGoal}|${brief.tone}|${round}`
+  let hash = 2166136261
+  for (const character of input) {
+    hash ^= character.codePointAt(0) ?? 0
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
+
+export function resolveDesignDirectionPresetIds(input: {
+  brief: WebsiteBrief
+  round: number
+  plannedPresetIds: readonly DesignDirectionPresetId[]
+  excludedPresetIds?: readonly DesignDirectionPresetId[]
+}): DesignDirectionPresetId[] {
+  const excluded = new Set(input.excludedPresetIds ?? [])
+  const selected: DirectionPreset[] = []
+  const minimumDistance = 4
+  const canUse = (preset: DirectionPreset, enforceExclusion: boolean) => (
+    !selected.some(value => value.id === preset.id)
+    && (!enforceExclusion || !excluded.has(preset.id))
+    && selected.every(value => presetDistance(value, preset) >= minimumDistance)
+  )
+  for (const id of input.plannedPresetIds) {
+    const preset = directionPresetById.get(id)
+    if (preset && canUse(preset, true)) selected.push(preset)
+  }
+  const seed = briefSeed(input.brief, input.round)
+  const ordered = directionPresetCatalog
+    .map((preset, index) => ({ preset, order: (index - seed % directionPresetCatalog.length + directionPresetCatalog.length) % directionPresetCatalog.length }))
+    .sort((left, right) => left.order - right.order)
+  for (const enforceExclusion of [true, false]) {
+    while (selected.length < 3) {
+      const candidate = ordered
+        .filter(({ preset }) => canUse(preset, enforceExclusion))
+        .map(({ preset, order }) => ({
+          preset,
+          order,
+          distance: selected.length === 0 ? Number.MAX_SAFE_INTEGER : Math.min(...selected.map(value => presetDistance(value, preset))),
+        }))
+        .sort((left, right) => right.distance - left.distance || left.order - right.order)[0]
+      if (!candidate) break
+      selected.push(candidate.preset)
+    }
+    if (selected.length === 3) break
+  }
+  return selected.map(preset => preset.id)
+}
+
 export function materializeDesignDirections(input: {
   brief: WebsiteBrief
   blueprint: unknown
   current: DesignDocument
   round: number
+  plannedPresetIds?: readonly DesignDirectionPresetId[]
   imagePolicy?: RemoteImagePolicy
   heroImage?: DesignDirectionOwnedImage
   ownedMedia?: OwnedMediaMap
+  directionOwnedMedia?: readonly OwnedMediaMap[]
 }): MaterializeDesignDirectionsResult {
   const parsedBrief = websiteBriefSchema.safeParse(input.brief)
   if (!parsedBrief.success) return { accepted: false, code: 'invalid_brief' }
@@ -403,23 +517,25 @@ export function materializeDesignDirections(input: {
   if (required.some(type => !content.data.sectionOrder.includes(type as z.infer<typeof sectionTypeSchema>))) {
     return { accepted: false, code: 'brief_mismatch' }
   }
-  const ownedMediaInput = { ...(input.ownedMedia ?? {}), ...(input.heroImage ? { hero: input.heroImage } : {}) }
-  const ownedMedia: OwnedMediaMap = {}
-  for (const [slot, image] of Object.entries(ownedMediaInput)) {
-    if (!['hero', 'feature-1', 'feature-2', 'feature-3'].includes(slot)) return { accepted: false, code: 'invalid_direction' }
-    const parsedImage = ownedImagePropsSchema.safeParse(image)
-    if (!parsedImage.success) return { accepted: false, code: 'invalid_direction' }
-    ownedMedia[slot as OwnedMediaSlot] = parsedImage.data
-  }
-  const setIndex = ((input.round % directionPresetSets.length) + directionPresetSets.length) % directionPresetSets.length
-  const set = directionPresetSets[setIndex]!
+  const fallbackSetIndex = ((input.round % directionPresetSets.length) + directionPresetSets.length) % directionPresetSets.length
+  const presetIds = input.plannedPresetIds ?? directionPresetSets[fallbackSetIndex]!.map(preset => preset.id)
+  if (presetIds.length !== 3 || new Set(presetIds).size !== 3) return { accepted: false, code: 'invalid_direction' }
+  const presets = presetIds.map(id => directionPresetById.get(id))
+  if (presets.some(preset => !preset)) return { accepted: false, code: 'invalid_direction' }
+  const sharedMedia = validatedOwnedMedia({
+    ...(input.ownedMedia ?? {}),
+    ...(input.heroImage ? { hero: input.heroImage } : {}),
+  })
+  if (!sharedMedia) return { accepted: false, code: 'invalid_direction' }
   const directions: MaterializedDesignDirection[] = []
-  for (const preset of set) {
+  for (const [index, preset] of (presets as DirectionPreset[]).entries()) {
+    const directionMedia = validatedOwnedMedia({ ...sharedMedia, ...(input.directionOwnedMedia?.[index] ?? {}) })
+    if (!directionMedia) return { accepted: false, code: 'invalid_direction' }
     const result = materializeLandingPageBlueprintV2({
       blueprint: blueprintFor(brief, content.data, preset),
       current: input.current,
       ...(input.imagePolicy ? { imagePolicy: input.imagePolicy } : {}),
-      ...(Object.keys(ownedMedia).length > 0 ? { ownedMedia } : {}),
+      ...(Object.keys(directionMedia).length > 0 ? { ownedMedia: directionMedia } : {}),
       designSystem: brief.designSystem,
     })
     if (!result.accepted) return { accepted: false, code: 'invalid_direction' }
@@ -463,7 +579,9 @@ function contentBrief(brief: WebsiteBrief): DesignDirectionContentBrief {
 
 export interface DesignDirectionProviderRequest {
   brief: DesignDirectionContentBrief
-  promptVersion: 'directions-v1'
+  round: number
+  excludedPresetIds: DesignDirectionPresetId[]
+  promptVersion: 'directions-v2'
   signal: AbortSignal
 }
 
@@ -481,26 +599,27 @@ export interface DesignDirectionProvider {
 export type DesignDirectionGenerationResult =
   | {
       accepted: true
-      blueprint: DesignDirectionContentBlueprint
+      blueprint: DesignDirectionGenerationPlan
       directions: MaterializedDesignDirection[]
       usage: z.infer<typeof usageSchema>
       provider: string
       model: string
-      promptVersion: 'directions-v1'
+      promptVersion: 'directions-v2'
     }
   | {
       accepted: false
-      code: 'invalid_model_output' | 'brief_mismatch' | 'provider_auth' | 'provider_rate_limit' | 'provider_timeout' | 'provider_transient' | 'provider_error'
+      code: 'invalid_model_output' | 'brief_mismatch' | 'provider_bad_request' | 'provider_auth' | 'provider_rate_limit' | 'provider_timeout' | 'provider_transient' | 'provider_error'
       usage: z.infer<typeof usageSchema>
       provider: string
       model: string
-      promptVersion: 'directions-v1'
+      promptVersion: 'directions-v2'
     }
 
 function safeProviderCode(error: unknown): Exclude<DesignDirectionGenerationResult, { accepted: true }>['code'] {
   const value = error && typeof error === 'object' && 'code' in error ? (error as { code?: unknown }).code : undefined
   return z.enum([
-    'provider_auth', 'provider_rate_limit', 'provider_timeout', 'provider_transient', 'provider_error',
+    'provider_bad_request', 'provider_auth', 'provider_rate_limit', 'provider_timeout', 'provider_transient',
+    'provider_error',
   ]).catch('provider_error').parse(value)
 }
 
@@ -509,27 +628,41 @@ export async function runDesignDirectionGeneration(input: {
   brief: WebsiteBrief
   current: DesignDocument
   round: number
+  excludedPresetIds?: readonly DesignDirectionPresetId[]
+  maxMediaPerRun?: number
   imagePolicy?: RemoteImagePolicy
   resolveHeroImage?: (intent: DesignDirectionImageIntent) => Promise<DesignDirectionOwnedImage | null>
   resolveMedia?: (intent: DesignDirectionMediaIntent) => Promise<DesignDirectionOwnedImage | null>
   timeoutMs?: number
 }): Promise<DesignDirectionGenerationResult> {
   const usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+  const mediaBudget = Math.trunc(input.maxMediaPerRun ?? 4)
+  if (mediaBudget !== 4) {
+    return {
+      accepted: false, code: 'invalid_model_output', usage,
+      provider: input.provider.name, model: input.provider.model, promptVersion: 'directions-v2',
+    }
+  }
   const parsedBrief = websiteBriefSchema.safeParse(input.brief)
   if (!parsedBrief.success) {
     return {
       accepted: false, code: 'invalid_model_output', usage,
-      provider: input.provider.name, model: input.provider.model, promptVersion: 'directions-v1',
+      provider: input.provider.name, model: input.provider.model, promptVersion: 'directions-v2',
     }
   }
   const brief = normalizeWebsiteBrief(parsedBrief.data)
+  const excludedPresetIds = [...new Set(input.excludedPresetIds ?? [])]
+    .filter((id): id is DesignDirectionPresetId => designDirectionPresetIdSchema.safeParse(id).success)
+    .slice(0, 3)
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), input.timeoutMs ?? 30_000)
   let response: DesignDirectionProviderResponse
   try {
     response = await input.provider.generateContentBlueprint({
       brief: contentBrief(brief),
-      promptVersion: 'directions-v1',
+      round: input.round,
+      excludedPresetIds,
+      promptVersion: 'directions-v2',
       signal: controller.signal,
     })
   } catch (error) {
@@ -539,24 +672,50 @@ export async function runDesignDirectionGeneration(input: {
       usage,
       provider: input.provider.name,
       model: input.provider.model,
-      promptVersion: 'directions-v1',
+      promptVersion: 'directions-v2',
     }
   } finally {
     clearTimeout(timeout)
   }
   const parsedUsage = usageSchema.safeParse(response.usage)
   const actualUsage = parsedUsage.success ? parsedUsage.data : usage
-  const blueprint = designDirectionContentBlueprintSchema.safeParse(response.output)
-  if (!blueprint.success) {
+  const plan = designDirectionGenerationPlanSchema.safeParse(response.output)
+  if (!plan.success) {
     return {
       accepted: false, code: 'invalid_model_output', usage: actualUsage,
-      provider: input.provider.name, model: input.provider.model, promptVersion: 'directions-v1',
+      provider: input.provider.name, model: input.provider.model, promptVersion: 'directions-v2',
     }
   }
-  const ownedMedia: OwnedMediaMap = {}
+  const resolvedPresetIds = resolveDesignDirectionPresetIds({
+    brief,
+    round: input.round,
+    plannedPresetIds: plan.data.directions.map(direction => direction.presetId),
+    excludedPresetIds,
+  })
+  if (resolvedPresetIds.length !== 3) {
+    return {
+      accepted: false, code: 'invalid_model_output', usage: actualUsage,
+      provider: input.provider.name, model: input.provider.model, promptVersion: 'directions-v2',
+    }
+  }
+  const resolvedPlan: DesignDirectionGenerationPlan = {
+    ...plan.data,
+    directions: plan.data.directions.map((direction, index) => ({
+      ...direction,
+      presetId: resolvedPresetIds[index]!,
+    })),
+  }
+  const sharedOwnedMedia: OwnedMediaMap = {}
   const intents: DesignDirectionMediaIntent[] = [
-    { slot: 'hero', ...blueprint.data.heroImage },
-    ...blueprint.data.contentImages,
+    {
+      key: 'shared-hero',
+      slot: 'hero',
+      ...resolvedPlan.content.heroImage,
+    },
+    ...resolvedPlan.content.contentImages.map(intent => ({
+      key: `shared-${intent.slot}`,
+      ...intent,
+    })),
   ]
   const resolver = input.resolveMedia
     ?? (input.resolveHeroImage
@@ -570,21 +729,24 @@ export async function runDesignDirectionGeneration(input: {
       const settled = await Promise.all(batch.map(async intent => {
         try {
           const parsed = ownedImagePropsSchema.safeParse(await resolver(intent))
-          return parsed.success ? { slot: intent.slot, image: parsed.data } : null
+          return parsed.success ? { intent, image: parsed.data } : null
         } catch {
           return null
         }
       }))
-      for (const value of settled) if (value) ownedMedia[value.slot] = value.image
+      for (const value of settled) {
+        if (value) sharedOwnedMedia[value.intent.slot] = value.image
+      }
     }
   }
   const materialized = materializeDesignDirections({
     brief,
-    blueprint: blueprint.data,
+    blueprint: resolvedPlan.content,
     current: input.current,
     round: input.round,
+    plannedPresetIds: resolvedPresetIds,
     ...(input.imagePolicy ? { imagePolicy: input.imagePolicy } : {}),
-    ...(Object.keys(ownedMedia).length > 0 ? { ownedMedia } : {}),
+    ...(Object.keys(sharedOwnedMedia).length > 0 ? { ownedMedia: sharedOwnedMedia } : {}),
   })
   if (!materialized.accepted) {
     return {
@@ -593,16 +755,16 @@ export async function runDesignDirectionGeneration(input: {
       usage: actualUsage,
       provider: input.provider.name,
       model: input.provider.model,
-      promptVersion: 'directions-v1',
+      promptVersion: 'directions-v2',
     }
   }
   return {
     accepted: true,
-    blueprint: blueprint.data,
+    blueprint: resolvedPlan,
     directions: materialized.directions,
     usage: actualUsage,
     provider: input.provider.name,
     model: input.provider.model,
-    promptVersion: 'directions-v1',
+    promptVersion: 'directions-v2',
   }
 }

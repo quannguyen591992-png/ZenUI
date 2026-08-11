@@ -115,6 +115,24 @@ describe('worker runtime configuration', () => {
     expect(() => loadWorkerRuntimeConfig()).toThrow('AI_ASSISTANT_V2_ENABLED requires opt-in rollout mode')
   })
 
+  it('rejects placeholder provider configuration before generation starts', () => {
+    process.env = {
+      ...previous,
+      ...environment,
+      WORKER_SERVICES: 'generation',
+      GOOGLE_GENERATIVE_AI_API_KEY: 'replace-with-provider-key',
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('GOOGLE_GENERATIVE_AI_API_KEY is not configured')
+
+    process.env = {
+      ...previous,
+      ...environment,
+      WORKER_SERVICES: 'generation',
+      GEMINI_MODEL: 'replace-with-supported-gemini-model',
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow('GEMINI_MODEL is not configured')
+  })
+
   it('loads generation, asset and export services without Vercel configuration', () => {
     process.env = {
       ...previous,
@@ -217,7 +235,7 @@ describe('worker runtime configuration', () => {
       AI_ASSISTANT_MULTI_CANDIDATE_ENABLED: 'true',
       AI_IMAGE_MAX_PER_RUN: '1',
     }
-    expect(() => loadWorkerRuntimeConfig()).toThrow('AI_ASSISTANT_MULTI_CANDIDATE_ENABLED requires AI_IMAGE_MAX_PER_RUN of at least 2')
+    expect(() => loadWorkerRuntimeConfig()).toThrow('AI_IMAGE_MAX_PER_RUN must be 4 for Design Directions')
   })
 
   it('loads generation-only and export-only optional service branches', () => {

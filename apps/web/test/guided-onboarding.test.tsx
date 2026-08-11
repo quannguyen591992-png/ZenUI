@@ -92,6 +92,14 @@ function api(overrides: Partial<GuidedOnboardingApi> = {}): GuidedOnboardingApi 
   }
 }
 
+async function fillRequiredBrief(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(screen.getByLabelText('Bạn cung cấp sản phẩm hoặc dịch vụ gì?'), 'NovaFlow')
+  await user.type(screen.getByLabelText('Website này dành cho ai?'), 'Nhóm sản phẩm nhỏ')
+  await user.type(screen.getByLabelText('Website này cần đạt được điều gì?'), 'Nhận lịch tư vấn')
+  await user.type(screen.getByLabelText('Khách truy cập nên làm gì tiếp theo?'), 'Đặt lịch tư vấn')
+  await user.type(screen.getByLabelText('Website nên mang lại cảm giác như thế nào?'), 'Rõ ràng và hiện đại')
+}
+
 afterEach(() => cleanup())
 
 describe('production Guided Brief and Design Direction Gallery', () => {
@@ -116,12 +124,12 @@ describe('production Guided Brief and Design Direction Gallery', () => {
     await user.type(screen.getByLabelText('Bạn cung cấp sản phẩm hoặc dịch vụ gì?'), 'NovaFlow')
     await user.click(screen.getByRole('button', { name: 'Tạo 3 hướng thiết kế' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Hãy kiểm tra các chi tiết còn thiếu')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Hãy kiểm tra các chi tiết chưa hợp lệ')
     expect(screen.getByLabelText('Bạn cung cấp sản phẩm hoặc dịch vụ gì?')).toHaveValue('NovaFlow')
     expect(screen.getByText('Hãy cho biết website này dành cho ai')).toBeVisible()
   })
 
-  it('sends a validated custom Design System before generating directions', async () => {
+  it('warns about low contrast but preserves the custom Design System when generating directions', async () => {
     const saveBrief = vi.fn((input: WebsiteBrief) => Promise.resolve(input))
     const createRun = vi.fn(() => Promise.resolve({
       id: runId, status: 'queued' as const, round: 0, errorCode: null, directions: null,
@@ -133,24 +141,63 @@ describe('production Guided Brief and Design Direction Gallery', () => {
     await user.click(screen.getByRole('radio', { name: 'Dùng thiết kế riêng' }))
     expect(screen.getByLabelText('Mã màu chính')).toBeVisible()
     expect(screen.getByLabelText('Xem trước hệ thống thiết kế')).toHaveStyle({ backgroundColor: '#ffffff' })
+    await user.clear(screen.getByLabelText('Mã màu chính'))
+    await user.type(screen.getByLabelText('Mã màu chính'), '#24eb94')
+    await user.clear(screen.getByLabelText('Mã màu chữ'))
+    await user.type(screen.getByLabelText('Mã màu chữ'), '#2c56ba')
     await user.selectOptions(screen.getByLabelText('Font tiêu đề'), 'Georgia')
     await user.selectOptions(screen.getByLabelText('Cỡ chữ'), 'expressive')
     await user.selectOptions(screen.getByLabelText('Mật độ bố cục'), 'airy')
     await user.selectOptions(screen.getByLabelText('Bo góc thành phần'), 'soft')
-    await user.type(screen.getByLabelText('Bạn cung cấp sản phẩm hoặc dịch vụ gì?'), 'NovaFlow')
-    await user.type(screen.getByLabelText('Website này dành cho ai?'), 'Nhóm sản phẩm nhỏ')
-    await user.type(screen.getByLabelText('Website này cần đạt được điều gì?'), 'Nhận lịch tư vấn')
-    await user.type(screen.getByLabelText('Khách truy cập nên làm gì tiếp theo?'), 'Đặt lịch tư vấn')
-    await user.type(screen.getByLabelText('Website nên mang lại cảm giác như thế nào?'), 'Rõ ràng và hiện đại')
+
+    const warning = screen.getByRole('status', { name: 'Cảnh báo độ tương phản màu' })
+    expect(warning).toHaveTextContent('có thể khó đọc')
+    expect(warning).toHaveTextContent('vẫn giữ nguyên')
+
+    await fillRequiredBrief(user)
     await user.click(screen.getByRole('button', { name: 'Tạo 3 hướng thiết kế' }))
 
     await waitFor(() => expect(saveBrief).toHaveBeenCalledWith(expect.objectContaining({
       designSystem: {
         mode: 'custom',
-        colors: { primary: '#2563eb', background: '#ffffff', text: '#0f172a' },
+        colors: { primary: '#24eb94', background: '#ffffff', text: '#2c56ba' },
         fonts: { heading: 'Georgia', body: 'Arial' },
         typography: 'expressive', spacing: 'airy', radius: 'soft',
       },
+    })))
+    expect(createRun).toHaveBeenCalledOnce()
+  })
+
+  it('blocks malformed custom colors with a field error, then succeeds after correction', async () => {
+    const saveBrief = vi.fn((input: WebsiteBrief) => Promise.resolve(input))
+    const createRun = vi.fn(() => Promise.resolve({
+      id: runId, status: 'queued' as const, round: 0, errorCode: null, directions: null,
+    }))
+    render(<GuidedOnboarding projectId={projectId} workspaceId={workspaceId} expectedVersion={1} assetOrigin="http://127.0.0.1:3002" api={api({ saveBrief, createRun })} onAccepted={vi.fn()} />)
+    const user = userEvent.setup()
+    await screen.findByRole('heading', { name: 'Hãy cho chúng tôi biết website bạn muốn tạo' })
+    await user.click(screen.getByRole('radio', { name: 'Dùng thiết kế riêng' }))
+    await fillRequiredBrief(user)
+
+    const primaryColor = screen.getByLabelText('Mã màu chính')
+    await user.clear(primaryColor)
+    await user.type(primaryColor, '#24eb')
+    await user.click(screen.getByRole('button', { name: 'Tạo 3 hướng thiết kế' }))
+
+    expect(await screen.findByText('Hãy nhập mã màu HEX gồm 6 ký tự')).toBeVisible()
+    expect(primaryColor).toHaveAttribute('aria-invalid', 'true')
+    expect(primaryColor).toHaveValue('#24eb')
+    expect(saveBrief).not.toHaveBeenCalled()
+    expect(createRun).not.toHaveBeenCalled()
+
+    await user.clear(primaryColor)
+    await user.type(primaryColor, '#24eb94')
+    await user.click(screen.getByRole('button', { name: 'Tạo 3 hướng thiết kế' }))
+
+    await waitFor(() => expect(saveBrief).toHaveBeenCalledWith(expect.objectContaining({
+      designSystem: expect.objectContaining({
+        colors: expect.objectContaining({ primary: '#24eb94' }),
+      }),
     })))
     expect(createRun).toHaveBeenCalledOnce()
   })
@@ -211,6 +258,51 @@ describe('production Guided Brief and Design Direction Gallery', () => {
     })))
   })
 
+  it('keeps the Gallery retryable and reports a Choose failure separately from preparation', async () => {
+    const saveBrief = vi.fn((input: WebsiteBrief) => Promise.resolve(input))
+    const createRun = vi.fn(() => Promise.resolve({
+      id: runId, status: 'queued' as const, round: 0, errorCode: null, directions: null,
+    }))
+    const chooseDirection = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error('request_failed'), { code: 'internal_error', status: 500 }))
+      .mockImplementation((_runId: string, directionId: string) => Promise.resolve({
+        version: 2,
+        directionId,
+        document: directions.find(direction => direction.id === directionId)!.document,
+      }))
+    const onAccepted = vi.fn()
+    render(<GuidedOnboarding projectId={projectId} workspaceId={workspaceId} expectedVersion={1} assetOrigin="http://127.0.0.1:3002" api={api({
+      loadBrief: () => Promise.resolve({
+        description: '', offer: 'NovaFlow', audience: 'Nhóm sản phẩm nhỏ', primaryGoal: 'Nhận lịch tư vấn',
+        cta: 'Đặt lịch tư vấn', tone: 'Rõ ràng và hiện đại', brandDetails: '',
+        mustHaveSections: ['introduction', 'benefits', 'contact'],
+      }),
+      saveBrief,
+      createRun,
+      chooseDirection,
+    })} onAccepted={onAccepted} />)
+    const user = userEvent.setup()
+    await screen.findByDisplayValue('NovaFlow')
+    await user.click(screen.getByRole('button', { name: 'Tạo 3 hướng thiết kế' }))
+    await screen.findAllByTestId('production-direction-card')
+
+    await user.click(screen.getAllByRole('button', { name: 'Chọn hướng này' })[1]!)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Không thể áp dụng hướng đã chọn')
+    expect(alert).toHaveTextContent('Vui lòng thử lại')
+    expect(alert).not.toHaveTextContent('Không thể chuẩn bị hướng thiết kế')
+    expect(screen.getAllByTestId('production-direction-card')).toHaveLength(3)
+    expect(screen.getAllByRole('button', { name: 'Chọn hướng này' })[1]).toBeEnabled()
+    expect(onAccepted).not.toHaveBeenCalled()
+
+    await user.click(screen.getAllByRole('button', { name: 'Chọn hướng này' })[1]!)
+    await waitFor(() => expect(onAccepted).toHaveBeenCalledOnce())
+    expect(chooseDirection).toHaveBeenCalledTimes(2)
+    expect(saveBrief).toHaveBeenCalledOnce()
+    expect(createRun).toHaveBeenCalledOnce()
+  })
+
   it('renders owned images in Gallery thumbnails and the large preview', async () => {
     const assetId = '55555555-5555-4555-8555-555555555555'
     const mediaDirections = directions.map(direction => {
@@ -266,6 +358,31 @@ describe('production Guided Brief and Design Direction Gallery', () => {
       'src',
       `http://127.0.0.1:3002/a/${assetId}`,
     )
+  })
+
+  it('shows an actionable safe provider error and preserves the brief', async () => {
+    render(<GuidedOnboarding projectId={projectId} workspaceId={workspaceId} expectedVersion={1} assetOrigin="http://127.0.0.1:3002" api={api({
+      loadBrief: () => Promise.resolve({
+        description: '', offer: 'NovaFlow', audience: 'Nhóm sản phẩm nhỏ', primaryGoal: 'Nhận lịch tư vấn',
+        cta: 'Đặt lịch tư vấn', tone: 'Rõ ràng và hiện đại', brandDetails: '',
+        mustHaveSections: ['introduction', 'benefits', 'contact'],
+      }),
+      subscribe: (_runId, onEvent) => {
+        queueMicrotask(() => onEvent({
+          id: runId, status: 'failed', round: 0, errorCode: 'provider_bad_request', directions: null,
+        }))
+        return () => undefined
+      },
+    })} onAccepted={vi.fn()} />)
+    const user = userEvent.setup()
+    await screen.findByDisplayValue('NovaFlow')
+    await user.click(screen.getByRole('button', { name: 'Tạo 3 hướng thiết kế' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Cấu hình yêu cầu AI chưa tương thích')
+    expect(alert).toHaveTextContent('Bản mô tả của bạn vẫn an toàn')
+    await user.click(screen.getByRole('button', { name: 'Điều chỉnh bản mô tả' }))
+    expect(await screen.findByDisplayValue('NovaFlow')).toBeVisible()
   })
 
   it('keeps current cards while replacing and preserves the brief on failure', async () => {

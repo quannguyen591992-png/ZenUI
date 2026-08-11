@@ -4,6 +4,7 @@ import {
   GUIDED_RADIUS_PRESET_IDS,
   GUIDED_SPACING_PRESET_IDS,
   GUIDED_TYPOGRAPHY_PRESET_IDS,
+  guidedDesignSystemWarnings,
   normalizeWebsiteBrief,
   prefillWebsiteBrief,
   websiteBriefSchema,
@@ -15,6 +16,7 @@ import {
 import { FONT_ALLOWLIST } from '@zenui/design-schema'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 
+import { generationErrorLabel } from '../../../../lib/ui-copy'
 import { DesignDocumentRenderer } from '../../../components/design-document-renderer'
 
 import type { DesignDocument } from '@zenui/design-schema'
@@ -70,6 +72,8 @@ const emptyBrief: GuidedBrief = {
 }
 
 type CustomDesignSystem = Extract<NonNullable<WebsiteBrief['designSystem']>, { mode: 'custom' }>
+type DesignSystemField = 'primary' | 'background' | 'text' | 'designSystem'
+type FormErrors = Partial<Record<keyof WebsiteBrief | DesignSystemField, string>>
 
 const customDesignSystem: CustomDesignSystem = {
   mode: 'custom',
@@ -99,9 +103,39 @@ const sectionLabels: Record<WebsiteBriefSection, string> = {
 }
 
 async function readData<T>(response: Response): Promise<T> {
-  const body = await response.json() as { data?: T }
-  if (!response.ok || body.data === undefined) throw new Error('request_failed')
+  const body = await response.json() as { data?: T; error?: { code?: string } }
+  if (!response.ok || body.data === undefined) {
+    throw Object.assign(new Error('request_failed'), {
+      code: body.error?.code ?? 'internal_error',
+      status: response.status,
+    })
+  }
   return body.data
+}
+
+function requestErrorCode(error: unknown): string {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return 'internal_error'
+  return typeof error.code === 'string' ? error.code : 'internal_error'
+}
+
+function chooseErrorLabel(code: string): string {
+  switch (code) {
+    case 'stale_document_version':
+      return 'Website đã thay đổi. Hãy tải lại phiên bản mới nhất trước khi chọn hướng.'
+    case 'direction_not_found':
+    case 'run_not_selectable':
+      return 'Bộ hướng này không còn có thể chọn. Hãy chuẩn bị ba hướng mới.'
+    case 'invalid_design_document':
+      return 'Hướng đã chọn không thể được áp dụng an toàn. Hãy chọn hướng khác.'
+    case 'unauthorized':
+      return 'Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại trước khi chọn hướng.'
+    case 'forbidden':
+      return 'Bạn không có quyền áp dụng hướng thiết kế này.'
+    case 'not_found':
+      return 'Không tìm thấy bộ hướng thiết kế này. Hãy tải lại dự án.'
+    default:
+      return 'Không thể áp dụng hướng đã chọn. Vui lòng thử lại.'
+  }
 }
 
 function browserApi(projectId: string, workspaceId: string, expectedVersion: number): GuidedOnboardingApi {
@@ -139,16 +173,33 @@ function browserApi(projectId: string, workspaceId: string, expectedVersion: num
   }
 }
 
-function errorsFor(brief: WebsiteBrief): Partial<Record<keyof WebsiteBrief, string>> {
-  const result: Partial<Record<keyof WebsiteBrief, string>> = {}
-  if (!brief.offer.trim()) result.offer = 'Hãy cho biết bạn cung cấp sản phẩm hoặc dịch vụ gì'
-  if (!brief.audience.trim()) result.audience = 'Hãy cho biết website này dành cho ai'
-  if (!brief.primaryGoal.trim()) result.primaryGoal = 'Hãy cho biết mục tiêu chính của website'
-  if (!brief.cta.trim()) result.cta = 'Hãy thêm hành động chính cho khách truy cập'
-  if (!brief.tone.trim()) result.tone = 'Hãy mô tả cảm giác mà website nên mang lại'
-  if (!brief.mustHaveSections.includes('introduction') || !brief.mustHaveSections.includes('contact')) {
-    result.mustHaveSections = 'Website cần có phần giới thiệu và một nơi để thực hiện hành động chính'
+function errorsFor(brief: WebsiteBrief): FormErrors {
+  const result: FormErrors = {}
+  const parsed = websiteBriefSchema.safeParse(brief)
+  if (parsed.success) return result
+
+  for (const issue of parsed.error.issues) {
+    const path = issue.path.join('.')
+    if (path === 'offer') result.offer = 'Hãy cho biết bạn cung cấp sản phẩm hoặc dịch vụ gì'
+    else if (path === 'audience') result.audience = 'Hãy cho biết website này dành cho ai'
+    else if (path === 'primaryGoal') result.primaryGoal = 'Hãy cho biết mục tiêu chính của website'
+    else if (path === 'cta') result.cta = 'Hãy thêm hành động chính cho khách truy cập'
+    else if (path === 'tone') result.tone = 'Hãy mô tả cảm giác mà website nên mang lại'
+    else if (path === 'brandDetails') result.brandDetails = 'Chi tiết thương hiệu không được vượt quá 500 ký tự'
+    else if (path === 'description') result.description = 'Mô tả không được vượt quá 2000 ký tự'
+    else if (path === 'mustHaveSections') {
+      result.mustHaveSections = 'Website cần có phần giới thiệu và một nơi để thực hiện hành động chính'
+    } else if (path === 'designSystem.colors.primary') {
+      result.primary = 'Hãy nhập mã màu HEX gồm 6 ký tự'
+    } else if (path === 'designSystem.colors.background') {
+      result.background = 'Hãy nhập mã màu HEX gồm 6 ký tự'
+    } else if (path === 'designSystem.colors.text') {
+      result.text = 'Hãy nhập mã màu HEX gồm 6 ký tự'
+    } else if (path.startsWith('designSystem')) {
+      result.designSystem = 'Hệ thống thiết kế có lựa chọn không hợp lệ'
+    }
   }
+
   return result
 }
 
@@ -159,12 +210,13 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
     [suppliedApi, expectedVersion, projectId, workspaceId],
   )
   const [brief, setBrief] = useState<GuidedBrief>(emptyBrief)
-  const [errors, setErrors] = useState<Partial<Record<keyof WebsiteBrief, string>>>({})
+  const [errors, setErrors] = useState<FormErrors>({})
   const [loading, setLoading] = useState(true)
   const [screen, setScreen] = useState<'brief' | 'gallery'>('brief')
   const [status, setStatus] = useState<'idle' | 'preparing' | 'replacing' | 'failed' | 'choosing'>('idle')
   const [run, setRun] = useState<GuidedOnboardingRun | null>(null)
   const [directions, setDirections] = useState<MaterializedDesignDirection[]>([])
+  const [chooseErrorCode, setChooseErrorCode] = useState<string | null>(null)
   const [viewport, setViewport] = useState<RenderViewport>('desktop')
   const [confirmReplace, setConfirmReplace] = useState(false)
   const [preview, setPreview] = useState<MaterializedDesignDirection | null>(null)
@@ -221,7 +273,12 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
         fonts: { ...current.designSystem.fonts, ...(patch.fonts ?? {}) },
       },
     } : current)
-    setErrors({})
+    setErrors(current => Object.fromEntries(
+      Object.entries(current).filter(([field]) => (
+        field !== 'designSystem'
+        && !Object.hasOwn(patch.colors ?? {}, field)
+      )),
+    ))
   }
   const toggleSection = (section: WebsiteBriefSection) => {
     setBrief(current => ({
@@ -243,8 +300,9 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
   const start = async (round: number, replacing: boolean) => {
     const nextErrors = errorsFor(brief)
     setErrors(nextErrors)
-    if (Object.keys(nextErrors).length > 0 || !websiteBriefSchema.safeParse(brief).success) return
+    if (Object.values(nextErrors).some(Boolean)) return
     setStatus(replacing ? 'replacing' : 'preparing')
+    setChooseErrorCode(null)
     setConfirmReplace(false)
     if (!replacing) setScreen('gallery')
     try {
@@ -279,16 +337,17 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
   const choose = async (direction: MaterializedDesignDirection) => {
     if (!run || status !== 'idle') return
     setStatus('choosing')
+    setChooseErrorCode(null)
     try {
-      onAccepted({
-        ...await client.chooseDirection(run.id, direction.id),
-        brief,
-      })
-    } catch {
-      setStatus('failed')
+      const accepted = await client.chooseDirection(run.id, direction.id)
+      onAccepted({ ...accepted, brief })
+    } catch (error) {
+      setChooseErrorCode(requestErrorCode(error))
+      setStatus('idle')
     }
   }
 
+  const designSystemWarnings = guidedDesignSystemWarnings(brief.designSystem)
   const previewRadius = brief.designSystem.mode === 'custom'
     ? brief.designSystem.radius === 'sharp' ? 8 : brief.designSystem.radius === 'balanced' ? 12 : 20
     : 12
@@ -332,7 +391,7 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
         </section>
         <form className="guided-brief-card pro-card" onSubmit={(event: FormEvent) => { event.preventDefault(); void start(0, false) }}>
           <div className="guided-section-heading"><h2>Bản mô tả website</h2></div>
-          {Object.keys(errors).length > 0 && <p className="guided-form-summary" role="alert">Hãy kiểm tra các chi tiết còn thiếu. Thông tin bạn đã nhập vẫn được giữ.</p>}
+          {Object.values(errors).some(Boolean) && <p className="guided-form-summary" role="alert">Hãy kiểm tra các chi tiết chưa hợp lệ. Thông tin bạn đã nhập vẫn được giữ.</p>}
           <div className="guided-brief-grid">
             {(Object.keys(fieldLabels) as (keyof typeof fieldLabels)[]).map(field => (
               <label key={field}>
@@ -357,15 +416,43 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
               <div className="guided-custom-design-system">
                 <p>Mọi hướng thiết kế sẽ dùng cùng màu sắc, kiểu chữ, khoảng cách và bo góc bạn đã chọn.</p>
                 <div className="guided-brief-grid">
-                  <label><span>Màu chính</span><div className="color-picker-input"><input type="color" aria-label="Bộ chọn màu chính" value={brief.designSystem.colors.primary} onChange={event => updateCustomDesignSystem({ colors: { primary: event.target.value } })} /><input aria-label="Mã màu chính" value={brief.designSystem.colors.primary} onChange={event => updateCustomDesignSystem({ colors: { primary: event.target.value } })} /></div></label>
-                  <label><span>Màu nền</span><div className="color-picker-input"><input type="color" aria-label="Bộ chọn màu nền" value={brief.designSystem.colors.background} onChange={event => updateCustomDesignSystem({ colors: { background: event.target.value } })} /><input aria-label="Mã màu nền" value={brief.designSystem.colors.background} onChange={event => updateCustomDesignSystem({ colors: { background: event.target.value } })} /></div></label>
-                  <label><span>Màu chữ</span><div className="color-picker-input"><input type="color" aria-label="Bộ chọn màu chữ" value={brief.designSystem.colors.text} onChange={event => updateCustomDesignSystem({ colors: { text: event.target.value } })} /><input aria-label="Mã màu chữ" value={brief.designSystem.colors.text} onChange={event => updateCustomDesignSystem({ colors: { text: event.target.value } })} /></div></label>
+                  <label>
+                    <span>Màu chính</span>
+                    <div className="color-picker-input">
+                      <input type="color" aria-label="Bộ chọn màu chính" value={brief.designSystem.colors.primary} onChange={event => updateCustomDesignSystem({ colors: { primary: event.target.value } })} />
+                      <input aria-label="Mã màu chính" aria-invalid={Boolean(errors.primary)} aria-describedby={errors.primary ? 'primary-color-error' : undefined} value={brief.designSystem.colors.primary} onChange={event => updateCustomDesignSystem({ colors: { primary: event.target.value } })} />
+                    </div>
+                    {errors.primary && <span id="primary-color-error" className="guided-field-error">{errors.primary}</span>}
+                  </label>
+                  <label>
+                    <span>Màu nền</span>
+                    <div className="color-picker-input">
+                      <input type="color" aria-label="Bộ chọn màu nền" value={brief.designSystem.colors.background} onChange={event => updateCustomDesignSystem({ colors: { background: event.target.value } })} />
+                      <input aria-label="Mã màu nền" aria-invalid={Boolean(errors.background)} aria-describedby={errors.background ? 'background-color-error' : undefined} value={brief.designSystem.colors.background} onChange={event => updateCustomDesignSystem({ colors: { background: event.target.value } })} />
+                    </div>
+                    {errors.background && <span id="background-color-error" className="guided-field-error">{errors.background}</span>}
+                  </label>
+                  <label>
+                    <span>Màu chữ</span>
+                    <div className="color-picker-input">
+                      <input type="color" aria-label="Bộ chọn màu chữ" value={brief.designSystem.colors.text} onChange={event => updateCustomDesignSystem({ colors: { text: event.target.value } })} />
+                      <input aria-label="Mã màu chữ" aria-invalid={Boolean(errors.text)} aria-describedby={errors.text ? 'text-color-error' : undefined} value={brief.designSystem.colors.text} onChange={event => updateCustomDesignSystem({ colors: { text: event.target.value } })} />
+                    </div>
+                    {errors.text && <span id="text-color-error" className="guided-field-error">{errors.text}</span>}
+                  </label>
                   <label><span>Font tiêu đề</span><select aria-label="Font tiêu đề" value={brief.designSystem.fonts.heading} onChange={event => updateCustomDesignSystem({ fonts: { heading: event.target.value as typeof brief.designSystem.fonts.heading } })}>{FONT_ALLOWLIST.map(font => <option key={font} value={font}>{font}</option>)}</select></label>
                   <label><span>Font nội dung</span><select aria-label="Font nội dung" value={brief.designSystem.fonts.body} onChange={event => updateCustomDesignSystem({ fonts: { body: event.target.value as typeof brief.designSystem.fonts.body } })}>{FONT_ALLOWLIST.map(font => <option key={font} value={font}>{font}</option>)}</select></label>
                   <label><span>Cỡ chữ</span><select aria-label="Cỡ chữ" value={brief.designSystem.typography} onChange={event => updateCustomDesignSystem({ typography: event.target.value as typeof brief.designSystem.typography })}>{GUIDED_TYPOGRAPHY_PRESET_IDS.map(value => <option key={value} value={value}>{value === 'compact' ? 'Gọn gàng' : value === 'balanced' ? 'Cân bằng' : 'Ấn tượng'}</option>)}</select></label>
                   <label><span>Mật độ bố cục</span><select aria-label="Mật độ bố cục" value={brief.designSystem.spacing} onChange={event => updateCustomDesignSystem({ spacing: event.target.value as typeof brief.designSystem.spacing })}>{GUIDED_SPACING_PRESET_IDS.map(value => <option key={value} value={value}>{value === 'compact' ? 'Gọn' : value === 'balanced' ? 'Cân bằng' : 'Thoáng'}</option>)}</select></label>
                   <label><span>Bo góc thành phần</span><select aria-label="Bo góc thành phần" value={brief.designSystem.radius} onChange={event => updateCustomDesignSystem({ radius: event.target.value as typeof brief.designSystem.radius })}>{GUIDED_RADIUS_PRESET_IDS.map(value => <option key={value} value={value}>{value === 'sharp' ? 'Vuông gọn' : value === 'balanced' ? 'Mềm vừa' : 'Bo tròn'}</option>)}</select></label>
                 </div>
+                {errors.designSystem && <p className="guided-field-error">{errors.designSystem}</p>}
+                {designSystemWarnings.length > 0 && (
+                  <aside className="guided-design-system-warning" role="status" aria-label="Cảnh báo độ tương phản màu">
+                    <strong>Lưu ý về khả năng đọc</strong>
+                    <p>Một số cặp màu có độ tương phản thấp và có thể khó đọc. ZenUI vẫn giữ nguyên màu bạn chọn trong cả ba hướng thiết kế.</p>
+                  </aside>
+                )}
                 <article
                   aria-label="Xem trước hệ thống thiết kế"
                   className="guided-design-system-preview"
@@ -459,7 +546,16 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
           ))}
         </section>
       )}
-      {status === 'failed' && <p role="alert" className="guided-error">Không thể chuẩn bị hướng thiết kế. Bản mô tả của bạn vẫn an toàn.</p>}
+      {status === 'failed' && (
+        <p role="alert" className="guided-error">
+          {run?.errorCode ? generationErrorLabel(run.errorCode) : 'Không thể chuẩn bị hướng thiết kế.'} Bản mô tả của bạn vẫn an toàn.
+        </p>
+      )}
+      {chooseErrorCode && (
+        <p role="alert" className="guided-error">
+          {chooseErrorLabel(chooseErrorCode)} Ba hướng thiết kế và bản mô tả của bạn vẫn an toàn.
+        </p>
+      )}
       {status === 'replacing' && directions.length > 0 && (
         <div className="guided-preparation-panel" role="group" aria-label="Đang chuẩn bị hướng thiết kế">
           <section className="guided-direction-loading" role="status">Đang tạo ba hướng thiết kế mới...</section>

@@ -5,8 +5,9 @@ import {
   buildAiOperationsResponseJsonSchema,
   buildAssistantContextPack,
   createMockLlmProvider,
-  designDirectionContentBlueprintJsonSchema,
+  designDirectionGenerationPlanJsonSchema,
   designDirectionJobSchema,
+  designDirectionPlannerCatalog,
   landingPageProviderBlueprintJsonSchema,
   assistantPlanV2Schema,
   styleEditSpecSchema,
@@ -251,14 +252,17 @@ export function createGeminiProvider(dependencies: GeminiProviderDependencies): 
           contents: JSON.stringify({
             promptVersion: input.promptVersion,
             brief: input.brief,
-            outputContract: 'Return one content blueprint plus one bounded hero image search intent. The intent contains only a concise search query and descriptive alt text; never return a URL, provider result ID, asset ID, credential, visual preset, style, HTML, CSS, JavaScript, node, or ID.',
+            round: input.round,
+            excludedPresetIds: input.excludedPresetIds,
+            plannerCatalog: designDirectionPlannerCatalog,
+            outputContract: 'Return design-directions-v2 with one shared content blueprint and exactly three directions. Each direction chooses one presetId from plannerCatalog and contains no media fields. The shared content contains one shared Hero image intent and exactly three shared feature images using feature-1, feature-2, and feature-3. Every image intent contains only a concise search query and descriptive alt text; never return a URL, provider result ID, asset ID, credential, visual values, style, HTML, CSS, JavaScript, node, ID, mutation, revision, or publication instruction.',
           }),
           config: {
             systemInstruction: systemPolicy,
             temperature: 0.2,
             maxOutputTokens: dependencies.generateMaxOutputTokens ?? 4096,
             responseMimeType: 'application/json',
-            responseJsonSchema: geminiResponseSchema(designDirectionContentBlueprintJsonSchema),
+            responseJsonSchema: geminiResponseSchema(designDirectionGenerationPlanJsonSchema),
           },
         }, input.signal)
       } catch (error) {
@@ -1341,7 +1345,11 @@ interface WorkerJob<T> { data: T }
 
 export interface DesignDirectionWorkerRepository {
   getWorkerInput(context: AuthContext, runId: string): Promise<(
-    DesignDirectionRunRecord & { brief: DesignDirectionProviderRequest['brief']; document: DesignDocument }
+    DesignDirectionRunRecord & {
+      brief: DesignDirectionProviderRequest['brief']
+      document: DesignDocument
+      previousDirectionIds: DesignDirectionProviderRequest['excludedPresetIds']
+    }
   ) | null>
   claim(
     context: AuthContext,
@@ -1379,6 +1387,7 @@ export function createDesignDirectionProcessor(dependencies: {
     intent: DesignDirectionImageIntent
   }) => Promise<DesignDirectionOwnedImage | null>
   timeoutMs?: number
+  maxMediaPerRun?: number
   imagePolicy?: RemoteImagePolicy
 }) {
   return async function process(job: WorkerJob<DesignDirectionJob>): Promise<DesignDirectionRunRecord> {
@@ -1390,7 +1399,7 @@ export function createDesignDirectionProcessor(dependencies: {
     const claimed = await dependencies.repository.claim(context, run.id, {
       provider: dependencies.provider.name,
       model: dependencies.provider.model,
-      promptVersion: 'directions-v1',
+      promptVersion: 'directions-v2',
     })
     if (!claimed) throw new Error('design_direction_run_not_claimed')
     const result = await runDesignDirectionGeneration({
@@ -1398,6 +1407,8 @@ export function createDesignDirectionProcessor(dependencies: {
       brief: run.brief,
       current: run.document,
       round: run.round,
+      excludedPresetIds: run.previousDirectionIds,
+      ...(dependencies.maxMediaPerRun !== undefined ? { maxMediaPerRun: dependencies.maxMediaPerRun } : {}),
       ...(dependencies.resolveMedia ? {
         resolveMedia: intent => dependencies.resolveMedia!({
           context,

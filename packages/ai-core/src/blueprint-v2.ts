@@ -531,7 +531,7 @@ function renderFeatures(
         width: 'full', maxWidth: iconList ? 180 : undefined, aspectRatio: iconList ? 'square' : 'landscape',
         objectFit: 'cover', objectPosition: 'center', borderRadius: theme.radius.sm, backgroundColor: theme.soft,
       }, { mobile: { maxWidth: iconList ? 120 : undefined } })
-    } else if (!iconList && slot) {
+    } else if (!iconList && item.image) {
       builder.create('feature-card', `feature-media-slot-${itemIndex + 1}`, card.id, {
         title: item.heading,
         description: item.paragraph,

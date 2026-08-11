@@ -16,7 +16,7 @@ test('prepares exactly three directions with one provider call and accepts one i
   await page.getByLabel('Mô tả doanh nghiệp hoặc ý tưởng').fill(
     'NovaFlow giúp nhóm sản phẩm nhỏ lên kế hoạch ra mắt. Mục tiêu là nhận lịch tư vấn. Hành động chính: Đặt lịch tư vấn.',
   )
-  await page.getByRole('button', { name: 'Dùng mô tả của tôi' }).click()
+  await page.getByRole('button', { name: 'Tạo tự động' }).click()
   await expect(page.getByLabel('Bạn cung cấp sản phẩm hoặc dịch vụ gì?')).toHaveValue(
     'NovaFlow giúp nhóm sản phẩm nhỏ lên kế hoạch ra mắt',
   )
@@ -30,17 +30,18 @@ test('prepares exactly three directions with one provider call and accepts one i
 
   await page.getByRole('button', { name: 'Tạo 3 hướng thiết kế' }).click()
   await expect(page.getByTestId('production-direction-card')).toHaveCount(3)
-  await expect(page.getByRole('heading', { name: 'Đà tiến rõ ràng' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Người bạn đáng tin' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Rõ ràng và điềm tĩnh' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Khởi động nổi bật' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Đà tiến rõ ràng' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Người bạn đáng tin' })).toHaveCount(0)
 
   const directionCards = page.getByTestId('production-direction-card')
-  const clearPreview = directionCards.nth(0).locator('.design-document-renderer')
-  const trustedPreview = directionCards.nth(1).locator('.design-document-renderer')
-  const boldPreview = directionCards.nth(2).locator('.design-document-renderer')
-  await expect(clearPreview.locator('[data-node-type="heading"]').first()).toBeVisible()
-  await expect(trustedPreview.locator('[data-node-type="heading"]').first()).toBeVisible()
-  await expect(boldPreview.locator('[data-node-type="heading"]').first()).toBeVisible()
+  const firstPreview = directionCards.nth(0).locator('.design-document-renderer')
+  const secondPreview = directionCards.nth(1).locator('.design-document-renderer')
+  const thirdPreview = directionCards.nth(2).locator('.design-document-renderer')
+  await expect(firstPreview.locator('[data-node-type="heading"]').first()).toBeVisible()
+  await expect(secondPreview.locator('[data-node-type="heading"]').first()).toBeVisible()
+  await expect(thirdPreview.locator('[data-node-type="heading"]').first()).toBeVisible()
   const desktopThumbnailGeometry = await page.evaluate(() => (
     [...document.querySelectorAll<HTMLElement>('.guided-direction-preview')].map(preview => {
       const content = preview.querySelector<HTMLElement>('.design-document-renderer [data-node-type="heading"]')
@@ -61,8 +62,8 @@ test('prepares exactly three directions with one provider call and accepts one i
   expect(desktopThumbnailGeometry.every(item => item.intersects && item.startsInside)).toBe(true)
 
   await page.getByRole('button', { name: 'Điện thoại' }).click()
-  await expect(clearPreview).toHaveAttribute('data-viewport', 'mobile')
-  await expect(clearPreview.locator('[data-node-type="heading"]').first()).toBeVisible()
+  await expect(firstPreview).toHaveAttribute('data-viewport', 'mobile')
+  await expect(firstPreview.locator('[data-node-type="heading"]').first()).toBeVisible()
   const mobileThumbnailGeometry = await page.evaluate(() => {
     const preview = document.querySelector<HTMLElement>('.guided-direction-preview')
     const content = preview?.querySelector<HTMLElement>('.design-document-renderer [data-node-type="heading"]')
@@ -81,7 +82,7 @@ test('prepares exactly three directions with one provider call and accepts one i
   expect(mobileThumbnailGeometry.intersects && mobileThumbnailGeometry.startsInside).toBe(true)
 
   await page.getByRole('button', { name: 'Xem lớn hơn' }).first().click()
-  await expect(page.getByRole('dialog', { name: /Bản xem trước lớn của Đà tiến rõ ràng/ })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: /Bản xem trước lớn của Rõ ràng và điềm tĩnh/ })).toBeVisible()
   await page.getByRole('button', { name: 'Đóng' }).click()
 
   const prepared = await page.request.get(`/api/v1/projects/${projectId}?workspaceId=${workspaceId}`)
@@ -90,6 +91,19 @@ test('prepares exactly three directions with one provider call and accepts one i
   expect((await revisionsBeforeChoose.json()).data).toEqual([])
   const counters = await page.request.get('/api/e2e/runtime-counters')
   expect((await counters.json()).data).toEqual({ directionProviderCalls: 1 })
+
+  await page.getByRole('button', { name: 'Thử 3 hướng khác' }).click()
+  await page.getByRole('button', { name: 'Xác nhận thay 3 hướng' }).click()
+  await expect(page.getByRole('heading', { name: 'Biên tập chính xác' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Hướng dẫn thân thiện' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Sản phẩm sống động' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Rõ ràng và điềm tĩnh' })).toHaveCount(0)
+  const remixed = await page.request.get(`/api/v1/projects/${projectId}?workspaceId=${workspaceId}`)
+  expect((await remixed.json()).data).toMatchObject({ creationState: 'onboarding', version: 1 })
+  const revisionsAfterRemix = await page.request.get(`/api/v1/projects/${projectId}/revisions?workspaceId=${workspaceId}`)
+  expect((await revisionsAfterRemix.json()).data).toEqual([])
+  const remixCounters = await page.request.get('/api/e2e/runtime-counters')
+  expect((await remixCounters.json()).data).toEqual({ directionProviderCalls: 2 })
 
   const chooseResponse = page.waitForResponse(response => response.url().endsWith('/choose'))
   await page.getByRole('button', { name: 'Chọn hướng này' }).nth(1).click()
@@ -106,17 +120,17 @@ test('prepares exactly three directions with one provider call and accepts one i
   await expect(page.getByRole('heading', { name: 'Đánh giá website' })).toBeVisible()
   await expect(page.getByText('Nhận lịch tư vấn phù hợp', { exact: false }).first()).toBeVisible()
 
-  await page.getByRole('button', { name: 'Giải thích thiết kế này' }).click()
-  await expect(page.getByRole('heading', { name: 'Vì sao thiết kế này hỗ trợ bản mô tả?' })).toBeVisible()
-  await page.getByRole('button', { name: 'Bỏ qua mục này' }).first().click()
-  await page.getByRole('button', { name: 'Hiện mục đã bỏ qua' }).click()
-  await expect(page.getByRole('button', { name: 'Khôi phục mục này' }).first()).toBeVisible()
-  await page.getByRole('button', { name: 'Khôi phục mục này' }).first().click()
+  await page.getByRole('button', { name: 'Chi tiết' }).click()
+  await expect(page.getByRole('heading', { name: 'Lý do thiết kế' })).toBeVisible()
+  await page.getByRole('button', { name: 'Bỏ qua' }).first().click()
+  await page.getByRole('button', { name: 'Hiện mục đã bỏ' }).click()
+  await expect(page.getByRole('button', { name: 'Khôi phục' }).first()).toBeVisible()
+  await page.getByRole('button', { name: 'Khôi phục' }).first().click()
 
-  const intelligenceAudit = await new AxeBuilder({ page }).include('.site-intelligence').analyze()
+  const intelligenceAudit = await new AxeBuilder({ page }).include('.site-intel-pro').analyze()
   expect(intelligenceAudit.violations.filter(violation => ['serious', 'critical'].includes(violation.impact ?? ''))).toEqual([])
 
-  await page.getByRole('button', { name: 'Thử bố cục khác' }).click()
+  await page.getByRole('button', { name: 'Đổi cách trình bày' }).click()
   await expect(page.locator('header').getByText('Đã lưu')).toBeVisible()
 
   await page.getByRole('button', { name: 'Xem trước' }).click()
@@ -152,6 +166,51 @@ test('prepares exactly three directions with one provider call and accepts one i
   expect(releaseAudit.violations.filter(violation => ['serious', 'critical'].includes(violation.impact ?? ''))).toEqual([])
 })
 
+test('keeps low-contrast custom colors unchanged across all three directions', async ({ page }) => {
+  const projectId = await createOnboardingProject(page, 'Guided custom design system')
+  await page.goto(`/projects/${projectId}`)
+
+  await page.getByRole('radio', { name: 'Dùng thiết kế riêng' }).click()
+  await page.getByLabel('Mã màu chính').fill('#24eb94')
+  await page.getByLabel('Mã màu chữ').fill('#2c56ba')
+  await page.getByLabel('Font tiêu đề').selectOption('Georgia')
+  await page.getByLabel('Cỡ chữ').selectOption('expressive')
+  await page.getByLabel('Mật độ bố cục').selectOption('airy')
+  await page.getByLabel('Bo góc thành phần').selectOption('soft')
+
+  const warning = page.getByRole('status', { name: 'Cảnh báo độ tương phản màu' })
+  await expect(warning).toContainText('có thể khó đọc')
+  await expect(warning).toContainText('vẫn giữ nguyên')
+
+  await page.getByLabel('Bạn cung cấp sản phẩm hoặc dịch vụ gì?').fill('NovaFlow lập kế hoạch ra mắt')
+  await page.getByLabel('Website này dành cho ai?').fill('Nhóm sản phẩm nhỏ')
+  await page.getByLabel('Website này cần đạt được điều gì?').fill('Nhận lịch tư vấn')
+  await page.getByLabel('Khách truy cập nên làm gì tiếp theo?').fill('Đặt lịch tư vấn')
+  await page.getByLabel('Website nên mang lại cảm giác như thế nào?').fill('Rõ ràng và hiện đại')
+  await page.getByRole('button', { name: 'Tạo 3 hướng thiết kế' }).click()
+
+  const cards = page.getByTestId('production-direction-card')
+  await expect(cards).toHaveCount(3)
+  const themeEvidence = await cards.evaluateAll(directionCards => directionCards.map(card => {
+    const renderer = card.querySelector<HTMLElement>('.design-document-renderer')
+    const heading = renderer?.querySelector<HTMLElement>('[data-node-type="heading"]')
+    const primaryButton = renderer?.querySelector<HTMLElement>('[data-node-type="button"]')
+    if (!renderer || !heading || !primaryButton) throw new Error('Missing direction theme evidence')
+    return {
+      headingColor: getComputedStyle(heading).color,
+      headingFont: getComputedStyle(heading).fontFamily,
+      primaryBackground: getComputedStyle(primaryButton).backgroundColor,
+    }
+  }))
+  expect(themeEvidence).toHaveLength(3)
+  expect(themeEvidence.every(evidence => evidence.headingColor === 'rgb(44, 86, 186)')).toBe(true)
+  expect(themeEvidence.every(evidence => evidence.headingFont.includes('Georgia'))).toBe(true)
+  expect(themeEvidence.every(evidence => evidence.primaryBackground === 'rgb(36, 235, 148)')).toBe(true)
+
+  const counters = await page.request.get('/api/e2e/runtime-counters')
+  expect((await counters.json()).data).toEqual({ directionProviderCalls: 1 })
+})
+
 test('keeps Simple Preview, Share and Publish accessible at 390px', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   const projectId = await createOnboardingProject(page, 'Guided mobile publish')
@@ -175,6 +234,7 @@ test('keeps Simple Preview, Share and Publish accessible at 390px', async ({ pag
   await page.getByRole('button', { name: 'Xuất bản' }).click()
   const publishDialog = page.getByRole('dialog', { name: 'Xuất bản website' })
   await expect(publishDialog).toBeVisible()
+  await publishDialog.scrollIntoViewIfNeeded()
   await expect(publishDialog).toBeInViewport()
   const publishAudit = await new AxeBuilder({ page }).include('.publish-popover').analyze()
   expect(publishAudit.violations.filter(violation => ['serious', 'critical'].includes(violation.impact ?? ''))).toEqual([])
@@ -197,6 +257,7 @@ test('keeps the production Guided Brief and gallery accessible at 390px', async 
   await expect(page.getByTestId('production-direction-card')).toHaveCount(3)
 
   const firstCard = page.getByTestId('production-direction-card').first()
+  await firstCard.scrollIntoViewIfNeeded()
   await expect(firstCard).toBeInViewport()
   const galleryAudit = await new AxeBuilder({ page }).analyze()
   expect(galleryAudit.violations.filter(violation => ['serious', 'critical'].includes(violation.impact ?? ''))).toEqual([])

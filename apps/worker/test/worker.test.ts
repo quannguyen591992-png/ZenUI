@@ -205,8 +205,17 @@ describe('AI worker boundary', () => {
       copyright: '© 2026 NovaFlow.',
       sectionOrder: ['logo-cloud', 'stats', 'features', 'testimonials', 'faq', 'final-cta', 'footer'],
     }
+    const generationPlan = {
+      version: 'design-directions-v2',
+      content: contentBlueprint,
+      directions: [
+        { presetId: 'calm-clarity' },
+        { presetId: 'bold-launch' },
+        { presetId: 'proof-command' },
+      ],
+    }
     const generateContent = vi.fn().mockResolvedValue({
-      text: JSON.stringify(contentBlueprint),
+      text: JSON.stringify(generationPlan),
       usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 30, totalTokenCount: 50 },
     })
     const provider = createGeminiProvider({ model: 'gemini-test', generateContent })
@@ -220,18 +229,22 @@ describe('AI worker boundary', () => {
         round: 0,
         brief,
         document: createValidDesignFixture(),
+        previousDirectionIds: [],
       }),
       claim: vi.fn().mockResolvedValue({ status: 'running' }),
       complete: vi.fn().mockResolvedValue({ accepted: true, run: { status: 'completed' } }),
       fail: vi.fn(),
     }
-    const resolveMedia = vi.fn().mockImplementation(({ intent }: { intent: { slot: string; alt: string } }) => Promise.resolve({
-      assetId: ({
-        hero: '55555555-5555-4555-8555-555555555555',
-        'feature-1': '66666666-6666-4666-8666-666666666666',
-        'feature-2': '77777777-7777-4777-8777-777777777777',
-        'feature-3': '88888888-8888-4888-8888-888888888888',
-      } as Record<string, string>)[intent.slot],
+    const mediaAssets = {
+      'shared-hero': '55555555-5555-4555-8555-555555555555',
+      'shared-feature-1': '66666666-6666-4666-8666-666666666666',
+      'shared-feature-2': '77777777-7777-4777-8777-777777777777',
+      'shared-feature-3': '88888888-8888-4888-8888-888888888888',
+    } as const
+    const resolveMedia = vi.fn().mockImplementation(({ intent }: {
+      intent: { key: keyof typeof mediaAssets; alt: string }
+    }) => Promise.resolve({
+      assetId: mediaAssets[intent.key],
       alt: intent.alt,
       decorative: false as const,
     }))
@@ -245,34 +258,61 @@ describe('AI worker boundary', () => {
     } })).resolves.toMatchObject({ status: 'completed' })
     expect(generateContent).toHaveBeenCalledOnce()
     expect(resolveMedia).toHaveBeenCalledTimes(4)
-    expect(resolveMedia.mock.calls.map(call => (call[0] as { intent: { slot: string } }).intent.slot)).toEqual([
-      'hero', 'feature-1', 'feature-2', 'feature-3',
+    expect(resolveMedia.mock.calls.map(call => (call[0] as { intent: { key: string } }).intent.key)).toEqual([
+      'shared-hero', 'shared-feature-1', 'shared-feature-2', 'shared-feature-3',
     ])
     expect(resolveMedia).toHaveBeenCalledWith(expect.objectContaining({
       context,
       projectId: job.projectId,
       runId: job.generationRunId,
-      intent: { slot: 'hero', ...contentBlueprint.heroImage },
+      intent: { key: 'shared-hero', slot: 'hero', ...generationPlan.content.heroImage },
     }))
     expect(repository.complete).toHaveBeenCalledWith(context, job.generationRunId, expect.objectContaining({
-      blueprint: contentBlueprint,
+      blueprint: expect.objectContaining({
+        version: 'design-directions-v2',
+        content: generationPlan.content,
+        directions: expect.arrayContaining([
+          expect.objectContaining({ presetId: 'calm-clarity' }),
+          expect.objectContaining({ presetId: 'bold-launch' }),
+        ]),
+      }),
       directions: expect.arrayContaining([expect.objectContaining({
         document: expect.objectContaining({
           nodes: expect.objectContaining({
             'hero-image': expect.objectContaining({
               props: {
-                assetId: '55555555-5555-4555-8555-555555555555',
-                alt: 'Product team planning a launch together',
+                assetId: mediaAssets['shared-hero'],
+                alt: generationPlan.content.heroImage.alt,
                 decorative: false,
               },
+            }),
+            'feature-image-1': expect.objectContaining({
+              props: expect.objectContaining({ assetId: mediaAssets['shared-feature-1'] }),
+            }),
+            'feature-image-2': expect.objectContaining({
+              props: expect.objectContaining({ assetId: mediaAssets['shared-feature-2'] }),
+            }),
+            'feature-image-3': expect.objectContaining({
+              props: expect.objectContaining({ assetId: mediaAssets['shared-feature-3'] }),
             }),
           }),
         }),
       })]),
       usage: { inputTokens: 20, outputTokens: 30, totalTokens: 50 },
     }))
-    const providerRequest = JSON.parse(generateContent.mock.calls[0]?.[0].contents) as { outputContract: string }
-    expect(providerRequest.outputContract).toContain('image search intent')
+    expect(repository.claim).toHaveBeenCalledWith(context, job.generationRunId, expect.objectContaining({
+      promptVersion: 'directions-v2',
+    }))
+    const providerRequest = JSON.parse(generateContent.mock.calls[0]?.[0].contents) as {
+      outputContract: string
+      plannerCatalog: unknown[]
+      excludedPresetIds: string[]
+    }
+    expect(providerRequest.outputContract).toContain('exactly three directions')
+    expect(providerRequest.outputContract).toContain('one shared Hero image')
+    expect(providerRequest.outputContract).toContain('exactly three shared feature images')
+    expect(providerRequest.plannerCatalog).toHaveLength(12)
+    expect(providerRequest.excludedPresetIds).toEqual([])
     expect(JSON.stringify(generateContent.mock.calls[0]?.[0])).not.toMatch(/providerResultId|assetId/i)
   })
 
@@ -389,14 +429,14 @@ describe('AI worker boundary', () => {
     const generated = vi.fn().mockRejectedValue(Object.assign(new Error('safety detail'), { code: 'image_safety' }))
     const pexels = vi.fn().mockResolvedValue({ assetId: '55555555-5555-4555-8555-555555555555', alt: 'Fallback', decorative: false })
     const resolver = createHybridMediaResolver({ generateOwned: generated, resolvePexels: pexels })
-    await expect(resolver({ slot: 'hero', query: 'product team planning', alt: 'Fallback' })).resolves.toMatchObject({
+    await expect(resolver({ key: 'shared-hero', slot: 'hero', query: 'product team planning', alt: 'Fallback' })).resolves.toMatchObject({
       assetId: '55555555-5555-4555-8555-555555555555',
     })
     expect(generated).toHaveBeenCalledOnce()
     expect(pexels).toHaveBeenCalledOnce()
 
     generated.mockResolvedValueOnce({ assetId: '66666666-6666-4666-8666-666666666666', alt: 'Generated', decorative: false })
-    await expect(resolver({ slot: 'feature-1', query: 'launch roadmap', alt: 'Generated' })).resolves.toMatchObject({
+    await expect(resolver({ key: 'shared-feature-1', slot: 'feature-1', query: 'launch roadmap', alt: 'Generated' })).resolves.toMatchObject({
       assetId: '66666666-6666-4666-8666-666666666666',
     })
     expect(pexels).toHaveBeenCalledOnce()
