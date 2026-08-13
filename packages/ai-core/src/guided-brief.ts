@@ -13,6 +13,12 @@ export const WEBSITE_BRIEF_SECTION_IDS = [
 export const websiteBriefSectionSchema = z.enum(WEBSITE_BRIEF_SECTION_IDS)
 export type WebsiteBriefSection = z.infer<typeof websiteBriefSectionSchema>
 
+export const conversionGoalSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('lead_form') }).strict(),
+  z.object({ type: z.literal('internal_page') }).strict(),
+])
+export type ConversionGoal = z.infer<typeof conversionGoalSchema>
+
 const briefTextSchema = z.string().trim().min(2).max(500)
 const hexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
 
@@ -109,6 +115,7 @@ export const websiteBriefSchema = z.object({
   cta: z.string().trim().min(2).max(120),
   tone: z.string().trim().min(2).max(300),
   brandDetails: z.string().trim().max(500),
+  conversionGoal: conversionGoalSchema.optional(),
   designSystem: guidedDesignSystemSchema.optional(),
   mustHaveSections: z.array(websiteBriefSectionSchema).min(2).max(WEBSITE_BRIEF_SECTION_IDS.length),
 }).strict().superRefine((value, context) => {
@@ -125,8 +132,18 @@ export const websiteBriefSchema = z.object({
 
 export type WebsiteBrief = z.infer<typeof websiteBriefSchema>
 
-export function normalizeWebsiteBrief(input: WebsiteBrief): WebsiteBrief & { designSystem: GuidedDesignSystem } {
-  return { ...input, designSystem: input.designSystem ?? { mode: 'zenui' } }
+function defaultConversionGoal(): ConversionGoal {
+  return { type: 'lead_form' }
+}
+
+export function normalizeWebsiteBrief(
+  input: WebsiteBrief,
+): WebsiteBrief & { conversionGoal: ConversionGoal; designSystem: GuidedDesignSystem } {
+  return {
+    ...input,
+    conversionGoal: input.conversionGoal ?? defaultConversionGoal(),
+    designSystem: input.designSystem ?? { mode: 'zenui' },
+  }
 }
 
 function matchedValue(input: string, patterns: RegExp[]): string {
@@ -158,6 +175,7 @@ export function prefillWebsiteBrief(input: string): Partial<WebsiteBrief> & Pick
     ...(audience ? { audience } : {}),
     ...(primaryGoal ? { primaryGoal } : {}),
     ...(cta ? { cta } : {}),
+    conversionGoal: defaultConversionGoal(),
     mustHaveSections: ['introduction', 'benefits', 'contact'],
   }
 }

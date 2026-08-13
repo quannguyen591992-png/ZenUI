@@ -50,6 +50,30 @@ function heroSlotDocument(): DesignDocument {
   return document
 }
 
+function leadFormDocument(): DesignDocument {
+  const document = sectionDocument()
+  document.nodes['lead-form-1'] = {
+    id: 'lead-form-1',
+    type: 'lead-form',
+    parentId: 'container-1',
+    children: [],
+    props: {
+      title: 'Request a consultation',
+      description: 'Tell us how we can help.',
+      submitLabel: 'Send request',
+      successCopy: 'Thank you. We will be in touch.',
+      fields: [
+        { key: 'name', type: 'text', label: 'Name', required: true, placeholder: 'Your name' },
+        { key: 'email', type: 'email', label: 'Email', required: true, placeholder: 'you@example.com' },
+      ],
+    },
+    style: {},
+    responsive: {},
+  }
+  document.nodes['container-1']!.children.push('lead-form-1')
+  return document
+}
+
 function api(overrides: Partial<EditorApi> = {}): EditorApi {
   return {
     saveCommands: (_projectId, _workspaceId, expectedVersion) => Promise.resolve({ accepted: true, version: expectedVersion + 1 }),
@@ -877,6 +901,26 @@ describe('Stage 6 section-first editor', () => {
     await user.keyboard('{Escape}')
     await waitFor(() => expect(editButton).toHaveFocus())
     expect(screen.queryByRole('dialog', { name: 'Chỉnh sửa trực tiếp' })).toBeNull()
+  })
+
+  it('reuses the bounded Lead Form builder in Simple mode and the narrow edit sheet', async () => {
+    const user = userEvent.setup()
+    renderSimple({ document: leadFormDocument() })
+
+    const canvas = screen.getByLabelText('Khung thiết kế')
+    await user.click(within(canvas).getByRole('form', { name: 'Request a consultation' }))
+
+    const manualEditor = screen.getByRole('region', { name: 'Chỉnh sửa trực tiếp' })
+    expect(within(manualEditor).getByRole('region', { name: 'Trình tạo biểu mẫu khách hàng' })).toBeVisible()
+    expect(within(manualEditor).getByLabelText('Tiêu đề biểu mẫu')).toHaveValue('Request a consultation')
+    expect(within(manualEditor).getByRole('group', { name: 'Bố cục biểu mẫu' })).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: 'Chỉnh sửa' }))
+    const dialog = screen.getByRole('dialog', { name: 'Chỉnh sửa trực tiếp' })
+    expect(within(dialog).getByRole('region', { name: 'Trình tạo biểu mẫu khách hàng' })).toBeVisible()
+    expect(within(dialog).getByLabelText('Tiêu đề biểu mẫu')).toHaveValue('Request a consultation')
+    expect(within(dialog).getByRole('group', { name: 'Bố cục biểu mẫu' })).toBeVisible()
+    expect(within(dialog).queryByLabelText(/JSON|endpoint|người nhận/i)).toBeNull()
   })
 
   it('creates, switches and manages pages through autosaved commands', async () => {

@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createValidDesignFixture } from '@zenui/design-schema'
+import { createValidDesignFixture, DESIGN_LIMITS } from '@zenui/design-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { EditorApp } from '../app/editor/editor-app'
@@ -10,11 +10,89 @@ import type { EditorApi } from '../app/editor/editor-app'
 const projectId = '55555555-5555-4555-8555-555555555555'
 const workspaceId = '22222222-2222-4222-8222-222222222222'
 
-function serverEditor(api: EditorApi) {
-  const document = createValidDesignFixture()
+function serverEditor(api: EditorApi, document = createValidDesignFixture()) {
   document.projectId = projectId
-  return <EditorApp projectId={projectId} workspaceId={workspaceId} initialDocument={document} initialVersion={1} api={api} initialMode="advanced" />
+  return <EditorApp projectId={projectId} workspaceId={workspaceId} initialDocument={document} initialVersion={document.version} api={api} initialMode="advanced" />
 }
+
+function leadFormDocument() {
+  const document = createValidDesignFixture()
+  document.nodes['lead-form-1'] = {
+    id: 'lead-form-1',
+    type: 'lead-form',
+    parentId: 'container-1',
+    children: [],
+    props: {
+      title: 'Request a consultation',
+      description: 'Tell us how we can help.',
+      submitLabel: 'Send request',
+      successCopy: 'Thank you. We will be in touch.',
+      fields: [
+        { key: 'name', type: 'text', label: 'Name', required: true, placeholder: 'Your name' },
+        { key: 'email', type: 'email', label: 'Email', required: true, placeholder: 'you@example.com' },
+      ],
+    },
+    style: {},
+    responsive: {},
+  }
+  document.nodes['container-1']!.children.push('lead-form-1')
+  return document
+}
+
+function leadFormAtEditorLimits() {
+  const document = leadFormDocument()
+  document.nodes['lead-form-1']!.props = {
+    title: 'Bounded form',
+    description: 'Every bounded control is occupied.',
+    submitLabel: 'Continue',
+    successCopy: 'Thank you.',
+    fields: Array.from({ length: DESIGN_LIMITS.maxLeadFormFields }, (_, index) => index === 0
+      ? {
+          key: 'choice',
+          type: 'select' as const,
+          label: 'Choice',
+          required: true,
+          options: Array.from({ length: DESIGN_LIMITS.maxLeadSelectOptions }, (_option, optionIndex) => ({
+            label: `Option ${optionIndex + 1}`,
+            value: `option-${optionIndex + 1}`,
+          })),
+        }
+      : {
+          key: `field${index + 1}`,
+          type: 'text' as const,
+          label: `Field ${index + 1}`,
+          required: false,
+        }),
+  }
+  return document
+}
+
+const canonicalActionCases = [
+  {
+    type: 'internal_page',
+    field: undefined,
+    value: undefined,
+    expected: { type: 'internal_page', pageId: 'home' },
+  },
+  {
+    type: 'external_url',
+    field: 'Liên kết ngoài',
+    value: 'https://example.com/contact',
+    expected: { type: 'external_url', url: 'https://example.com/contact' },
+  },
+  {
+    type: 'email',
+    field: 'Địa chỉ email',
+    value: 'sales@example.com',
+    expected: { type: 'email', address: 'sales@example.com' },
+  },
+  {
+    type: 'phone',
+    field: 'Số điện thoại',
+    value: '+84 912 345 678',
+    expected: { type: 'phone', number: '+84 912 345 678' },
+  },
+] as const
 
 function api(overrides: Partial<EditorApi> = {}): EditorApi {
   return {
@@ -275,6 +353,359 @@ describe('ZenUI editor', () => {
 
     expect(screen.getByText('Cỡ chữ phải từ 10 đến 160')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Hoàn tác' })).toBeDisabled()
+  })
+
+  it('adds a visual-only Lead Form with canonical defaults from the component library', async () => {
+    const user = userEvent.setup()
+    render(<EditorApp />)
+
+    await user.click(screen.getByRole('treeitem', { name: /^Khung chứa: Khung chứa/ }))
+    await user.click(screen.getByRole('tab', { name: 'Thành phần' }))
+    await user.click(screen.getByRole('button', { name: 'Thêm Biểu mẫu khách hàng' }))
+
+    const canvas = screen.getByLabelText('Khung thiết kế')
+    const form = within(canvas).getByRole('form', { name: 'Yêu cầu tư vấn' })
+    expect(within(form).getByLabelText('Họ và tên')).toHaveAttribute('name', 'name')
+    expect(within(form).getByLabelText('Email')).toHaveAttribute('type', 'email')
+    expect(within(form).getByText('Bản xem trước — chưa gửi dữ liệu')).toBeVisible()
+    expect(form).not.toHaveAttribute('action')
+    expect(form).not.toHaveAttribute('method')
+    expect(fireEvent.submit(form)).toBe(false)
+  })
+
+  it('aligns a Lead Form with one bounded style command and supports history', async () => {
+    const saveCommands = vi.fn<EditorApi['saveCommands']>((_projectId, _workspaceId, expectedVersion) => (
+      Promise.resolve({ accepted: true, version: expectedVersion + 1 })
+    ))
+    const user = userEvent.setup()
+    render(serverEditor(api({ saveCommands }), leadFormDocument()))
+
+    await user.click(screen.getByRole('treeitem', { name: /^Biểu mẫu khách hàng: Request a consultation/ }))
+    const layout = screen.getByRole('group', { name: 'Bố cục biểu mẫu' })
+    expect(within(layout).queryByRole('textbox')).toBeNull()
+    expect(layout).toHaveTextContent('Kéo chỉ dùng để đổi thứ tự')
+
+    await user.click(within(layout).getByRole('button', { name: 'Canh giữa' }))
+
+    const form = within(screen.getByLabelText('Khung thiết kế')).getByRole('form', { name: 'Request a consultation' })
+    expect(form).toHaveStyle({
+      width: '100%', maxWidth: '720px', marginLeft: 'auto', marginRight: 'auto',
+    })
+    expect(screen.getByRole('button', { name: 'Hoàn tác' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Hoàn tác' }))
+    expect(form).not.toHaveStyle({ maxWidth: '720px' })
+    await user.click(screen.getByRole('button', { name: 'Làm lại' }))
+    expect(form).toHaveStyle({ maxWidth: '720px', marginLeft: 'auto', marginRight: 'auto' })
+
+    await waitFor(() => expect(saveCommands).toHaveBeenCalled())
+    expect(saveCommands.mock.calls[0]?.[3]).toEqual([expect.objectContaining({
+      type: 'UPDATE_STYLE',
+      nodeId: 'lead-form-1',
+      patch: {
+        width: 'full', maxWidth: 720, marginLeft: 'auto', marginRight: 'auto',
+      },
+    })])
+  })
+
+  it('applies all bounded Lead Form layouts to the selected viewport', async () => {
+    const saveCommands = vi.fn<EditorApi['saveCommands']>((_projectId, _workspaceId, expectedVersion) => (
+      Promise.resolve({ accepted: true, version: expectedVersion + 1 })
+    ))
+    const user = userEvent.setup()
+    render(serverEditor(api({ saveCommands }), leadFormDocument()))
+
+    await user.click(screen.getByRole('treeitem', { name: /^Biểu mẫu khách hàng: Request a consultation/ }))
+    await user.selectOptions(screen.getByLabelText('Thiết bị xem trước'), 'mobile')
+    const layout = screen.getByRole('group', { name: 'Bố cục biểu mẫu' })
+    const form = within(screen.getByLabelText('Khung thiết kế')).getByRole('form', { name: 'Request a consultation' })
+
+    await user.click(within(layout).getByRole('button', { name: 'Canh trái' }))
+    expect(form).toHaveStyle({ maxWidth: '720px', marginLeft: '0px', marginRight: 'auto' })
+    await user.click(within(layout).getByRole('button', { name: 'Canh phải' }))
+    expect(form).toHaveStyle({ maxWidth: '720px', marginLeft: 'auto', marginRight: '0px' })
+    await user.click(within(layout).getByRole('button', { name: 'Toàn chiều rộng' }))
+    expect(form).toHaveStyle({ width: '100%', marginLeft: '0px', marginRight: '0px' })
+    expect(form.style.maxWidth).toBe('')
+
+    await waitFor(() => expect(saveCommands).toHaveBeenCalled())
+    expect(saveCommands.mock.calls[0]?.[3][0]).toMatchObject({
+      type: 'UPDATE_RESPONSIVE_STYLE', breakpoint: 'mobile', nodeId: 'lead-form-1',
+    })
+  })
+
+  it('edits bounded Lead Form fields and sends one canonical UPDATE_PROPS command', async () => {
+    const saveCommands = vi.fn<EditorApi['saveCommands']>((_projectId, _workspaceId, expectedVersion) => (
+      Promise.resolve({ accepted: true, version: expectedVersion + 1 })
+    ))
+    const user = userEvent.setup()
+    render(serverEditor(api({ saveCommands }), leadFormDocument()))
+
+    await user.click(screen.getByRole('treeitem', { name: /^Biểu mẫu khách hàng: Request a consultation/ }))
+    expect(screen.getByRole('heading', { name: 'Biểu mẫu khách hàng' })).toBeVisible()
+    await user.clear(screen.getByLabelText('Tiêu đề biểu mẫu'))
+    await user.type(screen.getByLabelText('Tiêu đề biểu mẫu'), 'Đăng ký tư vấn')
+    await user.click(screen.getByRole('button', { name: 'Thêm trường' }))
+    const fieldGroups = screen.getAllByRole('group', { name: /Trường / })
+    const addedField = fieldGroups.at(-1)!
+    await user.clear(within(addedField).getByLabelText('Khóa trường'))
+    await user.type(within(addedField).getByLabelText('Khóa trường'), 'need')
+    await user.clear(within(addedField).getByLabelText('Nhãn trường'))
+    await user.type(within(addedField).getByLabelText('Nhãn trường'), 'Bạn cần gì?')
+    await user.selectOptions(within(addedField).getByLabelText('Loại trường'), 'select')
+    await user.click(within(addedField).getByRole('button', { name: 'Thêm lựa chọn' }))
+    await user.clear(within(addedField).getByLabelText('Nhãn lựa chọn 2'))
+    await user.type(within(addedField).getByLabelText('Nhãn lựa chọn 2'), 'Thiết kế website')
+    await user.clear(within(addedField).getByLabelText('Giá trị lựa chọn 2'))
+    await user.type(within(addedField).getByLabelText('Giá trị lựa chọn 2'), 'website')
+    await user.click(screen.getByRole('checkbox', { name: 'Hiển thị đồng ý liên hệ' }))
+    await user.click(screen.getByRole('button', { name: 'Lưu biểu mẫu' }))
+
+    const canvas = screen.getByLabelText('Khung thiết kế')
+    expect(within(canvas).getByRole('form', { name: 'Đăng ký tư vấn' })).toBeVisible()
+    expect(within(canvas).getByRole('combobox', { name: 'Bạn cần gì?' })).toHaveTextContent('Thiết kế website')
+    const consent = within(canvas).getByLabelText('Tôi đồng ý để ZenUI liên hệ')
+    expect(consent).toBeVisible()
+    await user.click(consent)
+    expect(consent).toBeChecked()
+    await waitFor(() => expect(saveCommands).toHaveBeenCalledTimes(1))
+    expect(saveCommands.mock.calls[0]?.[3]).toEqual([
+      expect.objectContaining({
+        type: 'UPDATE_PROPS',
+        nodeId: 'lead-form-1',
+        patch: expect.objectContaining({
+          title: 'Đăng ký tư vấn',
+          fields: expect.arrayContaining([
+            expect.objectContaining({ key: 'need', type: 'select', label: 'Bạn cần gì?' }),
+          ]),
+        }),
+      }),
+    ])
+  })
+
+  it('renders textarea, select and description-free Lead Form variants on Canvas', () => {
+    const document = leadFormDocument()
+    document.nodes['lead-form-1']!.props = {
+      title: 'Tell us what you need',
+      description: '',
+      submitLabel: 'Continue',
+      successCopy: 'Thank you.',
+      fields: [
+        { key: 'details', type: 'textarea', label: 'Details', required: false },
+        {
+          key: 'service', type: 'select', label: 'Service', required: true,
+          options: [{ label: 'Website', value: 'website' }],
+        },
+      ],
+    }
+
+    render(serverEditor(api(), document))
+
+    const canvas = screen.getByLabelText('Khung thiết kế')
+    const form = within(canvas).getByRole('form', { name: 'Tell us what you need' })
+    expect(within(form).getByRole('textbox', { name: 'Details' }).tagName).toBe('TEXTAREA')
+    expect(within(form).getByRole('combobox', { name: 'Service' })).toHaveValue('website')
+    expect(form).toHaveAttribute('aria-describedby', 'lead-form-1-preview-notice')
+    expect(within(form).queryByText('Tell us how we can help.')).toBeNull()
+  })
+
+  it('rejects an invalid Lead Form draft without history or autosave changes', async () => {
+    const saveCommands = vi.fn<EditorApi['saveCommands']>()
+    const user = userEvent.setup()
+    render(serverEditor(api({ saveCommands }), leadFormDocument()))
+
+    await user.click(screen.getByRole('treeitem', { name: /^Biểu mẫu khách hàng: Request a consultation/ }))
+    const firstField = screen.getAllByRole('group', { name: /Trường / })[0]!
+    await user.clear(within(firstField).getByLabelText('Khóa trường'))
+    await user.type(within(firstField).getByLabelText('Khóa trường'), 'tên khách')
+    await user.click(screen.getByRole('button', { name: 'Lưu biểu mẫu' }))
+
+    expect(screen.getByText(/Khóa trường chỉ dùng chữ cái ASCII/)).toHaveAttribute('role', 'alert')
+    expect(screen.getByRole('button', { name: 'Hoàn tác' })).toBeDisabled()
+    await new Promise(resolve => window.setTimeout(resolve, 150))
+    expect(saveCommands).not.toHaveBeenCalled()
+    expect(within(screen.getByLabelText('Khung thiết kế')).getByLabelText('Name')).toHaveAttribute('name', 'name')
+  })
+
+  it('keeps Lead Form field and select-option authoring at the public bounds', async () => {
+    const user = userEvent.setup()
+    render(serverEditor(api(), leadFormAtEditorLimits()))
+
+    await user.click(screen.getByRole('treeitem', { name: /^Biểu mẫu khách hàng: Bounded form/ }))
+    const builder = screen.getByRole('region', { name: 'Trình tạo biểu mẫu khách hàng' })
+    expect(within(builder).getAllByRole('group', { name: /Trường / })).toHaveLength(DESIGN_LIMITS.maxLeadFormFields)
+    expect(within(builder).getByRole('button', { name: 'Thêm trường' })).toBeDisabled()
+
+    const selectField = within(builder).getByRole('group', { name: 'Trường 1' })
+    expect(within(selectField).getAllByRole('textbox', { name: /Nhãn lựa chọn / })).toHaveLength(DESIGN_LIMITS.maxLeadSelectOptions)
+    expect(within(selectField).getByRole('button', { name: 'Thêm lựa chọn' })).toBeDisabled()
+  })
+
+  it('edits textarea/select variants, consent requirements and option removal', async () => {
+    const saveCommands = vi.fn<EditorApi['saveCommands']>((_projectId, _workspaceId, expectedVersion) => (
+      Promise.resolve({ accepted: true, version: expectedVersion + 1 })
+    ))
+    const user = userEvent.setup()
+    render(serverEditor(api({ saveCommands }), leadFormDocument()))
+
+    await user.click(screen.getByRole('treeitem', { name: /^Biểu mẫu khách hàng: Request a consultation/ }))
+    const firstField = screen.getByRole('group', { name: 'Trường 1' })
+    await user.selectOptions(within(firstField).getByLabelText('Loại trường'), 'textarea')
+    await user.selectOptions(within(firstField).getByLabelText('Loại trường'), 'select')
+    await user.click(within(firstField).getByRole('button', { name: 'Thêm lựa chọn' }))
+    await user.click(within(firstField).getByRole('button', { name: 'Xóa lựa chọn 2' }))
+    await user.click(within(firstField).getByRole('checkbox', { name: 'Bắt buộc' }))
+
+    await user.click(screen.getByRole('checkbox', { name: 'Hiển thị đồng ý liên hệ' }))
+    await user.clear(screen.getByLabelText('Nội dung đồng ý'))
+    await user.type(screen.getByLabelText('Nội dung đồng ý'), 'Tôi đồng ý nhận liên hệ')
+    await user.click(screen.getByRole('checkbox', { name: 'Bắt buộc đồng ý' }))
+    await user.click(screen.getByRole('button', { name: 'Lưu biểu mẫu' }))
+
+    await waitFor(() => expect(saveCommands).toHaveBeenCalledTimes(1))
+    const command = saveCommands.mock.calls[0]?.[3][0]
+    expect(command).toMatchObject({
+      type: 'UPDATE_PROPS',
+      patch: expect.objectContaining({
+        fields: expect.arrayContaining([
+          expect.objectContaining({ key: 'name', type: 'select', required: false }),
+        ]),
+        consent: { label: 'Tôi đồng ý nhận liên hệ', required: true },
+      }),
+    })
+
+    await user.click(screen.getByRole('checkbox', { name: 'Hiển thị đồng ý liên hệ' }))
+    expect(screen.queryByLabelText('Nội dung đồng ý')).not.toBeInTheDocument()
+  })
+
+  it('reorders and deletes Lead Form fields before one bounded save', async () => {
+    const saveCommands = vi.fn<EditorApi['saveCommands']>((_projectId, _workspaceId, expectedVersion) => (
+      Promise.resolve({ accepted: true, version: expectedVersion + 1 })
+    ))
+    const user = userEvent.setup()
+    render(serverEditor(api({ saveCommands }), leadFormDocument()))
+
+    await user.click(screen.getByRole('treeitem', { name: /^Biểu mẫu khách hàng: Request a consultation/ }))
+    await user.click(screen.getByRole('button', { name: 'Đưa trường 2 lên' }))
+    expect(screen.getAllByRole('group', { name: /Trường / }).map(group => within(group).getByLabelText('Khóa trường'))[0]).toHaveValue('email')
+    await user.click(screen.getByRole('button', { name: 'Xóa trường 2' }))
+    await user.click(screen.getByRole('button', { name: 'Lưu biểu mẫu' }))
+
+    await waitFor(() => expect(saveCommands).toHaveBeenCalledTimes(1))
+    expect(saveCommands.mock.calls[0]?.[3]).toEqual([
+      expect.objectContaining({
+        type: 'UPDATE_PROPS',
+        nodeId: 'lead-form-1',
+        patch: expect.objectContaining({
+          fields: [{ key: 'email', type: 'email', label: 'Email', required: true, placeholder: 'you@example.com' }],
+        }),
+      }),
+    ])
+    expect(within(screen.getByLabelText('Khung thiết kế')).queryByLabelText('Name')).toBeNull()
+    expect(within(screen.getByLabelText('Khung thiết kế')).getByLabelText('Email')).toBeVisible()
+  })
+
+  it('duplicates, deletes, undoes and redoes a Lead Form without losing nested configuration', async () => {
+    const user = userEvent.setup()
+    render(serverEditor(api(), leadFormDocument()))
+
+    await user.click(screen.getByRole('treeitem', { name: /^Biểu mẫu khách hàng: Request a consultation/ }))
+    await user.click(screen.getByRole('button', { name: 'Nhân bản Biểu mẫu khách hàng' }))
+    expect(screen.getAllByRole('form', { name: 'Request a consultation' })).toHaveLength(2)
+    expect(screen.getAllByLabelText('Email')).toHaveLength(2)
+
+    await user.click(screen.getByRole('button', { name: 'Xóa Biểu mẫu khách hàng' }))
+    await user.click(screen.getByRole('button', { name: 'Xác nhận xóa thành phần' }))
+    expect(screen.getAllByRole('form', { name: 'Request a consultation' })).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: 'Hoàn tác' }))
+    expect(screen.getAllByRole('form', { name: 'Request a consultation' })).toHaveLength(2)
+    await user.click(screen.getByRole('button', { name: 'Làm lại' }))
+    expect(screen.getAllByRole('form', { name: 'Request a consultation' })).toHaveLength(1)
+  })
+
+  it('authors typed external and Lead Form actions while keeping legacy nodes editable', async () => {
+    const document = leadFormDocument()
+    document.nodes['button-1']!.props = { text: 'Legacy button', href: '#legacy' }
+    const saveCommands = vi.fn<EditorApi['saveCommands']>((_projectId, _workspaceId, expectedVersion) => (
+      Promise.resolve({ accepted: true, version: expectedVersion + 1 })
+    ))
+    const user = userEvent.setup()
+    render(serverEditor(api({ saveCommands }), document))
+
+    await user.click(screen.getByRole('treeitem', { name: /^Nút: Legacy button/ }))
+    expect(screen.getByLabelText('Loại hành động')).toHaveValue('external_url')
+    expect(screen.getByLabelText('Liên kết ngoài')).toHaveValue('#legacy')
+    await user.selectOptions(screen.getByLabelText('Loại hành động'), 'lead_form')
+    expect(screen.getByLabelText('Biểu mẫu đích')).toHaveValue('lead-form-1')
+    await user.click(screen.getByRole('button', { name: 'Lưu hành động' }))
+
+    await waitFor(() => expect(saveCommands).toHaveBeenCalledTimes(1))
+    expect(saveCommands.mock.calls[0]?.[3]).toEqual([
+      expect.objectContaining({
+        type: 'UPDATE_PROPS',
+        nodeId: 'button-1',
+        patch: {
+          text: 'Legacy button',
+          href: null,
+          pageId: null,
+          fragment: null,
+          action: { type: 'lead_form', formNodeId: 'lead-form-1' },
+        },
+      }),
+    ])
+    expect(within(screen.getByLabelText('Khung thiết kế')).getByRole('link', { name: 'Legacy button' })).toHaveAttribute('href', '#lead-form-1')
+  })
+
+  it.each(canonicalActionCases)('authors the canonical $type action', async ({ type, field, value, expected }) => {
+    const document = leadFormDocument()
+    document.nodes['button-1']!.props = { text: 'Legacy button', href: '#legacy' }
+    const saveCommands = vi.fn<EditorApi['saveCommands']>((_projectId, _workspaceId, expectedVersion) => (
+      Promise.resolve({ accepted: true, version: expectedVersion + 1 })
+    ))
+    const user = userEvent.setup()
+    render(serverEditor(api({ saveCommands }), document))
+
+    await user.click(screen.getByRole('treeitem', { name: /^Nút: Legacy button/ }))
+    await user.selectOptions(screen.getByLabelText('Loại hành động'), type)
+    if (field && value) {
+      await user.clear(screen.getByLabelText(field))
+      await user.type(screen.getByLabelText(field), value)
+    }
+    await user.click(screen.getByRole('button', { name: 'Lưu hành động' }))
+
+    await waitFor(() => expect(saveCommands).toHaveBeenCalledTimes(1))
+    expect(saveCommands.mock.calls[0]?.[3]).toEqual([
+      expect.objectContaining({
+        type: 'UPDATE_PROPS',
+        nodeId: 'button-1',
+        patch: {
+          text: 'Legacy button',
+          href: null,
+          pageId: null,
+          fragment: null,
+          action: expected,
+        },
+      }),
+    ])
+  })
+
+  it('rejects an invalid typed action without changing history or autosave', async () => {
+    const saveCommands = vi.fn<EditorApi['saveCommands']>()
+    const document = leadFormDocument()
+    document.nodes['button-1']!.props = { text: 'Legacy button', href: '#legacy' }
+    const user = userEvent.setup()
+    render(serverEditor(api({ saveCommands }), document))
+
+    await user.click(screen.getByRole('treeitem', { name: /^Nút: Legacy button/ }))
+    await user.selectOptions(screen.getByLabelText('Loại hành động'), 'email')
+    await user.clear(screen.getByLabelText('Địa chỉ email'))
+    await user.type(screen.getByLabelText('Địa chỉ email'), 'not-an-email')
+    await user.click(screen.getByRole('button', { name: 'Lưu hành động' }))
+
+    expect(screen.getByText(/Hành động chưa hợp lệ/)).toHaveAttribute('role', 'alert')
+    expect(screen.getByRole('button', { name: 'Hoàn tác' })).toBeDisabled()
+    await new Promise(resolve => window.setTimeout(resolve, 150))
+    expect(saveCommands).not.toHaveBeenCalled()
+    expect(within(screen.getByLabelText('Khung thiết kế')).getByRole('link', { name: 'Legacy button' })).toHaveAttribute('href', '#legacy')
   })
 
   it('supports global undo shortcuts outside form controls', async () => {

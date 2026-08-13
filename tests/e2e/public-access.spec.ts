@@ -13,10 +13,25 @@ test.beforeEach(async ({ page, request }) => {
 test('public landing leads to private-beta login without a session error dead end', async ({ page }) => {
   await page.goto('/')
 
-  await expect(page.getByRole('heading', { name: /Từ ý tưởng đến website rõ ràng/ })).toBeVisible()
-  await expect(page.locator('.landing-visual')).toHaveCSS('transform', 'none')
+  await expect(page.getByRole('heading', {
+    name: 'Từ ý tưởng đến website hoàn mỹ, theo cách của bạn.',
+  })).toBeVisible()
+  const landingVisual = page.getByLabel('Minh họa quy trình thiết kế')
+  await expect(landingVisual).toBeVisible()
+  const visualLayout = await landingVisual.evaluate(element => {
+    const bounds = element.getBoundingClientRect()
+    return {
+      width: bounds.width,
+      height: bounds.height,
+      viewportWidth: document.documentElement.clientWidth,
+      documentWidth: document.documentElement.scrollWidth,
+    }
+  })
+  expect(visualLayout.width).toBeGreaterThan(0)
+  expect(visualLayout.height).toBeGreaterThan(0)
+  expect(visualLayout.documentWidth).toBeLessThanOrEqual(visualLayout.viewportWidth)
   await expect(page.getByText('Vui lòng đăng nhập để tiếp tục.')).not.toBeVisible()
-  await page.getByRole('navigation', { name: 'Điều hướng chính' }).getByRole('link', { name: 'Đăng nhập' }).click()
+  await page.getByRole('link', { name: 'Đăng nhập', exact: true }).click()
 
   await expect(page).toHaveURL('/login')
   await expect(page.getByRole('heading', { name: 'Đăng nhập ZenUI' })).toBeVisible()
@@ -35,7 +50,9 @@ test('guarded E2E identity reaches the separated dashboard', async ({ page }) =>
   await signIn(page)
   await page.goto('/dashboard')
 
-  await expect(page.getByText('Dự án trong không gian làm việc')).toBeVisible()
+  await expect(page.getByRole('heading', {
+    name: 'Chào mừng đến với ZenUI',
+  })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Tạo dự án' })).toBeVisible()
 })
 

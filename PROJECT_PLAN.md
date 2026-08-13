@@ -15,11 +15,11 @@
 | Tên dự án | ZenUI |
 | Mục tiêu MVP | AI website co-designer giúp non-coder đi từ guided brief đến design direction, section-first refinement và share/publish an toàn |
 | Trạng thái tổng thể | Implementation |
-| Phase hiện tại | Phase 11 / Stage 10B1 — Multi-page Foundation (`In review`); implementation và toàn bộ technical gates, gồm Playwright 84/84 trên Chromium/Firefox/WebKit, đã hoàn tất ngày 2026-07-29; mentor/non-coder acceptance còn mở; Stage 10B2 chưa bắt đầu; Phase 7 external beta gates vẫn mở độc lập |
+| Phase hiện tại | Phase 11 / Stage 10B1 — Multi-page Foundation (`In review`); technical gates gồm Playwright 84/84 đã xanh nhưng mentor/non-coder acceptance còn mở. Phase 12 / F1 Functional Landing Page foundation (`Completed`) sau owner acceptance ngày 2026-08-12; F2 Live Share intake (`In progress`) được owner trực tiếp mở cùng ngày. Các quyết định này không hoàn tất 10B1. Stage 10B2 được `Deferred`/reordered sau Phase 12; Phase 7 external beta gates vẫn mở độc lập |
 | Ngày tạo | 2026-07-21 |
-| Cập nhật gần nhất | 2026-08-10 |
+| Cập nhật gần nhất | 2026-08-12 |
 | Người chịu trách nhiệm cập nhật | Developer/AI agent thực hiện phase |
-| Phiên bản tài liệu | 0.15.10 |
+| Phiên bản tài liệu | 0.16.4 |
 
 ### 0.1. Trạng thái hợp lệ
 
@@ -1057,7 +1057,8 @@ createdAt
 | 8 | Non-coder Product Experience Reset | Completed | Guided brief, design directions, section-first Simple mode, contextual AI review và simplified publish specification/prototype | Phase 1–7 foundations |
 | 9 | Guided Brief & Design Direction Gallery Production | Completed | Production onboarding, one bounded content request, three transient directions và atomic choose | Phase 8 / Stage 4 acceptance |
 | 10 | Non-coder Production Co-design | Completed | Stage 8 intelligence và Stage 9 Simple Preview/Share/Publish đã hoàn tất technical gates và mentor acceptance | Phase 9 |
-| 11 | Website Lifecycle Expansion | In review — Stage 10B1 | Stage 10A đã Completed; bounded multi-page, migration v1→v2 và immutable multi-route publication đã qua deterministic gate; chờ cross-browser/acceptance trước Stage 10B2 | Phase 10 / Stage 9 acceptance |
+| 11 | Website Lifecycle Expansion | In review — Stage 10B1; Stage 10B2 Deferred/reordered | Stage 10A đã Completed; bounded multi-page, migration v1→v2 và immutable multi-route publication đã qua technical gate; mentor/non-coder acceptance 10B1 còn mở. CMS 10B2 được ưu tiên lại sau Phase 12, không bị xóa hoặc coi là hoàn tất | Phase 10 / Stage 9 acceptance |
+| 12 | Functional Landing Pages — Lead Capture & Conversion | F1 Completed; F2 intake-only Reverted / Not accepted; Customer Leads MVP Implemented / In review | Giữ F1 visual-only đã nghiệm thu; Customer Leads khép kín public managed Share → encrypted persistence → project Inbox/badge → `Đã liên hệ`. Native Commerce deferred | Owner bác F2 intake-only ngày 2026-08-12 vì không có Inbox; vertical slice thay thế đã qua focused automated gates ngày 2026-08-13 nhưng còn chờ normal local-live owner acceptance. Stage 10B1 vẫn In review |
 
 ---
 
@@ -1800,16 +1801,20 @@ Owner chọn Stage 10 giải quyết đầy đủ hai nhóm vấn đề đã đ�
 Stage 10A — Image Asset Pipeline + Brand Kit
     ↓ 10A technical + product acceptance
 Stage 10B1 — Multi-page Foundation
-    ↓ schema/compiler/publication migration green
-Stage 10B2 — CMS + Structured Content
-    ↓ full lifecycle acceptance
+    ↓ technical gate green; mentor/non-coder acceptance still open
+Phase 12 — Functional Landing Pages
+    ↓ F0 accepted; F1–F8 delivered sequentially after entry gate
+Stage 10B2 — CMS + Structured Content (Deferred/reordered)
+    ↓ future structured-content acceptance
 Stage 10 Completed
 ```
 
 - Stage 10A được triển khai trước vì ảnh/brand chạm trust boundary nhập file và có ADR-0012 đã accepted.
-- Stage 10B chỉ bắt đầu runtime implementation sau khi 10A đạt completion gate; việc viết ADR/capability contract cho 10B có thể chuẩn bị trước nhưng không được làm song song mutation lớn.
+- Stage 10B1 runtime chỉ bắt đầu sau 10A completion gate và nay đã qua technical gate; mentor/representative non-coder acceptance vẫn là completion gate còn mở.
+- Ngày 2026-08-11, owner ưu tiên Phase 12 Functional Landing Pages trước CMS 10B2 để website tạo business outcome thật. 10B2 chuyển `Deferred`/reordered, không bị xóa hoặc coi là hoàn tất.
 - Hai track đều phải giữ Design Document/structured data làm source of truth, mọi mutation đi qua command/transaction layer, AI chỉ tạo structured validated output và publication luôn pin immutable release state.
-- Stage 10 không thay thế các external release-readiness gate còn mở của Phase 7.
+- Phase 12 F1 production implementation chỉ mở sau 10B1 acceptance hoặc một explicit owner exception được ghi nhận; việc owner duyệt roadmap/ADR không tự động là bằng chứng acceptance multi-page.
+- Stage 10/Phase 12 không thay thế các external release-readiness gate còn mở của Phase 7.
 
 ## 21E.2. Capability 10A — Image Asset Pipeline + Brand Kit
 
@@ -1905,6 +1910,8 @@ Owner có thể tạo, đổi tên, sắp xếp, duplicate và xóa nhiều page
 
 ## 21E.4. Capability 10B2 — CMS + Structured Content
 
+**Roadmap state (2026-08-11): `Deferred`/reordered after Phase 12 Functional Landing Pages.** Capability contract below remains preserved for future implementation; none of its unchecked items is treated as started or completed.
+
 ### User-visible outcome
 
 Owner có thể định nghĩa collection có cấu trúc, quản lý bài viết/nội dung lặp lại và gắn list/detail page template; Preview/Share/Export/Publish tạo toàn bộ route tĩnh bất biến mà không cần database/runtime code phía website public.
@@ -1975,6 +1982,171 @@ Entry evidence: Stage 10A technical and owner acceptance gates complete. ADR-001
 Fixed budgets: 20 pages/navigation items; 500 nodes; depth 12; document 1 MiB; slug 80 chars/4 segments; 20 HTML files; 2 MiB/file; 8 MiB site; 10 MiB ZIP.
 Scope delivered: Design Document v2, lossless/idempotent v1 reader migration, page/navigation commands, active-page editor, multi-route Preview/Share, deterministic ZIP Export and bounded multi-file Deploy. Additive migration 0012 stores redacted export route count; immutable snapshots remain whole-document JSONB.
 Verification 2026-07-29: focused RED/GREEN schema/commands/editor/compiler/database/API/worker/UI tests pass; workspace lint/typecheck/unit-integration/coverage/build pass; all configured coverage metrics >=80%; `db:check`, deterministic AI eval 6/6 + Site Intelligence locales 2/2, AI eval guard 2/2, `pnpm audit --prod`, `git diff --check` and secret/sensitive-log/metadata scans pass. Critical Chromium publication/editor/share/deploy suite passed 11/11; definitive full Playwright passed 84/84 in 12.2 minutes across Chromium/Firefox/WebKit, including 390px Page Manager/Share/Publish surfaces and axe serious/critical checks. No live Gemini/Pexels/Vercel call was made. Mentor/representative non-coder acceptance remains the only Stage 10B1 completion gate; Stage 10B2 CMS remains out of scope.
+```
+
+---
+
+# 21F. Phase 12 — Functional Landing Pages
+
+## 21F.1. Capability và roadmap order
+
+**User-visible outcome:** non-coder tạo một Lead Form bounded, publish immutable Share/Deployment, visitor gửi nhu cầu và owner/editor xử lý lead trong project Inbox. ZenUI bắt đầu bằng Lead Capture & Conversion; native commerce chỉ được xem xét sau usage evidence và ADR riêng.
+
+```text
+F0 — Capability, UX, API, privacy and threat-model exploration
+  ↓ specification history; no production PII intake
+F1 — Lead Form definition/editor/compiler/AI foundation
+  ↓ Completed and owner-accepted; every output remains visual-only
+Rejected F2 — intake/encryption/retention without owner Inbox
+  ↓ Reverted; not accepted as product value
+Customer Leads MVP — public managed form + encrypted persistence
+                   + project badge/Inbox + new → contacted + fixed retention
+  ↓ must pass normal local-live visitor/owner acceptance
+Later — Deployment binding, email, webhook/CRM, analytics and commerce
+```
+
+Roadmap invariants:
+
+- Stage 10B1 remains `In review`; mentor/representative non-coder acceptance has not been recorded.
+- Ngày 2026-08-11, owner đã chỉ đạo “tiếp tục phase tiếp theo”; quyết định này được ghi là explicit early-start exception cho riêng F1 production foundation. Đây không phải mentor/non-coder acceptance và không đóng Stage 10B1.
+- Owner đã kiểm thử và xác nhận F1 “đã ổn” ngày 2026-08-12; F1 được đóng sau technical gates và owner acceptance. F2 intake-only được mở sau đó nhưng bị owner bác bỏ và revert cùng ngày vì không có Inbox nên không khép kín outcome tiếp cận khách hàng. Customer Leads MVP thay thế đã được triển khai thành vertical slice, qua focused automated gates và được owner trực tiếp xác nhận normal local-live journey “đã thành công” ngày 2026-08-13; capability này đã `Completed`.
+- Stage 10B2 is `Deferred`/reordered after the Phase 12 priority, not removed or completed.
+- Phase 7 live-provider/managed-topology gates remain separate.
+- Design Document stores website/form definition only. Lead values/status/notes/delivery are tenant-scoped operational data outside document/AI authority.
+- All website mutation uses the command transaction layer; publication binds an immutable revision/form/surface/exact origin server-side.
+
+## 21F.2. F0 — Specification and security boundary
+
+- [x] Owner approved Lead Capture & Conversion before native commerce and approved the F0–F8 sequential roadmap.
+- [x] ADR-0020 documented the original dedicated-origin/native-POST boundary; D-029 later superseded its backend-first slicing and the F2 implementation was reverted. Its security principles remain planning input only.
+- [x] Bounded contract fixed: 10 forms/document, 12 fields/form, allowlisted field types, 32 KiB body, 16 submitted controls, value/option limits, rate windows, Inbox page size 25/max 50 and retention 30/90/180 days (default 90).
+- [x] Explicit PII permissions fixed: owner/editor `readLeads` + `manageLeads`; viewer denied; owner-only `manageLeadSettings`, deletion policy and CSV export.
+- [x] Editor wireflow specifies Lead Form builder, visual-only Preview/ZIP warning, Share/Publish preflight and project Lead Inbox loading/empty/error/conflict/mobile/accessibility states.
+- [x] API contract specifies planned publication, public POST/receipt and Lead management routes without registering or claiming implementation.
+- [x] Privacy/retention policy specifies data purpose, processor rollout, encryption/access, default/selectable retention, purge/deletion/export and incident obligations.
+- [x] Threat model covers hostile anonymous input, amplification, cross-origin/stale publication, spam/retry/duplicates, tenant/PII/log/queue leakage, ciphertext swapping, retention failure and copied static HTML.
+- [x] D-013 marked Superseded by D-026 instead of deleting history; Stage 10B2 marked Deferred/reordered and Stage 10B1 remains open.
+
+## 21F.3. F1–F8 implementation gates
+
+### F1 — Bounded form foundation
+
+**Status:** Completed ngày 2026-08-12 sau technical implementation gates và owner trực tiếp kiểm thử/xác nhận “đã ổn”. Stage 10B1 vẫn `In review`. F1 chỉ triển khai website-definition/editor/compiler/AI visual-only; sau khi F2 bị revert, đây tiếp tục là baseline đang hoạt động và không có public PII intake.
+
+- [x] Add composite `lead-form` to Design Schema/registry and mutate it only through atomic commands.
+- [x] Add accessible bounded field builder, Preview `preventDefault` notice and compiler default with no action/`form-action 'none'`.
+- [x] Add typed conversion actions and server-owned AI materialization without endpoint/recipient/publication authority.
+- [x] Complete RED/GREEN package/editor/axe/E2E evidence; do not add anonymous intake or store PII.
+
+#### F1 implementation evidence — 2026-08-11 đến 2026-08-12 (technical gates complete)
+
+- Design Schema RED: `pnpm --filter @zenui/design-schema test -- design-document.test.ts` executed the new Lead Form/action tests and failed for the intended missing capability: no `lead-form` component/schema, no canonical conversion action, no form-count/reference validation and no derived JSON Schema contract.
+- Design Schema GREEN: the same target passed `1` file / `52` tests after adding strict bounded fields/form props, 10-form/12-field public limits, canonical `lead_form`/`internal_page`/`external_url`/`email`/`phone` actions, legacy navigation compatibility and semantic page/form reference checks. `pnpm --filter @zenui/design-schema typecheck` and `pnpm --filter @zenui/design-schema lint` passed.
+- Registry RED: `pnpm --filter @zenui/component-registry test -- registry.test.ts` failed `4` intended tests because the nineteenth `lead-form` definition, composite-leaf metadata and bounded Inspector controls were absent.
+- Registry GREEN: the same target passed `1` file / `27` tests after adding canonical defaults, content-parent relationships, no DesignNode children, `lead-form-builder` and `conversion-action` controls, with no recipient/endpoint/raw HTML/JSON authority. Package typecheck and lint passed.
+- Command RED: `pnpm --filter @zenui/design-commands test -- commands.test.ts` failed `1` intended test because Registry did not yet allow duplicating a Lead Form leaf. The canonical `internal_page` removal guard test also documents the required compatibility behavior.
+- Command GREEN: the same target passed `1` file / `49` tests after Registry support and canonical page-reference guarding; valid `UPDATE_PROPS`, nested deep duplication, invalid whole-batch rollback and unchanged input are covered. Package typecheck and lint passed after narrowing the discriminated node type in the test.
+- Compiler RED: `pnpm --filter @zenui/html-compiler test -- compiler.test.ts` failed `2` intended tests because Lead Form rendered as an empty form and canonical typed actions emitted no `href`. GREEN rerun passed `1` file / `17` tests with deterministic label/control IDs and names, required state, text/email/select/textarea/consent/button semantics, preview/export notices, typed-action resolution and no form `action`/`method`/script/endpoint authority. CSP assertions keep `form-action 'none'`, `script-src 'none'` and `connect-src 'none'`.
+- React renderer RED: `pnpm --filter @zenui/web test -- design-document-renderer.test.tsx` failed `2` intended tests because the form had no accessible content/name and canonical action links had no destination. GREEN rerun passed `1` file / `4` tests with accessible labels, bounded fields, required consent, visual-only notice and submit/click `preventDefault`; no fake success is shown.
+- Isolated Preview RED: `pnpm --filter @zenui/preview test -- runtime.test.ts` failed `1` intended test because native `submit` was not guarded. GREEN rerun passed `1` file / `7` tests after adding delegated submit prevention and dispose cleanup.
+- Package verification passed for HTML Compiler, Preview and Web typecheck/lint. Web typecheck initially exposed the newly-required `lead-form` Vietnamese label and a closure narrowing issue; both were fixed and the same gate reran GREEN.
+- Editor builder RED: the first focused Editor run executed the five intended Lead Form/action journeys and failed all `5` because the component library/defaults, bounded field builder, draft validation and canonical action controls were absent. The first implementation rerun reached `62/64`; the remaining typed-action case correctly exposed an atomicity defect where legacy `href` remained beside canonical `action`, causing strict Design Document validation to reject the transaction and skip autosave.
+- Editor typed-action RED/GREEN: the focused reproducer was strengthened to require one atomic `UPDATE_PROPS` patch that deletes `href`/`pageId`/`fragment`; it remained RED until the Inspector emitted those keys as `null`, which the command layer consumes as bounded deletion before final validation. The isolated target then passed `1/1`, and the initial combined Editor/UI target passed `29/29`.
+- Editor boundary/history GREEN: focused coverage now proves the 12-field and 20-select-option UI caps, field reorder/delete before one bounded save, nested Lead Form duplicate/delete/undo/redo, all five canonical action variants including `lead_form`, and invalid action rejection without history/autosave. The focused boundary target passed `8/8`.
+- Shared builder evidence: `test/simple-editor.test.tsx` confirms the same bounded builder is reused by Advanced Inspector, Simple direct editing and the narrow edit sheet; no JSON/endpoint/recipient control is exposed. Its isolated target passed `1/1` with `32` unrelated tests skipped.
+- Editor package GREEN: `pnpm --filter @zenui/web exec vitest run test/vietnamese-ui.test.tsx test/editor.test.tsx test/simple-editor.test.tsx` passed `3` files / `70` tests. `pnpm --filter @zenui/web typecheck` initially found a test-fixture union narrowing error, which was corrected; the rerun passed. `pnpm --filter @zenui/web lint` passed.
+- Guided/provider/materializer RED: `pnpm --filter @zenui/ai-core exec vitest run test/design-directions.test.ts test/provider-blueprint.test.ts test/blueprint-v2.test.ts` executed `37` tests and failed the intended `7`: Guided Brief lacked normalized/prefilled conversion intent, provider DTO rejected bounded intent, Blueprint v2 rejected conversion goals, and no deterministic server-owned Lead Form/canonical CTA references existed.
+- Guided/provider/materializer GREEN: the same focused target passed `3` files / `37` tests after adding optional strict `lead_form`/`internal_page` business intent, deterministic legacy default to `lead_form`, optional union-light provider `conversionIntent`, server-owned `lead-form-1`/default fields and canonical primary CTA actions. Tests reject recipient, endpoint, publication, secret, node/form IDs and arbitrary provider fields; non-form intent creates no form; repeated inputs and all three directions are deterministic. `pnpm --filter @zenui/ai-core typecheck` passed. The first lint run exposed only import ordering in `blueprint-v2.ts`; after correction, focused tests, typecheck and lint all reran GREEN.
+- Guided UI GREEN: `pnpm --filter @zenui/web exec vitest run test/guided-onboarding.test.tsx` passed `1` file / `12` tests. The UI defaults legacy/new briefs to `lead_form`, authors only `lead_form` or `internal_page`, preserves the owner's explicit choice when deterministic ordinary-language prefill runs, passes the bounded intent through save/run creation and exposes no recipient/endpoint/publication/node-ID controls.
+- Canvas interaction RED/GREEN: the focused Editor test added a real consent-checkbox interaction and failed because the Canvas selection wrapper called unconditional `preventDefault()`, cancelling native checkbox state. The minimal fix now prevents only anchor navigation while preserving selection and native form-control behavior; the identical focused target passed `1/1`.
+- Focused E2E GREEN: the Chromium Lead Form journey passed `1/1` after correcting Playwright matcher usage and validating immutable revision metadata against the canonical saved document instead of expecting private document content from the intentionally redacted revision-list API. The same journey then passed Firefox and WebKit `2/2`; it covers bounded add/edit/reorder/consent, autosave/reload, revision version binding, zero submit POST requests and axe serious/critical `0`.
+- Initial workspace verification: `pnpm exec turbo run test --concurrency=1` passed `29/29` tasks, including Web `40` files / `313` tests; `pnpm typecheck` passed `16/16`; `pnpm lint` passed `16/16`; and `pnpm build` passed `16/16`.
+- Coverage RED/GREEN closeout: the first workspace coverage run remained RED at Web branches `79.04%`. Focused user-visible tests then covered semantic Canvas form variants, bounded Inspector branches, Guided custom-design/validation paths and safe Choose retries. The final `pnpm --filter @zenui/web test:coverage` passed `40` files / `318` tests with statements `84.71%` (`3740/4415`), branches exactly `80%` (`2680/3350`), functions `82.01%` (`912/1112`) and lines `88.77%` (`3283/3698`). `pnpm test:coverage` then passed all `29/29` workspace tasks.
+- Final verification on 2026-08-12: `pnpm exec turbo run test --concurrency=1` passed all `29/29` tasks, including Web `40` files / `318` tests; `pnpm typecheck`, `pnpm lint` and `pnpm build` each passed all `16/16` workspace tasks. Lint initially found one test callback marked `async` without `await`; removing that unnecessary modifier made the identical full lint gate GREEN. `git diff --check` reported no whitespace errors, only expected LF→CRLF notices; diff review shows `37` changed files with `2159` insertions / `91` deletions, including untouched pre-existing owner change `note.txt`.
+- Acceptance-defect canonical RED/GREEN ngày 2026-08-12: Design Schema focused target ban đầu từ chối `marginLeft`/`marginRight: 'auto'`; sau fix giới hạn literal này cho đúng hai margin ngang, `pnpm --filter @zenui/design-schema test -- design-document.test.ts` passed `1` file / `54` tests. Registry mặc định Lead Form mới dùng `width:'full'`, `maxWidth:720`, hai horizontal margins `'auto'`; shared four-state helper sở hữu exact left/center/right/full patches và full width xóa `maxWidth` bằng patch `null`. Compiler/React renderer tests giữ parity `width:100%`, `max-width:720px`, auto margins và các CSP/no-submit assertions visual-only.
+- Acceptance-defect Inspector RED/GREEN: focused Web trước fix không tìm thấy nhóm `Bố cục biểu mẫu`. Shared Lead Form Inspector nay có bốn nút `Canh trái`, `Canh giữa`, `Canh phải`, `Toàn chiều rộng`, giải thích kéo chỉ đổi thứ tự và phát đúng một atomic `UPDATE_STYLE` hoặc `UPDATE_RESPONSIVE_STYLE`. `pnpm --filter @zenui/web exec vitest run test/editor.test.tsx test/simple-editor.test.tsx` passed `2` files / `73` tests sau khi sửa một matcher test dùng DOM node thay vì query-helper object; Canvas, responsive override, history và autosave dùng cùng canonical style.
+- Acceptance-defect AI RED/GREEN: AI Core focused RED tái hiện `lead-form` bị `unsupported_style_target` và serialized object/array JSON bị normalize thành `UPDATE_PROPS`; GREEN `pnpm --filter @zenui/ai-core exec vitest run test/ai-proposal.test.ts test/ai-core.test.ts` passed `2` files / `50` tests. Exact selected Lead Form với “canh giữa”, “căn giữa” hoặc “center” được route từ standard sang structured style; materializer phát box-placement `UPDATE_STYLE`, giữ nguyên title/description/fields, trong khi heading/paragraph tiếp tục dùng `textAlign`. Serialized JSON container không thể trở thành textual prop. Proposal API focused target passed `17/17`; Worker focused target passed `46/46` và chứng minh style lane thiếu gate/resolver fail closed, không gọi generic copy provider.
+- Acceptance-defect E2E RED/GREEN: manual Chromium journey `pnpm exec playwright test tests/e2e/editor.spec.ts --project=chromium --grep "authors a bounded visual-only Lead Form"` passed `1/1` (25.0s test, 42.5s total), đo actual browser geometry trái/giữa, bounded 720px, undo/redo, autosave/reload, canonical persisted style, zero submit network và axe serious/critical `0`. Structured AI journey ban đầu RED vì deterministic E2E queue vẫn đưa routed style intent qua generic copy `runGeneration`; lượt fix đầu tiếp tục fail vì success result dùng `proposedDocument` nhưng completion đọc `document`. Queue nay gọi production `materializeStyleProposal`, map proposed document rõ ràng, dùng zero-token deterministic usage và kiểm completion result. Identical focused command với grep `centers an exact Lead Form through a structured AI style proposal` cuối cùng passed `1/1` (28.7s test, 40.1s total), chứng minh proposal chỉ đổi canonical style, Accept tăng version đúng một lần và title/copy giữ nguyên.
+- Final acceptance-defect workspace rerun ngày 2026-08-12: focused Design Schema `54/54`, Registry `27/27`, HTML Compiler `17/17`, AI Core `50/50`, Worker `46/46` và Web `5` files / `94` tests đều GREEN. Web typecheck phát hiện `LeadFormLayoutPatch` interface không trực tiếp assignable vào command `Record<string, unknown>`; patch được copy thành plain record bằng object spread, sau đó identical Web typecheck/lint/focused tests đều GREEN. `pnpm exec turbo run test --concurrency=1` và `pnpm test:coverage` đều passed `29/29` tasks; `pnpm typecheck`, `pnpm lint` và `pnpm build` đều passed `16/16` tasks. Full `pnpm test:e2e` được thử nhưng dừng sớm sau hai legacy `ai-generation.spec.ts` tests timeout vì vẫn tìm direct-apply `Trợ lý AI` đã được gỡ trước task này; không dùng lượt đó làm gate F1. Focused F1 matrix sau đó passed Firefox/WebKit `4/4` cho cả manual geometry/history/reload/no-submit/axe và structured AI style/copy-preservation, bổ sung hai Chromium journeys `2/2` đã pass trước đó.
+- Local-live AI defect RED/GREEN ngày 2026-08-12: durable metadata của run lỗi xác nhận API đã persist đúng `proposal_intent=style`, exact `selected_node_id=lead-form-1`, nhưng local flags `AI_ASSISTANT_V2_ENABLED`, rollout, planner và style đều tắt nên structured style resolver không tồn tại; Worker fail closed bằng `invalid_model_output` trước provider/completion với `0` input/output/total tokens. Reproducer `pnpm --filter @zenui/worker test -- --run "test/worker.test.ts" -t "materializes exact Lead Form alignment without an available structured style provider"` RED đúng business path (`proposalStatus` chưa thành `ready`), rồi GREEN `1/1` sau khi thêm deterministic server-owned materialization chỉ cho exact selected Lead Form + một alignment allowlisted. Path này reuse production `materializeStyleProposal`, phát canonical `UPDATE_STYLE`, giữ nguyên props/copy, usage `0` và không gọi generic text/Gemini provider; prompt alignment mâu thuẫn hoặc style target khác vẫn giữ existing fail-closed invariant.
+- Local-live fix verification: Worker full `77/77`, AI Core full `99/99`, Proposal API `17/17`; focused Worker style `3/3` và AI Core structured/Lead Form `4/4`; package lint/typecheck cho Worker + AI Core pass. Workspace `pnpm test` passed `29/29` Turbo tasks / `831` unit-integration tests; `pnpm typecheck`, `pnpm lint` và `pnpm build` passed `16/16` tasks. Focused AI Lead Form E2E passed Chromium và Firefox; WebKit lần đầu gặp transient `socket hang up` ở document GET rồi isolated retry passed `1/1`, không phải business assertion failure. `git diff --check` không có whitespace error, chỉ có expected LF→CRLF notices. Không rerun coverage cho local-live follow-up; full E2E không được claim pass vì legacy direct-AI timeouts đã ghi ở trên.
+- Security/scope review confirms the visual-only standalone compiler still asserts `form-action 'none'`, `script-src 'none'` and `connect-src 'none'`; no anonymous form route, Lead PII persistence, database migration, recipient/endpoint/publication authoring setting, fake success or CSP relaxation was added. No live provider was called. Owner retest ngày 2026-08-12 xác nhận F1 “đã ổn”; F1 Completed, Stage 10B1 vẫn `In review` và owner trực tiếp mở F2.
+
+### Rejected F2 — Live Share intake without owner Inbox
+
+**Status:** Reverted / Not accepted ngày 2026-08-12. Stage 10B1 vẫn `In review`. Không có public Lead intake hoặc Inbox đang hoạt động.
+
+Owner bác bỏ lát cắt này vì dù visitor có thể gửi dữ liệu, owner không có product flow để thấy, đọc và xử lý lead. Encrypted persistence, receipt và retention riêng lẻ không tạo ra outcome “tiếp cận khách hàng”, còn việc yêu cầu owner dùng E2E harness/DevTools thay local-live authentication là completion gate sai.
+
+Rollback giữ toàn bộ F1 đã nghiệm thu và gỡ:
+
+- [x] `@zenui/lead-core`, migration/repository Lead, publication tables và F2-only package dependencies.
+- [x] Anonymous `/f/*`, publication/preflight/evidence routes, managed form action/compiler map và Share live-intake UI.
+- [x] Redis admission, Lead keyring/config, retention worker/readiness dependency và F2-only tests.
+- [x] Khôi phục Lead Form trên Editor, Preview, Share và ZIP về visual-only: không action/method, `form-action 'none'`, `script-src 'none'`, `connect-src 'none'`.
+
+Lịch sử kỹ thuật F2 không được dùng làm bằng chứng capability hiện tại. Full E2E regression trước rollback cũng không pass: run dừng ở Chromium `25/120`, chỉ `12` pass và có `13` failure trước khi Next.js Jest worker chết. Vì vậy owner acceptance và quality gate hoàn chỉnh đều không tồn tại cho F2 cũ.
+
+### Customer Leads MVP — implemented vertical slice
+
+**Status:** Completed ngày 2026-08-13. Automated focused gates và normal local-live owner acceptance đều đã xanh; owner trực tiếp xác nhận “đã thành công”. Stage 10B1 vẫn `In review`.
+
+User-visible outcome bắt buộc:
+
+```text
+Owner tạo website + Lead Form
+  → chia sẻ immutable revision có form hoạt động
+  → visitor gửi nhu cầu và nhận receipt không lộ PII
+  → badge “Khách hàng mới” xuất hiện trong project
+  → owner/editor mở Inbox, đọc lead và đánh dấu “Đã liên hệ”
+  → badge giảm và trạng thái tồn tại sau reload
+```
+
+- [x] Public managed Share form, exact immutable publication/origin/route/node binding, bounded streamed validation/admission và AES-256-GCM encrypted append-before-receipt. Preview/default compiler/ZIP vẫn visual-only; `script-src 'none'` và `connect-src 'none'` không đổi.
+- [x] Project-scoped owner/editor Inbox: newest-first redacted summaries, authorized detail decrypt, new count và atomic optimistic `new → contacted`; viewer/cross-tenant bị deny.
+- [x] Fixed 90-day retention, disclosure và bounded non-overlapping worker purge. Không có notes, CSV, selectable retention, email, webhook/CRM hoặc push trong MVP.
+- [x] Initial count + polling khoảng 30 giây chỉ khi visible + focus/visibility refresh cho badge trong app; database là source of truth và polling failure không làm mất lead.
+- [x] Share management DTO có server-confirmed `leadFormsLive`; chỉ link immutable có active binding được gắn nhãn “Chia sẻ website để nhận khách hàng”, visual-only link không bị gắn nhãn nhận khách hàng.
+- [x] RED/GREEN focused domain/database/compiler/public API/management API/UI/worker gates; serial full workspace test, coverage, typecheck, lint và build đã xanh. Customer Leads critical journey đã xanh trên Chromium, Firefox và WebKit, gồm mobile 390px và axe serious/critical. Broader Playwright matrix đã được kiểm chứng đủ 120 browser-tests theo các lượt tuần tự có ghi rõ bên dưới; không tuyên bố một invocation 120/120 liền mạch vì full command bị dừng sau test 101 để khôi phục local-live theo yêu cầu owner.
+- [x] Normal local-live owner journey: auth bình thường → managed Share → visitor submit fixture không nhạy cảm → badge tăng → mở detail → mark contacted → badge giảm → reload vẫn giữ trạng thái; receipt/URL không lộ PII. Automated local-live smoke ngày 2026-08-13 đã GREEN toàn bộ đường dữ liệu thật trên chính Share hiện có và owner trực tiếp xác nhận “đã thành công” cùng ngày.
+
+Automated evidence gần nhất:
+
+- Lead API/RBAC/Inbox/project badge focused: `31/31` tests GREEN; Web typecheck và lint GREEN.
+- Worker retention RED: test mới fail đúng vì thiếu `src/lead-retention.js`; GREEN sau minimal implementation. Worker suite tại focused invocation báo `8` files / `80` tests GREEN; Worker typecheck/lint GREEN.
+- Share live-state RED: `shareLinkPublicSchema` từ chối field `leadFormsLive`; GREEN sau strict DTO/repository/handler/UI wiring. Share Core `4/4`, Share API `17/17`, Share Panel `8/8`; Share Core, Database và Web typecheck/lint GREEN.
+- Full automated workspace gates ngày 2026-08-13: serial Turbo test `31/31` tasks, Web `43` files / `349` tests, Worker `8` files / `80` tests; lint `17/17`; typecheck `17/17`; configured coverage `31/31` tasks với mọi threshold ≥80%; build `17/17`; `git diff --check` không có whitespace error.
+- Playwright Customer Leads critical journey GREEN trên Chromium, Firefox và WebKit: management DTO xác nhận `leadFormsLive`, visitor native POST/receipt không echo PII, badge/Inbox/detail/contacted/reload persistence và outsider 404. Visitor chạy viewport 390×844; axe không có serious/critical trên managed Share form và project Inbox.
+- E2E tìm thấy hai lỗi thật và đã có RED→GREEN: managed Share dùng `no-referrer` khiến browser native form POST gửi `Origin: null`; chỉ live managed Share đổi sang `same-origin` ở meta/header, còn visual-only giữ `no-referrer`. Axe phát hiện contrast Inbox và submit button; màu đã được sửa và cross-browser critical journey xanh lại. `script-src 'none'`, `connect-src 'none'` và exact `form-action` không đổi.
+- Không gọi Gemini, Pexels, Vercel, email, push, CRM, webhook hoặc payment provider; không commit/push; không sửa hoặc đọc lại `.env`.
+- Broader Playwright repair/final matrix ngày 2026-08-13: baseline full run có `53 failed / 67 passed / 37.2m`. Sau khi phân loại stale test assumptions và stable product RED, full Chromium passed `40/40` (`5.1m`), full Firefox passed `40/40` (`7.0m`), và mọi WebKit journey đều passed khi chạy tuần tự. Full matrix invocation kế tiếp đạt test `101/120` trước khi owner yêu cầu dừng để khôi phục local-live; test WebKit asset-upload số 86 fail trong invocation đó nhưng isolated rerun passed `3/3`, sau đó đúng phần chưa chạy `102–104` passed `3/3` và `105–120` passed `16/16`. Vì vậy đủ 120 browser-tests đã có GREEN evidence, nhưng không ghi nhận sai thành một invocation `120/120` duy nhất.
+- Full-run log cũng tái hiện GitHub server action được render trong E2E mode dù GitHub credentials không được cấu hình, đúng lỗi owner gặp khi local server chạy sai mode. RED `access-surfaces.test.tsx` fail vì nút GitHub vẫn tồn tại; minimal GREEN chỉ render GitHub action khi cả ID/secret có cấu hình, vẫn ưu tiên local button trong local mode và hiện safe inactive status khi cả hai đường đều tắt. Focused Web tests passed `11/11`, Web typecheck/lint passed, Chromium public-access/axe passed `4/4`; code GitHub OAuth vẫn được giữ nhưng inactive/unconfigured, local account flow không bị refactor.
+- Local-live follow-up ngày 2026-08-13 tái hiện managed Share hiện có trả HTTP 500 vì cấu hình `LEAD_ENCRYPTION_KEYS` local thiếu/không hợp lệ; RED focused test fail đúng tại keyring boundary. Minimal GREEN hợp nhất keyring theo runtime: E2E giữ deterministic isolated key, guarded local mode dẫn xuất stable AES-256 key có domain separation từ local `AUTH_SECRET`, production vẫn fail closed và bắt buộc dedicated keyring/version. Không sửa `.env`, không đổi local auth, không tạo Share mới và không lộ Share slug/Lead PII/crypto material. Chính Share cũ sau hot reload trả HTTP 200; automated local-live journey GREEN: safe receipt, new-count tăng, Inbox list/detail 200, contacted 200, count giảm và contacted tồn tại sau đọc lại. Focused Lead+Share regression `32/32`, Web typecheck/lint/build và scoped `git diff --check` GREEN.
+
+### Later capabilities
+
+- [ ] Immutable Vercel Deployment publication binding after managed Share Customer Leads is accepted.
+- [ ] Durable email notification with Inbox-first persistence.
+- [ ] Typed HTTPS booking/checkout links without card collection, arbitrary widgets or script relaxation.
+- [ ] Owner-only signed webhook/CRM with SSRF/replay/retry controls and Inbox fallback.
+- [ ] Privacy-aware analytics that never fabricates a conversion-rate denominator.
+
+## 21F.4. Phase F0 Completion Record
+
+```text
+Phase: Phase 12 / F0 — Functional Landing Page specification and security boundary
+Status: Completed — documentation/architecture gate only; no production form source, migration, endpoint, Inbox or CSP change implemented
+Completed date: 2026-08-11
+Implemented: Roadmap rebaseline; accepted ADR-0020; bounded Lead Form/publication/submission/Inbox/retention/RBAC contracts; editor/publication/Inbox wireflow; API status; privacy and threat boundary.
+Changed files/modules: PROJECT_PLAN.md; docs/adr/0020-functional-landing-page-submission-boundary.md; docs/adr/README.md; docs/product/api-contract.md; docs/product/editor-wireframe.md; docs/product/privacy-retention.md; docs/security/threat-model.md.
+Verification commands: `git diff --check`; `git diff --stat`; `git status --short`; scoped full diff review; Mermaid/code-block scans across changed documentation.
+Historical F0 documentation evidence: `git diff --check` had no whitespace error (LF→CRLF notices only); no new Mermaid diagram was added. D-029 later superseded the backend-first publication/intake contract, so native POST and dedicated form-origin details are not active implementation claims.
+Failed: None at the specification gate.
+Skipped: Unit/integration/build/lint/typecheck/Playwright/coverage because F0 changes documentation only; no live Gemini/Image/Pexels/Vercel/email/CRM/payment action; no production PII intake.
+Known limitations: Stage 10B1 mentor/non-coder acceptance remains open. F1 is blocked unless that gate closes or owner records an explicit exception. All F1–F8 code/migrations/tests remain unimplemented.
+Decisions made: D-026 / ADR-0020 supersedes D-013 only for managed immutable Share/Deployment forms; Stage 10B2 deferred/reordered after Phase 12; native commerce deferred pending evidence.
+Risks added/closed: R-011 anonymous form abuse/amplification, R-012 Lead PII/tenant/key/retention exposure and R-013 false functional form/publication drift added as Open with phased mitigations.
+Next phase readiness: F0 is complete. Do not begin F1 production implementation until Stage 10B1 acceptance or an explicit owner exception is recorded in this document.
 ```
 
 ---
@@ -2169,6 +2341,9 @@ User action
 | R-008 | Chi phí AI vượt kiểm soát | Cao | Trung bình | Redis user/workspace windows, daily token reservation, usage ledger, minimal context, bounded timeout/retry/repair; load tuning remains TD-009 | Mitigated |
 | R-009 | Component registry thiếu nhất quán | Cao | Trung bình | One typed 18-component registry contract used by editor, AI, validator and compiler with regression tests | Closed — Phase 7 deterministic gate |
 | R-010 | Deploy API thay đổi/phụ thuộc bên thứ ba | Trung bình | Trung bình | Validated Vercel adapter, safe error taxonomy, durable state, bounded polling; reconciliation/load smoke in Phase 7 | Mitigated — residual Phase 7 |
+| R-011 | Customer Leads public form bị spam, body/field amplification hoặc retry tạo duplicate | Cao | Cao | Strict body/field/value limits, exact active publication/origin/form validation, shared HMAC-only admission, idempotency key và bounded metrics | Mitigated in Customer Leads MVP; normal local-live acceptance pending |
+| R-012 | Lead PII lộ qua tenant access, DB/backup, key misuse, log/metric/queue hoặc retention failure | Critical | Trung bình | Explicit owner/editor permissions/viewer denial, tenant-safe lookup, dedicated AES-256-GCM+AAD keyring, no-PII queue/log/metric boundaries, redaction and fixed expiry/bounded purge tests | Mitigated in Customer Leads MVP; operator disclosure/backup lifecycle and local-live acceptance remain open |
+| R-013 | Preview/Share/ZIP giả vờ form live hoặc gửi ngoài ý muốn | Cao | Trung bình | F1 visual-only output has no action/method and `form-action 'none'`; only server-confirmed active immutable managed Share binding receives exact submission authority | Mitigated; full regression and normal local-live acceptance pending |
 
 ---
 
@@ -2202,7 +2377,7 @@ Không tự suy diễn câu trả lời thành product truth. Khi chốt, chuy�
 | D-010 | 2026-07-21 | Schema workspace-ready ngay từ đầu | Accepted | Tránh migration ownership lớn khi thêm team | MVP UI có thể bắt đầu đơn giản nhưng data model không user-only |
 | D-011 | 2026-07-21 | pnpm + Turborepo + Next.js App Router + TypeScript strict | Accepted | Package boundaries và verification thống nhất | Web, worker và domain packages độc lập |
 | D-012 | 2026-07-21 | Ảnh MVP dùng URL HTTP(S), không upload | Accepted | Giảm storage/security scope | Remote tracking là residual risk cần xem lại trước beta |
-| D-013 | 2026-07-21 | Contact Form chỉ là visual component trong MVP | Accepted | Không mở submission/security backend ngoài scope | Export không có form processing |
+| D-013 | 2026-07-21 | Contact Form chỉ là visual component trong MVP | Restored by D-029 for current F1 baseline | Không mở submission/security backend trong MVP ban đầu | Sau rollback F2, Editor/Preview/Share/ZIP đều visual-only; Customer Leads phải theo vertical slice D-029 |
 | D-014 | 2026-07-21 | Share link persistent mặc định và có thể disable | Accepted | Luồng chia sẻ đơn giản, revision bất biến | Phase 5 phải hỗ trợ revoke/disable |
 | D-015 | 2026-07-21 | Font chỉ từ allowlist; không custom upload | Accepted | Deterministic render và giảm asset risk | Arial, Georgia, Manrope, system-ui |
 | D-016 | 2026-07-21 | Standalone HTML; giới hạn 500 nodes, depth 12, JSON 1 MiB | Accepted | Output portable và giới hạn abuse/performance | Validator enforce trước apply/render |
@@ -2215,6 +2390,10 @@ Không tự suy diễn câu trả lời thành product truth. Khi chốt, chuy�
 | D-023 | 2026-07-24 | Stage 4 dùng fixed Pexels adapter + SSRF-safe worker import, private immutable S3 object, opaque asset ID và cookie-free `ASSET_ORIGIN`; legacy remote URL chỉ để tương thích chuyển tiếp | Accepted; runtime deferred 2026-07-27 | Loại viewer tracking/content drift khỏi generated production page mà không mở arbitrary URL proxy; giữ Design Document độc lập môi trường và render parity | ADR-0012/SSRF matrix vẫn là implementation contract, nhưng runtime chuyển sang post-validation roadmap sau non-coder UX acceptance |
 | D-024 | 2026-07-27 | ZenUI chuyển product priority sang AI website co-designer cho non-coder: guided brief, bounded design directions, section-first Simple mode, contextual AI proposal review và simplified publish; primitive controls nằm trong Advanced mode | Accepted | Mentor feedback và public product study cho thấy Webflow-style professional depth không nên là happy path; Claude Design-style co-creation gần primary persona hơn, trong khi ZenUI có lợi thế structured/reversible/publishable website engine | Mở Phase 8 experience reset; deterministic prototype + mentor/non-coder acceptance đi trước AI/runtime và Production Asset Pipeline implementation |
 | D-025 | 2026-07-31 | Generated media dùng một shared bounded plan cho ba directions và contextual replacement là server-routed `replace-media` proposal | Accepted | Giới hạn tối đa bốn image attempts mỗi Guided run, không nhân theo direction; giữ exact clicked target và không để text LLM/model tự cấp URL/asset authority | Worker ưu tiên generated image, fallback Pexels rồi deterministic UI; mọi output là normalized owned asset và chỉ explicit Accept mới đổi document |
+| D-026 | 2026-08-11 | Lead Capture dùng composite bounded form, dedicated `FORM_ORIGIN`, native POST/Redirect/GET và server-owned immutable publication binding; Inbox là nguồn vận hành | Superseded by D-029 | Landing page cần tạo outcome thật nhưng roadmap đã tách intake khỏi Inbox | Security principles được giữ để thiết kế lại; ADR-0020/F2 implementation cũ không còn active |
+| D-027 | 2026-08-11 | Ưu tiên Phase 12 Functional Landing Pages trước Stage 10B2 CMS; giữ 10B1 `In review` và Phase 7 gates độc lập | Accepted | Lead Capture khép kín vòng giá trị sớm hơn CMS; acceptance multi-page chưa được ghi nên không thể đóng 10B1 bằng suy diễn | Stage 10B2 `Deferred`/reordered; F1 chờ 10B1 acceptance hoặc explicit owner exception; native commerce deferred |
+| D-028 | 2026-08-12 | Sau khi trực tiếp nghiệm thu F1 “đã ổn”, owner đóng F1 và mở F2 Live Share intake | Superseded by D-029 | F2 được mở theo backend-first roadmap nhưng không có owner Inbox | F2 implementation đã revert; không còn public intake hoặc rollout claim |
+| D-029 | 2026-08-12 | Bác bỏ và gỡ toàn bộ F2 intake-only; khôi phục F1 visual-only và thiết kế Customer Leads thành một vertical slice public form → encrypted persistence → ZenUI Inbox/badge → `Đã liên hệ` | Accepted; implemented/in review 2026-08-13 | Owner cần outcome tiếp cận khách hàng có thể dùng và test trực tiếp, không phải backend evidence hoặc E2E harness | Vertical slice thay thế đã qua focused automated gates; normal local-live owner acceptance là completion gate; Stage 10B1 vẫn `In review` |
 
 Khi một quyết định lớn thay đổi, phải:
 
@@ -2248,6 +2427,12 @@ Không xóa technical debt đã đóng; chuyển trạng thái sang `Closed` và
 
 | Ngày | Phase | Thay đổi | Kết quả kiểm chứng | Người cập nhật |
 |---|---|---|---|---|
+| 2026-08-12 | Phase 12 / F2 rollback and Customer Leads rebaseline | Owner bác F2 intake-only vì không có Inbox và không tạo outcome tiếp cận khách hàng. Gỡ F2 package/migration/routes/repositories/config/retention/tests, khôi phục F1 visual-only và rebaseline Customer Leads thành public form → encrypted persistence → project Inbox/badge → `Đã liên hệ`; Stage 10B1 vẫn In review | Focused: Design Schema 54/54, Registry 27/27, Commands 49/49, Compiler 18/18 + typecheck, Preview 7/7, AI Core 99/99, Worker 77/77, Operations Core 7/7, Web 110/110. F1 Playwright Chromium 2/2 + Firefox/WebKit 4/4. Workspace serial tests 29/29 tasks (Web 322), coverage 29/29 với mọi metric ≥80% (Web 84.78/80.08/82.14/88.82), lint/typecheck/build 16/16; typecheck lần đầu chỉ fail do stale `.next` route types, xóa đúng generated cache rồi rerun pass. Build route manifest không còn F2 routes; source/config scan sạch; `git diff --check` không có whitespace error, chỉ LF→CRLF notices. Local topology giữ volumes, migration/bootstrap pass sau khi nạp local env vào process, Web/Preview/Worker ready HTTP 200 và login hiển thị normal local account option, không có E2E session flow; owner acceptance còn pending. Không gọi paid provider, không sửa `.env`, không chạm `note.txt`. | AI Agent |
+| 2026-08-12 | Phase 12 / Rejected F2 historical implementation | F2 cũ từng triển khai managed Share immutable publication, isolated native intake, AES-256-GCM persistence, Redis admission, generic 303 receipt và fixed 90-day retention nhưng không có owner Inbox; implementation sau đó bị owner bác và revert theo D-029 | Historical evidence only: focused intake/compiler/Share và isolated F2 Playwright từng pass, nhưng full 120-test E2E không pass/complete: dừng ở Chromium 25/120 với 12 pass, 13 fail trước server-worker crash. Không phải capability hiện tại hoặc rollout evidence. | AI Agent |
+| 2026-08-12 | Phase 12 / F1 acceptance → F2 start | Owner trực tiếp xác nhận F1 “đã ổn” và yêu cầu tiếp tục F2. F1 chuyển Completed; F2 Live Share intake chuyển In progress theo ADR-0020; Stage 10B1 vẫn In review và F3/public rollout vẫn đóng | Planning/status transition only tại thời điểm mở F2; implementation/test evidence sẽ được bổ sung theo từng RED/GREEN slice. Không gọi provider, không sửa `.env`, không bật intake công khai. | AI Agent |
+| 2026-08-12 | Phase 12 / F1 local-live AI alignment fix | Root cause safe runtime evidence: route đã persist exact Lead Form style intent nhưng local Assistant v2/style flags tắt, resolver absent và Worker fail closed trước provider với 0 tokens. Thêm deterministic server-owned exact Lead Form alignment materialization qua production command/document validator; giữ generic style fail closed và không fallback copy | RED exact Worker reproducer fail đúng `proposalStatus` chưa ready; identical GREEN 1/1. Worker 77/77, AI Core 99/99, Proposal API 17/17; workspace test 29/29 tasks / 831 tests, typecheck/lint/build 16/16. Focused E2E Chromium/Firefox pass; WebKit transient socket hang-up lần đầu rồi isolated retry 1/1 pass. Coverage không rerun cho follow-up; full E2E không claim pass do legacy direct-AI timeouts đã ghi. Local services được bootstrap với env sau khi bare `pnpm local:up` thiếu `DATABASE_URL`; migrations/bootstrap pass và Web/Preview/Asset/Worker generation đều HTTP 200/ready. Tại thời điểm verification F1 vẫn chờ owner acceptance; owner đã xác nhận “đã ổn” ở progress entry kế tiếp. 10B1 In review; không gọi paid provider. | AI Agent |
+| 2026-08-12 | Phase 12 / F1 acceptance defect | Bổ sung bounded horizontal placement cho Lead Form ở canonical style, shared Inspector, Canvas/renderer/Preview/compiler và structured AI lane; chặn serialized style JSON trở thành copy; giữ DnD structural-only và form visual-only | Focused Design Schema 54/54, Registry 27/27, Compiler 17/17, AI Core 50/50, Worker 46/46, Web 94/94; serial workspace test + coverage 29/29 tasks; typecheck/lint/build 16/16; focused F1 Playwright Chromium 2/2 và Firefox/WebKit 4/4. Full E2E thử nhưng hai legacy direct-AI tests timeout nên dừng và ghi limitation. Tại thời điểm verification F1 chờ owner retest; owner đã xác nhận “đã ổn” ở progress entry kế tiếp. 10B1 In review. Không gọi paid provider. | AI Agent |
+| 2026-08-11 | Phase 12 / F0 | Rebaseline Functional Landing Pages trước CMS 10B2; accepted ADR-0020 và đồng bộ bounded Lead Form, publication, anonymous POST, Inbox/RBAC, retention/privacy và threat contracts; giữ 10B1 In review | Documentation-only: `git diff --check` pass, chỉ có LF→CRLF notices; diff/status và ASCII/Mermaid scan đã review; không chạy code tests/build/lint/typecheck/E2E/coverage, không gọi live provider và không bật PII intake | AI Agent |
 | 2026-07-21 | Phase 0 | Tạo kế hoạch tổng thể, workflow ASCII, phase gates và update protocol | Review nội dung tài liệu; chưa có code/test | AI Agent |
 | 2026-07-21 | Phase 0 | Scaffold monorepo; đóng băng Design Document/command/registry contracts; thêm ADR, wireframe, API contract và threat model; sửa lint/type narrowing | `pnpm lint`, `pnpm typecheck`, `pnpm test` (44/44), `pnpm test:coverage`, `pnpm build` đều pass; executable package statement coverage >=80% | AI Agent |
 | 2026-07-21 | Cross-phase | Đổi tên sản phẩm thành ZenUI và npm workspace scope thành `@zenui` | Chạy lại lint, typecheck, test và build sau rename | AI Agent |
@@ -2419,7 +2604,11 @@ Trạng thái hiện tại:
 - **Stage 9 technical gates và acceptance đều hoàn tất.** Workspace lint/typecheck/build 15/15; serial tests 27/27 tasks với 502 tests; Web/database coverage >=80%; db/eval pass; full Playwright 72/72 trên Chromium/Firefox/WebKit; mobile axe pass; mentor acceptance không có blocker.
 - **Phase 7 Hardening & Beta vẫn `In review` độc lập.** External live/provider/managed-topology gates không bị thay thế bởi deterministic Stage 9 evidence.
 - **Phase 11 / Stage 10A đã `Completed`.** Technical gates hoàn tất và owner xác nhận practical walkthrough hiện không có blocker ngày 2026-07-29; lỗi phát hiện về sau được xử lý như follow-up.
-- **Phase 11 / Stage 10B1 đang `In review`.** Design Document v2, v1 compatibility, page/navigation editor và bounded multi-route Preview/Share/ZIP Export/Deploy đã triển khai; toàn bộ technical gates xanh, gồm full Playwright 84/84 trên Chromium/Firefox/WebKit; mentor/representative non-coder acceptance là completion gate còn lại; Stage 10B2 CMS chưa bắt đầu.
+- **Phase 11 / Stage 10B1 đang `In review`.** Design Document v2, v1 compatibility, page/navigation editor và bounded multi-route Preview/Share/ZIP Export/Deploy đã triển khai; toàn bộ technical gates xanh, gồm full Playwright 84/84 trên Chromium/Firefox/WebKit; mentor/representative non-coder acceptance là completion gate còn lại.
+- **Phase 12 / F0 giữ giá trị lịch sử specification nhưng roadmap backend-first đã bị D-029 supersede.** Security principles được tái sử dụng khi thiết kế Customer Leads; ADR-0020 implementation cũ không còn active.
+- **Phase 12 / F1 đã `Completed` và owner xác nhận “đã ổn” ngày 2026-08-12.** Bounded Lead Form definition/editor/compiler/AI visual-only và canh ngang trái/giữa/phải/toàn chiều rộng đã qua focused RED/GREEN + cross-browser evidence. Sau rollback F2, đây là baseline đang hoạt động: không anonymous intake, PII persistence, endpoint/recipient, CSP relaxation hoặc fake success.
+- **Phase 12 / F2 intake-only là `Reverted / Not accepted`; Customer Leads MVP thay thế đã `Completed`.** Owner bác lát cắt intake/encryption/retention không có Inbox vì không khép kín giá trị tiếp cận khách hàng. Vertical slice public managed Share, encrypted persistence, project Inbox/badge và `Đã liên hệ` đã qua focused automated gates và owner trực tiếp xác nhận normal local-live journey “đã thành công” ngày 2026-08-13.
+- **Stage 10B2 CMS là `Deferred`/reordered sau Phase 12.** Capability cũ được giữ nguyên, không bị xóa và không được xem là đã bắt đầu/hoàn tất.
 
 Stage 9 checklist và bằng chứng cuối:
 
@@ -2492,13 +2681,15 @@ Stage 10B1 technical checklist và bằng chứng hiện tại:
 - [x] Correction chuẩn media Design Directions v2 ngày 2026-08-10, supersede mô tả media ở các mục 2489 và 2491: owner xác nhận invariant sản phẩm luôn là một shared Hero + đúng ba shared feature images, không phải ba Hero theo direction + tối đa một feature. Strict `design-directions-v2` giờ yêu cầu `content.heroImage`, đủ ba unique slot `feature-1|2|3`, còn `directions[]` chỉ chứa `presetId`; old three-Hero envelope và thiếu/thừa/trùng feature slot fail closed. Worker resolve đúng bốn stable key `shared-hero`, `shared-feature-1`, `shared-feature-2`, `shared-feature-3` theo batch tối đa hai, gom một `OwnedMediaMap` và materialize cùng bốn owned asset ID vào cả ba document; direction vẫn khác bằng preset/composition/hierarchy/section rhythm/Design System treatment. Partial failure chỉ bỏ đúng feature image lỗi và không sinh `feature-media-slot-*` rỗng; Hero geometric fallback, private asset/import/WebP/checksum/Host/cookie boundary và explicit Choose `REPLACE_DOCUMENT` giữ nguyên. TDD RED hợp lệ: AI Core 3/15 fail và Worker 1/45 fail vì schema/path cũ từ chối corrected fixture; GREEN focused AI Core 15/15, Worker/runtime 57/57, database integration 8/8. Gemini output contract, deterministic E2E fixture, ADR-0019, API contract, wireframe, quality roadmap và threat model đã đồng bộ. Không tăng hard cap, không gọi Gemini/Image/Pexels live, không sửa `.env`, không commit/push, giữ `note.txt` và `apps/web/next-env.d.ts` của owner. Final workspace verification được ghi bổ sung sau khi chạy gates.
 - [x] Follow-up Choose Design Direction + kiểm soát cache ngày 2026-08-11: frontend root cause là `GuidedOnboarding` đưa mọi `chooseDirection` rejection vào cùng trạng thái `failed` của prepare/remix, trong khi browser `readData` bỏ safe API error code; vì vậy lỗi áp dụng hướng bị báo sai thành “Không thể chuẩn bị hướng thiết kế”. TDD RED chạy đúng assertion nghiệp vụ: mong “Không thể áp dụng hướng đã chọn” nhưng nhận copy chuẩn bị; GREEN tách `chooseErrorCode`, giữ code/status đã redacted, trả lifecycle về `idle`, giữ ba card/brief/run và cho retry đúng cùng direction mà không gọi lại `saveBrief`/`createRun`/provider/media. API tests bao phủ đủ `not_found`, `stale_document_version`, `direction_not_found`, `run_not_selectable`, `invalid_design_document` và 500 `internal_error` redacted. Database integration với đúng một Hero + ba owned feature asset ID pass ngay, chứng minh snapshot hợp lệ, atomic `REPLACE_DOCUMENT`, version 1→2, duplicate same-direction idempotent và đúng một immutable revision; do đó không sửa/nới transaction hoặc document validation. Lỗi live 500 nhiều khả năng là hạ tầng `ENOSPC`: repo khoảng 17 GiB, gồm `.turbo/cache` khoảng 14 GiB và `apps/web/.next` khoảng 2.6 GiB; owner cho phép xóa đúng hai cache này, đưa repo xuống khoảng 716 MiB và ổ D có khoảng 19.51 GiB trống. `turbo.json` thêm `!.next/dev/**` vì Next 16 đặt dev cache dưới `.next/dev/cache`; sau toàn bộ build/test cache Turbo chỉ khoảng 0.017 GiB, `.next` khoảng 0.818 GiB và ổ D còn 18.66 GiB. Verification: focused Web/API 18/18; database four-image 9/9; full Web 295/295; full database 76/76; workspace test 29/29 tasks; typecheck/lint/build đều 16/16; `git diff --check` không có whitespace error, chỉ LF→CRLF notices. Focused Chromium deterministic journey xác nhận Choose trả 200, chuyển vào Editor, project `accepted` version 2 và một revision; test sau đó timeout ở bước đọc public Share URL tại dòng 148, ngoài phạm vi Choose, nên không ghi nhận full E2E pass. Coverage không rerun. Không gọi Gemini/Image/Pexels live, không sửa `.env`, không commit/push và không đụng `note.txt`.
 - [x] Follow-up Custom Design System tương phản thấp ngày 2026-08-11: owner chọn chính sách **Dùng nguyên mọi nơi** sau khi Guided preview thay đổi nhưng nút `Tạo 3 hướng thiết kế` im lặng với `primary=#24eb94`, `background=#ffffff`, `text=#2c56ba`. Root cause là `guidedDesignSystemSchema` dùng contrast `superRefine` làm `websiteBriefSchema.safeParse` fail, còn frontend chỉ map lỗi brief cơ bản rồi âm thầm return. TDD RED xác nhận thiếu warning/UI submit và domain schema còn từ chối màu; GREEN tách strict structural validation (HEX sáu ký tự, font/preset allowlist, extra field rejection) khỏi `guidedDesignSystemWarnings`, biến ngưỡng text/background 4.5:1 và primary/background 3:1 thành advisory không chặn. Guided UI hiển thị warning có semantics/text, giữ exact màu, map malformed HEX vào đúng field với `aria-invalid`/`aria-describedby`, không xóa input và chỉ structural invalid mới chặn. Server-owned materializer giữ cùng exact custom theme/font/type/spacing/radius cho đủ 4 preset sets × 3 directions; provider request tiếp tục không có `designSystem`; Brand Kit contrast policy không đổi. ADR-0017, API contract và editor wireframe đã được amend. Verification: AI Core focused 15/15 và full 91/91; Guided Web focused 10/10 và full Web 296/296; focused deterministic Chromium 1/1 chứng minh warning không chặn, ba cards cùng `#24eb94`/Georgia/`#2c56ba`, một mock provider call và không gọi provider trả phí; workspace typecheck/lint/build 16/16. Workspace `pnpm test` mặc định chạy hai lần đều gặp PGlite hooks vượt timeout 10 giây khi các package chạy đồng thời (lượt đầu 1 database test, lượt hai 5 design-direction tests); các assertion còn lại pass. Database suite riêng không contention pass 10 files/76 tests, focused generation 16/16; final workspace test với `turbo run test --concurrency=1` pass 29/29 tasks, xác nhận failure trước là contention hạ tầng chứ không phải nghiệp vụ. `git diff --check` không có whitespace error, chỉ LF→CRLF notices. Không gọi Gemini/Image/Pexels live, không sửa `.env`, không commit/push và không đụng `note.txt`.
+- [x] Phase 12 / F1 acceptance-defect canh ngang ngày 2026-08-12: canonical helper sở hữu bốn placement trái/giữa/phải/toàn chiều rộng; Lead Form mới mặc định centered 720px; Inspector desktop/tablet/mobile dùng một bounded control và atomic command; DnD chỉ reorder/reparent. Exact Lead Form prompts “canh giữa”, “căn giữa”, “center” route vào structured style materializer, không đổi textual props; serialized object/array JSON bị chặn khỏi copy normalization; missing style resolver fail closed trước generic provider. Focused GREEN: Design Schema 54/54, Web editor 73/73, AI Core 50/50, proposal API 17/17, Worker 46/46. Chromium manual geometry/history/reload/no-submit/axe 1/1 và deterministic structured AI proposal/Accept/copy-preservation 1/1. Final workspace rerun đang được thực hiện; không gọi paid provider. F1 vẫn chờ owner retest/acceptance, Stage 10B1 vẫn `In review`, F2 chưa mở.
 - [ ] Mentor/representative non-coder acceptance cho multi-page chưa được ghi nhận.
 
 Bước tiếp theo theo product priority:
 
 1. Thực hiện mentor/representative non-coder acceptance cho create/switch/navigation/preview/share/export/publish multi-page; ghi blocker hoặc acceptance trung thực.
 2. Giữ Stage 10B1 `In review` cho tới khi acceptance hoàn tất; xử lý follow-up defect bằng TDD nếu phát hiện.
-3. Chỉ sau khi 10B1 Completed mới lập ADR/triển khai 10B2 CMS; external Phase 7 gates vẫn độc lập và không chạy live provider nếu chưa được yêu cầu/ủy quyền.
+3. Sau khi 10B1 acceptance được ghi nhận, bắt đầu Phase 12 / F1 bằng TDD RED cho bounded `lead-form`; nếu owner muốn mở F1 sớm hơn thì phải ghi explicit exception tại đây. Không triển khai production source/migration chỉ dựa trên F0 approval.
+4. Giữ Stage 10B2 CMS `Deferred`/reordered sau Phase 12; external Phase 7 gates vẫn độc lập và không chạy live provider nếu chưa được yêu cầu/ủy quyền.
 
 External Phase 7 gates có thể được chạy riêng khi chuẩn bị private beta: controlled live Vercel smoke, third-party GitHub OAuth, managed backup/RPO/RTO/private operations network và bounded deployment-topology capacity. Không để các gate này thay thế evidence chọn capability Stage 10.
 

@@ -536,7 +536,50 @@ Success:
 
 `Advanced details` may reveal immutable revision, deployment provider, target and technical status for secondary users. It is collapsed by default and is never required to publish.
 
-### 7.4. Publish eligibility and recovery
+### 7.4. Lead Form surfaces (Phase 12 F1 baseline + managed F2 Share)
+
+A Lead Form is one bounded composite section, not a free-form HTML builder. Owner/editor can add it from the section library or receive a server-materialized default from Guided Brief. Its field builder offers only Text, Email, Phone, Long text and Select, plus optional consent. It enforces the bounded F1 limits and never exposes action URL, recipient, webhook, method/header, hidden field, file, password or payment controls.
+
+```text
++----------------------------------------------------------------------------+
+| Lead form                                                   Preview only    |
++------------------------------------------+---------------------------------+
+| Title        [ Request a consultation ]  | Fields (maximum 12)             |
+| Description  [________________________]  | 1. Name        Text   Required  |
+| Submit label [ Send request___________]  | 2. Work email  Email  Required  |
+| Success copy [________________________]  | 3. Need         Select Optional  |
+|                                          | [ Add field ] [ Reorder ]        |
+| Consent [ ] [ I agree to be contacted ] |                                 |
++------------------------------------------+---------------------------------+
+| Bản xem trước — chưa gửi dữ liệu.                                          |
++----------------------------------------------------------------------------+
+```
+
+Rules:
+
+1. Labels remain visible; placeholder never replaces a label. Required/optional state and consent are conveyed in text, not color alone. Field errors are associated with their controls and focus moves to the first invalid field.
+2. Every field add/edit/reorder/delete uses the existing atomic command/autosave/history boundary. Invalid edits rollback the complete transaction.
+3. Drag-and-drop is structural: it changes only the Lead Form parent or order in the document tree, never an x/y coordinate or free-position offset. Horizontal placement uses the shared `Bố cục biểu mẫu` controls with four bounded states: `Canh trái`, `Canh giữa`, `Canh phải` and `Toàn chiều rộng`; a new Lead Form defaults to centered full available width capped at 720px.
+4. Canvas and isolated Preview call `preventDefault` and announce “Bản xem trước — chưa gửi dữ liệu”; no network submission, publication token or fake success state is created.
+5. Standalone ZIP Export and ordinary compiler output remain visual-only, keep `form-action 'none'`, `script-src 'none'` and `connect-src 'none'`, and do not claim successful collection.
+6. Creating/reusing a managed Share provisions exact immutable Lead Form bindings before the server returns `leadFormsLive: true`. Only that server-confirmed state may show “Chia sẻ website để nhận khách hàng”; a link without an active binding keeps ordinary “Website được chia sẻ” copy.
+7. The managed Share uses native POST with no generated JavaScript. Receipt is generic and no-PII. Visitor values never enter editor state, Design Document, command history or autosave.
+8. The Share panel discloses “Thông tin khách hàng được lưu tối đa 90 ngày.” Email, push, webhook and CRM settings are not present.
+
+Managed Share state:
+
+```text
++------------------------------------------------------------+
+| Chia sẻ website để nhận khách hàng                          |
++------------------------------------------------------------+
+| Ai có liên kết đều có thể xem website đã lưu mới nhất.     |
+| Thông tin khách hàng được lưu tối đa 90 ngày.               |
+|                                                            |
+| Website nhận khách hàng       Đang hoạt động   [Mở] [Sao chép] |
++------------------------------------------------------------+
+```
+
+### 7.5. Publish eligibility and recovery
 
 | State | Preview | Share | Publish | Plain-language recovery |
 |---|---:|---:|---:|---|
@@ -546,6 +589,8 @@ Success:
 | Offline | Local preview allowed | Existing link may be shown | Disabled | Reconnect; keep edits safely recoverable |
 | Save failed | Local preview allowed | Disabled for new link | Disabled | Try saving again or download recovery copy |
 | Conflict | Current local preview labelled | Disabled | Disabled | Review latest saved website before continuing |
+| Lead settings invalid | Visual-only | Disabled for live forms | Disabled for live forms | Owner completes privacy notice and valid retention/intake settings |
+| Form publication failed | Visual-only | Not ready; retry/disable | Not ready; retry/cancel | Never show a live form until immutable binding is active |
 | Sharing failed | Yes | Retry | Unaffected if eligible | “We couldn't create a link. Try again.” |
 | Publishing queued | Yes | Yes | Duplicate publish disabled | Show human-readable progress and allow dialog close |
 | Publishing failed | Yes | Yes | Retry after actionable message | Never expose raw provider error in Simple mode |
@@ -610,6 +655,36 @@ Rules:
 6. Preview includes a route/page switch and renders deep links on the isolated origin. Share, Export and Publish operate on the complete latest saved immutable site rather than only the active page.
 7. At 390px, Page Manager and Navigation become keyboard-accessible sheets. Modal impact confirmation traps/restores focus, supports Escape where safe and keeps primary controls at least 44px.
 8. Viewer is read-only. Empty/loading/error/offline/conflict states preserve the active valid page or fall back to Home with a plain-language announcement.
+
+## 7C. Customer Leads Inbox (implemented, in review)
+
+Accepted projects add `Khách hàng` only for owner/editor. Viewer does not receive the navigation item and direct API access is denied without rendering PII. Inbox is project-scoped. The capability remains `In review` until owner completes the normal local-live visitor-to-Inbox journey.
+
+```text
++----------------------------------------------------------------------------+
+| Customer Leads                                                            |
+| Khách hàng                     Thông tin được lưu tối đa 90 ngày.          |
++-------------------------------------+--------------------------------------+
+| Danh sách khách hàng                | Chi tiết khách hàng                  |
+| Khách hàng mới  Nhận tư vấn         | Nhận tư vấn                          |
+| 13 Aug 2026, 15:00                  | Email   visitor@example.test         |
+|-------------------------------------|                                      |
+| Đã liên hệ       Đăng ký demo       | [ Đánh dấu đã liên hệ ]              |
+| 12 Aug 2026, 10:30                  |                                      |
++-------------------------------------+--------------------------------------+
+```
+
+MVP rules and states:
+
+1. List is newest-first and bounded. The first release supports only `Mới` and `Đã liên hệ`; broad plaintext PII search, qualified/won/lost/spam filters, notes and CSV are out of scope.
+2. Detail decrypts only after authorization. Loading, empty, unavailable/decrypt-failed and retention-expired states never leave stale PII from the prior selection on screen.
+3. “Đánh dấu đã liên hệ” uses optimistic versioning. Conflict keeps the server version, announces that another update won and offers reload; it never silently overwrites.
+4. Owner/editor may read and process leads. Viewer cannot access navigation or Lead PII. Cross-project lookup fails tenant-safely before decryption.
+5. Retention is fixed at 90 days for the first slice and must be disclosed before enabling intake. Selectable retention, manual delete, email, webhook/CRM and notification settings are later capabilities.
+6. Mobile presents list and detail sequentially. Opening detail moves focus to its heading; Back/Close restores focus to the originating row. All controls are at least 44px, labels survive 200% zoom and axe serious/critical findings block acceptance.
+7. Persisted Inbox is the source of truth. Initial count fetch, approximately 30-second visible-only polling and immediate focus/visibility refresh update the `Khách hàng mới` badge; polling failure never loses a lead. `aria-live="polite"` announces only increases after the baseline count.
+8. “Báo ngay” is this in-product badge only; no email, push, webhook or CRM notification is included.
+9. Implementation stays `In review` until owner completes the normal local-live visitor/owner journey without E2E session, DevTools or database inspection.
 
 ## 8. Visual Design and In-depth Editing
 
@@ -682,6 +757,8 @@ Copy rules:
 | Preview | closed, loading, ready, failed | Which local/saved state is being shown |
 | Share | none, creating, active, disabling, disabled, failed | Who can view and whether link is active |
 | Publish | unavailable, confirmation, queued, publishing, ready, failed, cancelled | Whether website is public and destination URL |
+| Lead form | editing, structurally-invalid, preview-only | F1 is visual-only and does not submit or store visitor data |
+| Customer Leads | planned, unavailable | Public intake/Inbox is not implemented until the complete vertical slice is accepted |
 | Mode | simple, entering-advanced, advanced, returning-simple | Transition never changes output |
 
 No status may rely on color alone. Progress announcements must be bounded and must not repeatedly announce cosmetic animation frames.

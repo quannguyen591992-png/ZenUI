@@ -8,25 +8,29 @@ import {
   collectAssetReferences,
   collectBrokenPageReferences,
   collectLegacyRemoteImageReferences,
+  conversionActionSchema,
   createRemoteImagePolicy,
   createValidDesignFixture,
   designNodeSchema,
   exportDesignDocumentJsonSchema,
+  leadFormPropsSchema,
+  leadFormLayoutPatch,
   findPageByRoute,
   migrateDesignDocumentV1ToV2,
   normalizePageSlug,
   parseDesignDocument,
+  styleSchema,
   validateDesignDocument,
   type DesignDocumentV2,
   type DesignNode,
 } from '../src/index.js'
 
 describe('Design Document v1', () => {
-  it('supports the 18 Phase 2 component contracts', () => {
+  it('supports the 19 bounded component contracts', () => {
     expect(COMPONENT_TYPES).toEqual([
       'page', 'section', 'container', 'stack', 'columns', 'column', 'divider', 'spacer',
       'heading', 'paragraph', 'image', 'button', 'link', 'icon', 'badge',
-      'navbar', 'hero', 'feature-card',
+      'navbar', 'hero', 'feature-card', 'lead-form',
     ])
 
     const samples: DesignNode[] = [
@@ -40,9 +44,163 @@ describe('Design Document v1', () => {
       { id: 'navbar-1', type: 'navbar', parentId: 'page-root', children: [], props: { brand: 'ZenUI' }, style: {}, responsive: {} },
       { id: 'hero-1', type: 'hero', parentId: 'page-root', children: [], props: { label: 'Hero' }, style: {}, responsive: {} },
       { id: 'feature-1', type: 'feature-card', parentId: 'container-1', children: [], props: { title: 'Fast', description: 'Launch quickly' }, style: {}, responsive: {} },
+      {
+        id: 'lead-form-1', type: 'lead-form', parentId: 'container-1', children: [],
+        props: {
+          title: 'Request a consultation', description: 'Tell us how we can help.',
+          submitLabel: 'Send request', successCopy: 'Thank you. We will be in touch.',
+          fields: [
+            { key: 'name', type: 'text', label: 'Name', required: true, placeholder: 'Your name' },
+            { key: 'email', type: 'email', label: 'Work email', required: true, placeholder: 'you@example.com' },
+            {
+              key: 'need', type: 'select', label: 'What do you need?', required: false,
+              options: [{ label: 'Consultation', value: 'consultation' }],
+            },
+          ],
+          consent: { label: 'I agree to be contacted', required: true },
+        },
+        style: {}, responsive: {},
+      },
     ]
 
     for (const node of samples) expect(designNodeSchema.safeParse(node).success).toBe(true)
+  })
+
+  it('validates bounded Lead Form props and fixed Phase F1 limits', () => {
+    const base = {
+      title: 'Request a consultation',
+      description: 'Tell us how we can help.',
+      submitLabel: 'Send request',
+      successCopy: 'Thank you. We will be in touch.',
+      fields: [
+        { key: 'name', type: 'text' as const, label: 'Name', required: true, placeholder: 'Your name' },
+        {
+          key: 'need', type: 'select' as const, label: 'Need', required: false,
+          options: [{ label: 'Consultation', value: 'consultation' }],
+        },
+      ],
+      consent: { label: 'I agree to be contacted', required: true },
+    }
+
+    expect(leadFormPropsSchema.safeParse(base).success).toBe(true)
+    expect(DESIGN_LIMITS).toMatchObject({
+      maxLeadForms: 10, maxLeadFormFields: 12, maxLeadFieldKeyLength: 64,
+      maxLeadFormTitleLength: 160, maxLeadFormCopyLength: 500,
+      maxLeadFieldLabelLength: 120, maxLeadFieldPlaceholderLength: 160,
+      maxLeadSelectOptions: 20, maxLeadSelectOptionLength: 120,
+    })
+    expect(leadFormPropsSchema.safeParse({
+      ...base,
+      fields: Array.from({ length: 12 }, (_, index) => ({
+        key: `field_${index}`, type: 'text', label: `Field ${index}`, required: false,
+      })),
+    }).success).toBe(true)
+    expect(leadFormPropsSchema.safeParse({
+      ...base,
+      fields: Array.from({ length: 13 }, (_, index) => ({
+        key: `field_${index}`, type: 'text', label: `Field ${index}`, required: false,
+      })),
+    }).success).toBe(false)
+    expect(leadFormPropsSchema.safeParse({ ...base, fields: [{ key: 'tên', type: 'text', label: 'Name', required: true }] }).success).toBe(false)
+    expect(leadFormPropsSchema.safeParse({ ...base, fields: [{ key: 'x'.repeat(65), type: 'text', label: 'Name', required: true }] }).success).toBe(false)
+    expect(leadFormPropsSchema.safeParse({ ...base, fields: [{ key: 'name', type: 'password', label: 'Password', required: true }] }).success).toBe(false)
+    expect(leadFormPropsSchema.safeParse({ ...base, fields: [{ key: 'name', type: 'file', label: 'Upload', required: false }] }).success).toBe(false)
+    expect(leadFormPropsSchema.safeParse({ ...base, fields: [{ key: 'name', type: 'hidden', label: 'Secret', required: false }] }).success).toBe(false)
+    expect(leadFormPropsSchema.safeParse({ ...base, fields: [{ key: 'email', type: 'email', label: 'Email', required: true }, { key: 'email', type: 'text', label: 'Again', required: false }] }).success).toBe(false)
+    expect(leadFormPropsSchema.safeParse({ ...base, recipient: 'owner@example.com' }).success).toBe(false)
+    expect(leadFormPropsSchema.safeParse({ ...base, action: 'https://example.com/collect' }).success).toBe(false)
+    expect(leadFormPropsSchema.safeParse({
+      ...base,
+      fields: [{
+        key: 'need', type: 'select', label: 'Need', required: false,
+        options: [{ label: 'A', value: 'same' }, { label: 'B', value: 'same' }],
+      }],
+    }).success).toBe(false)
+  })
+
+  it('enforces the Lead Form count across the document', () => {
+    const valid = createValidDesignFixture()
+    for (let index = 0; index < DESIGN_LIMITS.maxLeadForms; index += 1) {
+      const id = `lead-form-${index}`
+      valid.nodes[id] = {
+        id, type: 'lead-form', parentId: 'container-1', children: [],
+        props: {
+          title: `Form ${index}`, description: 'Request details', submitLabel: 'Send', successCopy: 'Thanks',
+          fields: [{ key: 'email', type: 'email', label: 'Email', required: true }],
+        },
+        style: {}, responsive: {},
+      }
+      valid.nodes['container-1']!.children.push(id)
+    }
+    expect(validateDesignDocument(valid).success).toBe(true)
+
+    const overflow = structuredClone(valid)
+    overflow.nodes['lead-form-overflow'] = {
+      id: 'lead-form-overflow', type: 'lead-form', parentId: 'container-1', children: [],
+      props: {
+        title: 'Overflow', description: 'Request details', submitLabel: 'Send', successCopy: 'Thanks',
+        fields: [{ key: 'email', type: 'email', label: 'Email', required: true }],
+      },
+      style: {}, responsive: {},
+    }
+    overflow.nodes['container-1']!.children.push('lead-form-overflow')
+    expect(validateDesignDocument(overflow)).toMatchObject({
+      success: false,
+      issues: [expect.objectContaining({ code: 'lead_form_limit_exceeded' })],
+    })
+  })
+
+  it('accepts canonical typed conversion actions and rejects forged destinations', () => {
+    for (const action of [
+      { type: 'lead_form', formNodeId: 'lead-form-1' },
+      { type: 'internal_page', pageId: 'about', fragment: 'pricing' },
+      { type: 'external_url', url: 'https://example.com/pricing' },
+      { type: 'email', address: 'hello@example.com' },
+      { type: 'phone', number: '+84123456789' },
+    ]) expect(conversionActionSchema.safeParse(action).success).toBe(true)
+
+    for (const action of [
+      { type: 'custom_endpoint', url: 'https://attacker.example/collect' },
+      { type: 'external_url', url: 'javascript:alert(1)' },
+      { type: 'email', address: 'not-an-email' },
+      { type: 'phone', number: 'javascript:alert(1)' },
+      { type: 'lead_form', formNodeId: '' },
+    ]) expect(conversionActionSchema.safeParse(action).success).toBe(false)
+  })
+
+  it('maps each Lead Form layout to one complete server-owned style patch', () => {
+    expect(leadFormLayoutPatch('left')).toEqual({
+      width: 'full', maxWidth: 720, marginLeft: 0, marginRight: 'auto',
+    })
+    expect(leadFormLayoutPatch('center')).toEqual({
+      width: 'full', maxWidth: 720, marginLeft: 'auto', marginRight: 'auto',
+    })
+    expect(leadFormLayoutPatch('right')).toEqual({
+      width: 'full', maxWidth: 720, marginLeft: 'auto', marginRight: 0,
+    })
+    expect(leadFormLayoutPatch('full')).toEqual({
+      width: 'full', maxWidth: null, marginLeft: 0, marginRight: 0,
+    })
+  })
+
+  it('accepts only bounded numeric or auto horizontal margins across viewports', () => {
+    expect(styleSchema.safeParse({
+      width: 'full', maxWidth: 720, marginLeft: 'auto', marginRight: 'auto',
+    }).success).toBe(true)
+
+    const document = createValidDesignFixture()
+    document.nodes['container-1']!.style = {
+      width: 'full', maxWidth: 720, marginLeft: 'auto', marginRight: 'auto',
+    }
+    document.nodes['container-1']!.responsive.mobile = {
+      marginLeft: 'auto', marginRight: 0,
+    }
+    expect(validateDesignDocument(document).success).toBe(true)
+
+    for (const value of ['10%', 'calc(50% - 1rem)', 'inherit', '0 auto']) {
+      expect(styleSchema.safeParse({ marginLeft: value }).success).toBe(false)
+      expect(styleSchema.safeParse({ marginRight: value }).success).toBe(false)
+    }
   })
 
   it('accepts bounded composition and image treatment tokens', () => {
@@ -289,10 +447,18 @@ describe('Design Document v1', () => {
     expect(validateDesignDocument(childWrongParent)).toMatchObject({ success: false })
   })
 
-  it('exports JSON Schema from the canonical contract', () => {
+  it('exports Lead Form and conversion actions from the canonical JSON Schema', () => {
     const schema = exportDesignDocumentJsonSchema()
+    const text = JSON.stringify(schema)
 
     expect(schema).toMatchObject({ $schema: expect.stringContaining('json-schema'), anyOf: expect.any(Array) })
+    expect(text).toContain('lead-form')
+    expect(text).toContain('lead_form')
+    expect(text).toContain('internal_page')
+    expect(text).toContain('marginLeft')
+    expect(text).toContain('marginRight')
+    expect(text).toContain('auto')
+    expect(text).not.toContain('custom_endpoint')
   })
 })
 
@@ -366,17 +532,49 @@ describe('Design Document v2 multi-page contract', () => {
     expect(validateDesignDocument(document).success).toBe(false)
   })
 
-  it('reports broken structured page links and accepts valid ones', () => {
+  it('reports broken legacy and canonical page links and accepts valid ones', () => {
     const document = multiPageDocument()
-    document.nodes['button-1']!.props = { text: 'About', pageId: 'about' }
+    document.nodes['button-1']!.props = { text: 'About', action: { type: 'internal_page', pageId: 'about' } }
     expect(validateDesignDocument(document).success).toBe(true)
     expect(collectBrokenPageReferences(document)).toEqual([])
 
-    document.nodes['button-1']!.props = { text: 'Missing', pageId: 'missing' }
+    document.nodes['button-1']!.props = { text: 'Missing', action: { type: 'internal_page', pageId: 'missing' } }
     expect(collectBrokenPageReferences(document)).toEqual([
       { kind: 'node', nodeId: 'button-1', pageId: 'missing' },
     ])
     expect(validateDesignDocument(document).success).toBe(false)
+
+    document.nodes['button-1']!.props = { text: 'Legacy missing', pageId: 'missing' }
+    expect(collectBrokenPageReferences(document)).toEqual([
+      { kind: 'node', nodeId: 'button-1', pageId: 'missing' },
+    ])
+  })
+
+  it('validates canonical Lead Form references against exact node type', () => {
+    const document = multiPageDocument()
+    document.nodes['lead-form-1'] = {
+      id: 'lead-form-1', type: 'lead-form', parentId: 'container-1', children: [],
+      props: {
+        title: 'Contact us', description: 'Tell us about your needs', submitLabel: 'Send', successCopy: 'Thanks',
+        fields: [{ key: 'email', type: 'email', label: 'Email', required: true }],
+      },
+      style: {}, responsive: {},
+    }
+    document.nodes['container-1']!.children.push('lead-form-1')
+    document.nodes['button-1']!.props = { text: 'Contact', action: { type: 'lead_form', formNodeId: 'lead-form-1' } }
+    expect(validateDesignDocument(document).success).toBe(true)
+
+    document.nodes['button-1']!.props = { text: 'Wrong type', action: { type: 'lead_form', formNodeId: 'heading-1' } }
+    expect(validateDesignDocument(document)).toMatchObject({
+      success: false,
+      issues: [expect.objectContaining({ code: 'broken_form_reference' })],
+    })
+
+    document.nodes['button-1']!.props = { text: 'Missing', action: { type: 'lead_form', formNodeId: 'missing-form' } }
+    expect(validateDesignDocument(document)).toMatchObject({
+      success: false,
+      issues: [expect.objectContaining({ code: 'broken_form_reference' })],
+    })
   })
 
   it('enforces bounded page and navigation counts', () => {

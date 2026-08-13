@@ -227,6 +227,8 @@ describe('AI contracts', () => {
       { summary: 'Invalid property', updates: [{ nodeId: 'heading-1', property: 'arbitrary', value: 'No' }] },
       { summary: 'Uneditable property', updates: [{ nodeId: 'heading-1', property: 'label', value: 'No' }] },
       { summary: 'Wrong scalar type', updates: [{ nodeId: 'heading-1', property: 'level', value: '2' }] },
+      { summary: 'Serialized style object', updates: [{ nodeId: 'heading-1', property: 'text', value: '{"marginLeft":"auto","marginRight":"auto"}' }] },
+      { summary: 'Serialized style array', updates: [{ nodeId: 'heading-1', property: 'text', value: '[{"marginLeft":"auto"}]' }] },
       { summary: 'Empty', updates: [] },
     ]) expect(normalizeAiEditResponse(response, context)).toBeNull()
   })

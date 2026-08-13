@@ -5,6 +5,7 @@ import {
   buttonPropsSchema,
   createValidDesignFixture,
   imagePropsSchema,
+  leadFormPropsSchema,
   linkPropsSchema,
   styleSchema,
   type ComponentType,
@@ -19,7 +20,7 @@ export { COMPONENT_TYPES }
 export interface InspectorField {
   key: string
   label: string
-  control: 'text' | 'number' | 'color' | 'select' | 'url'
+  control: 'text' | 'number' | 'color' | 'select' | 'url' | 'lead-form-builder' | 'conversion-action'
   options?: readonly string[]
 }
 
@@ -41,7 +42,7 @@ export interface ComponentDefinition {
   allowedChildren: readonly ComponentType[]
   aiDescription: string
   inspector: readonly InspectorField[]
-  renderTag: 'main' | 'section' | 'div' | 'nav' | 'article' | 'h2' | 'p' | 'img' | 'a' | 'span' | 'hr'
+  renderTag: 'main' | 'section' | 'div' | 'nav' | 'article' | 'h2' | 'p' | 'img' | 'a' | 'span' | 'hr' | 'form'
   template: ComponentTemplate | undefined
 }
 
@@ -49,7 +50,7 @@ const emptyProps = z.object({}).strict()
 const contentParents = ['section', 'container', 'stack', 'column', 'hero', 'feature-card'] as const
 const flowChildren = [
   'container', 'stack', 'columns', 'divider', 'spacer', 'heading', 'paragraph', 'image',
-  'button', 'link', 'icon', 'badge', 'feature-card',
+  'button', 'link', 'icon', 'badge', 'feature-card', 'lead-form',
 ] as const
 
 function templateNode(
@@ -176,19 +177,19 @@ const definitions: readonly ComponentDefinition[] = [
   },
   {
     type: 'button', displayName: 'Button', category: 'content', isContainer: false,
-    defaultProps: { text: 'Call to action', href: '#action' },
+    defaultProps: { text: 'Call to action', action: { type: 'external_url', url: 'https://example.com' } },
     defaultStyle: { backgroundColor: '#2563eb', color: '#ffffff', borderRadius: 8 },
     propSchema: buttonPropsSchema, styleSchema,
     allowedParents: [...contentParents, 'navbar'], allowedChildren: [], aiDescription: 'Call-to-action link rendered as a button.',
-    inspector: [{ key: 'text', label: 'Label', control: 'text' }, { key: 'href', label: 'Destination', control: 'url' }],
+    inspector: [{ key: 'text', label: 'Label', control: 'text' }, { key: 'action', label: 'Action', control: 'conversion-action' }],
     renderTag: 'a', template: undefined,
   },
   {
     type: 'link', displayName: 'Link', category: 'content', isContainer: false,
-    defaultProps: { text: 'Link', href: '#link' }, defaultStyle: {},
+    defaultProps: { text: 'Link', action: { type: 'external_url', url: 'https://example.com' } }, defaultStyle: {},
     propSchema: linkPropsSchema, styleSchema,
     allowedParents: [...contentParents, 'navbar'], allowedChildren: [], aiDescription: 'Safe navigation link.',
-    inspector: [{ key: 'text', label: 'Text', control: 'text' }, { key: 'href', label: 'Destination', control: 'url' }],
+    inspector: [{ key: 'text', label: 'Text', control: 'text' }, { key: 'action', label: 'Action', control: 'conversion-action' }],
     renderTag: 'a', template: undefined,
   },
   {
@@ -236,8 +237,30 @@ const definitions: readonly ComponentDefinition[] = [
       mediaSlot: z.enum(['hero-image', 'feature-1', 'feature-2', 'feature-3']).optional(),
     }).strict(), styleSchema,
     allowedParents: ['section', 'container', 'stack', 'column', 'hero', 'feature-card'],
-    allowedChildren: ['container', 'stack', 'heading', 'paragraph', 'image', 'button', 'link', 'icon', 'badge', 'feature-card'],
+    allowedChildren: ['container', 'stack', 'heading', 'paragraph', 'image', 'button', 'link', 'icon', 'badge', 'feature-card', 'lead-form'],
     aiDescription: 'Feature summary composite card.', inspector: [], renderTag: 'article', template: featureCardTemplate,
+  },
+  {
+    type: 'lead-form', displayName: 'Lead Form', category: 'composite', isContainer: false,
+    defaultProps: {
+      title: 'Request a consultation',
+      description: 'Tell us how we can help.',
+      submitLabel: 'Send request',
+      successCopy: 'Thank you. We will be in touch.',
+      fields: [
+        { key: 'name', type: 'text', label: 'Name', required: true, placeholder: 'Your name' },
+        { key: 'email', type: 'email', label: 'Email', required: true, placeholder: 'you@example.com' },
+      ],
+    },
+    defaultStyle: {
+      width: 'full', maxWidth: 720, marginLeft: 'auto', marginRight: 'auto',
+      paddingTop: 24, paddingBottom: 24, borderRadius: 12,
+    },
+    propSchema: leadFormPropsSchema, styleSchema,
+    allowedParents: contentParents, allowedChildren: [],
+    aiDescription: 'Bounded visual-only lead form whose fields are stored in props.',
+    inspector: [{ key: 'fields', label: 'Lead Form', control: 'lead-form-builder' }],
+    renderTag: 'form', template: undefined,
   },
 ]
 

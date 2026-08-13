@@ -129,6 +129,9 @@ importers:
       '@zenui/html-compiler':
         specifier: workspace:*
         version: link:../../packages/html-compiler
+      '@zenui/lead-core':
+        specifier: workspace:*
+        version: link:../../packages/lead-core
       '@zenui/operations-core':
         specifier: workspace:*
         version: link:../../packages/operations-core
@@ -311,6 +314,9 @@ importers:
       '@zenui/export-core':
         specifier: workspace:*
         version: link:../export-core
+      '@zenui/lead-core':
+        specifier: workspace:*
+        version: link:../lead-core
       '@zenui/share-core':
         specifier: workspace:*
         version: link:../share-core
@@ -395,6 +401,15 @@ importers:
       '@zenui/design-schema':
         specifier: workspace:*
         version: link:../design-schema
+
+  packages/lead-core:
+    dependencies:
+      '@zenui/design-schema':
+        specifier: workspace:*
+        version: link:../design-schema
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
 
   packages/operations-core:
     dependencies:

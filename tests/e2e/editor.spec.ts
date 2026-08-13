@@ -17,6 +17,7 @@ async function projectDocument(page: Page, projectId: string) {
     schemaVersion: number
     pages: { id: string; name: string; slug: string; rootNodeId: string }[]
     navigation: { items: { pageId: string; label: string }[] }
+    nodes: Record<string, { type: string; props: Record<string, unknown>; style: Record<string, unknown>; children: string[] }>
   } }
 }
 
@@ -29,9 +30,14 @@ test('builds, edits, reorders, restores and exports a standalone design', async 
   await page.getByRole('button', { name: 'Thêm Tiêu đề' }).click()
   const text = page.getByRole('textbox', { name: 'Nội dung', exact: true })
   await text.fill('Phase 2 heading')
-  await page.getByLabel('Màu chữ', { exact: true }).fill('#112233')
+  await page.getByLabel('Tùy chỉnh màu chữ').fill('#112233')
   await expect(page.getByRole('heading', { name: 'Phase 2 heading' })).toHaveCSS('color', 'rgb(17, 34, 51)')
-  await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
+  await expect.poll(async () => {
+    const stored = await projectDocument(page, projectId)
+    return Object.values(stored.document.nodes).find(node => (
+      node.type === 'heading' && node.props.text === 'Phase 2 heading'
+    ))?.style.color
+  }).toBe('#112233')
 
   await page.getByRole('button', { name: 'Di chuyển Phase 2 heading lên' }).focus()
   await page.keyboard.press('Enter')
@@ -51,24 +57,238 @@ test('builds, edits, reorders, restores and exports a standalone design', async 
   expect(await download.path()).not.toBeNull()
 })
 
+test('authors a bounded visual-only Lead Form and preserves its immutable revision', async ({ page }) => {
+  const projectId = await createProject(page, 'Lead Form foundation')
+  await page.goto(`/projects/${projectId}`)
+  await openAdvancedEditor(page)
+  await page.getByRole('treeitem', { name: /^Khung chứa: Khung chứa/ }).click()
+  await page.getByRole('tab', { name: 'Thành phần' }).click()
+  await page.getByRole('button', { name: 'Thêm Biểu mẫu khách hàng' }).click()
+
+  const builder = page.getByRole('region', { name: 'Trình tạo biểu mẫu khách hàng' })
+  await expect(builder).toBeVisible()
+  await builder.getByLabel('Tiêu đề biểu mẫu').fill('Nhận tư vấn sản phẩm')
+  await builder.getByLabel('Mô tả biểu mẫu').fill('Cho chúng tôi biết nhu cầu của bạn.')
+  await builder.getByLabel('Nhãn nút gửi').fill('Gửi nhu cầu')
+  await builder.getByRole('button', { name: 'Thêm trường' }).click()
+  await builder.getByLabel('Trường 3').getByLabel('Khóa trường').fill('phone')
+  await builder.getByLabel('Trường 3').getByLabel('Nhãn trường').fill('Số điện thoại')
+  await builder.getByLabel('Trường 3').getByLabel('Loại trường').selectOption('tel')
+  await builder.getByRole('button', { name: 'Đưa trường 3 lên' }).click()
+  await builder.getByText('Hiển thị đồng ý liên hệ').click()
+  await builder.getByLabel('Nội dung đồng ý').fill('Tôi đồng ý để chủ website liên hệ về nhu cầu này.')
+  await builder.getByRole('button', { name: 'Lưu biểu mẫu' }).click()
+
+  const form = page.getByRole('form', { name: 'Nhận tư vấn sản phẩm' })
+  await expect(form).toContainText('Bản xem trước — chưa gửi dữ liệu')
+  await expect(form.getByLabel('Số điện thoại')).toHaveAttribute('type', 'tel')
+  await expect(form.getByLabel('Email')).toHaveAttribute('required', '')
+  await expect.poll(async () => Object.values(
+    (await projectDocument(page, projectId)).document.nodes,
+  ).find(node => node.type === 'lead-form')?.props).toMatchObject({
+    title: 'Nhận tư vấn sản phẩm',
+    submitLabel: 'Gửi nhu cầu',
+  })
+
+  const formLayout = async () => form.evaluate(element => {
+    const bounds = element.getBoundingClientRect()
+    const container = element.parentElement?.getBoundingClientRect()
+    if (!container) throw new Error('Missing Lead Form layout container')
+    return {
+      width: bounds.width,
+      leftSpace: bounds.left - container.left,
+      rightSpace: container.right - bounds.right,
+    }
+  })
+  const layoutControls = page.getByRole('group', { name: 'Bố cục biểu mẫu' })
+  await layoutControls.getByRole('button', { name: 'Canh trái' }).click()
+  await expect.poll(async () => (await formLayout()).leftSpace).toBeLessThanOrEqual(1)
+  await layoutControls.getByRole('button', { name: 'Canh giữa' }).click()
+  await expect.poll(async () => {
+    const layout = await formLayout()
+    return {
+      bounded: layout.width <= 720,
+      balanced: Math.abs(layout.leftSpace - layout.rightSpace) <= 1,
+    }
+  }).toEqual({ bounded: true, balanced: true })
+
+  await page.getByRole('button', { name: 'Hoàn tác' }).click()
+  await expect.poll(async () => (await formLayout()).leftSpace).toBeLessThanOrEqual(1)
+  await page.getByRole('button', { name: 'Làm lại' }).click()
+  await expect.poll(async () => {
+    const layout = await formLayout()
+    return Math.abs(layout.leftSpace - layout.rightSpace)
+  }).toBeLessThanOrEqual(1)
+  await expect.poll(async () => Object.values(
+    (await projectDocument(page, projectId)).document.nodes,
+  ).find(node => node.type === 'lead-form')?.style).toMatchObject({
+    marginLeft: 'auto',
+    marginRight: 'auto',
+  })
+
+  let submissionRequests = 0
+  page.on('request', request => {
+    if (request.method() === 'POST' && !request.url().includes('/api/v1/projects/')) submissionRequests += 1
+  })
+  await form.getByLabel('Họ và tên').fill('Nguyễn An')
+  await form.getByLabel('Email').fill('an@example.com')
+  await form.getByLabel('Số điện thoại').fill('+84 912 345 678')
+  await form.getByLabel('Tôi đồng ý để chủ website liên hệ về nhu cầu này.').check()
+  await form.getByRole('button', { name: 'Gửi nhu cầu' }).click()
+  await expect(form).toContainText('Bản xem trước — chưa gửi dữ liệu')
+  expect(submissionRequests).toBe(0)
+
+  await page.reload()
+  const reloadedForm = page.getByRole('form', { name: 'Nhận tư vấn sản phẩm' })
+  await expect(reloadedForm).toBeVisible()
+  await expect.poll(async () => reloadedForm.evaluate(element => {
+    const bounds = element.getBoundingClientRect()
+    const container = element.parentElement?.getBoundingClientRect()
+    if (!container) throw new Error('Missing reloaded Lead Form layout container')
+    return {
+      bounded: bounds.width <= 720,
+      balanced: Math.abs(
+        (bounds.left - container.left) - (container.right - bounds.right),
+      ) <= 1,
+    }
+  })).toEqual({ bounded: true, balanced: true })
+  const revisions = page.getByRole('region', { name: 'Phiên bản' })
+  await revisions.getByLabel('Tên phiên bản').fill('Lead Form baseline')
+  await revisions.getByRole('button', { name: 'Tạo phiên bản' }).click()
+  await expect(revisions.getByText('Lead Form baseline')).toBeVisible({ timeout: 15_000 })
+
+  const revisionResponse = await page.request.get(`/api/v1/projects/${projectId}/revisions?workspaceId=${workspaceId}`)
+  expect(revisionResponse.status()).toBe(200)
+  const revision = (await revisionResponse.json()).data[0] as { documentVersion: number; summary: string }
+  expect(revision).toMatchObject({ summary: 'Lead Form baseline' })
+  const persistedDocument = await projectDocument(page, projectId)
+  expect(revision.documentVersion).toBe(persistedDocument.version)
+  const persistedForms = Object.values(persistedDocument.document.nodes).filter(node => node.type === 'lead-form')
+  expect(persistedForms).toHaveLength(1)
+  expect(persistedForms[0]).toMatchObject({
+    children: [],
+    style: {
+      width: 'full',
+      maxWidth: 720,
+      marginLeft: 'auto',
+      marginRight: 'auto',
+    },
+    props: {
+      title: 'Nhận tư vấn sản phẩm',
+      submitLabel: 'Gửi nhu cầu',
+      fields: [
+        expect.objectContaining({ key: 'name' }),
+        expect.objectContaining({ key: 'phone', type: 'tel' }),
+        expect.objectContaining({ key: 'email' }),
+      ],
+    },
+  })
+
+  const accessibility = await new AxeBuilder({ page }).include('[data-node-type="lead-form"]').analyze()
+  expect(accessibility.violations.filter(item => ['serious', 'critical'].includes(item.impact ?? ''))).toEqual([])
+})
+
+test('centers an exact Lead Form through a structured AI style proposal without changing copy', async ({ page }) => {
+  const projectId = await createProject(page, 'Lead Form AI alignment')
+  await page.goto(`/projects/${projectId}`)
+  await openAdvancedEditor(page)
+  await page.getByRole('treeitem', { name: /^Khung chứa: Khung chứa/ }).click()
+  await page.getByRole('tab', { name: 'Thành phần' }).click()
+  await page.getByRole('button', { name: 'Thêm Biểu mẫu khách hàng' }).click()
+
+  const builder = page.getByRole('region', { name: 'Trình tạo biểu mẫu khách hàng' })
+  await builder.getByLabel('Tiêu đề biểu mẫu').fill('Đăng ký tư vấn AI')
+  await builder.getByRole('button', { name: 'Lưu biểu mẫu' }).click()
+  await builder.getByRole('button', { name: 'Canh trái' }).click()
+  await expect.poll(async () => {
+    const stored = await projectDocument(page, projectId)
+    const form = Object.values(stored.document.nodes).find(node => (
+      node.type === 'lead-form'
+      && 'title' in (node.props as Record<string, unknown>)
+      && (node.props as { title?: string }).title === 'Đăng ký tư vấn AI'
+    ))
+    return form?.style
+  }).toMatchObject({ marginLeft: 0, marginRight: 'auto' })
+
+  const before = await projectDocument(page, projectId)
+  const leadFormEntry = Object.entries(before.document.nodes).find(([, node]) => node.type === 'lead-form')
+  expect(leadFormEntry).toBeDefined()
+  const [leadFormId, acceptedLeadForm] = leadFormEntry!
+  expect(acceptedLeadForm).toMatchObject({
+    props: { title: 'Đăng ký tư vấn AI' },
+    style: { marginLeft: 0, marginRight: 'auto' },
+  })
+
+  await page.getByLabel('Bạn muốn cải thiện điều gì?').fill('Căn giữa biểu mẫu')
+  const proposalRequest = page.waitForRequest(request => (
+    request.method() === 'POST' && request.url().endsWith(`/projects/${projectId}/ai-proposals`)
+  ))
+  await page.getByRole('button', { name: 'Đề xuất thay đổi' }).click()
+  expect((await proposalRequest).postDataJSON()).toMatchObject({
+    intent: 'standard',
+    prompt: 'Căn giữa biểu mẫu',
+    selectedNodeId: leadFormId,
+  })
+  await expect(page.getByRole('heading', { name: 'Kiểm tra thay đổi được đề xuất' })).toBeVisible({ timeout: 15_000 })
+
+  const proposalResponse = await page.request.get(`/api/v1/projects/${projectId}/ai-proposals?workspaceId=${workspaceId}`)
+  expect(proposalResponse.status()).toBe(200)
+  const proposal = (await proposalResponse.json()).data[0] as {
+    intent: string
+    status: string
+    proposedDocument: typeof before.document
+  }
+  expect(proposal).toMatchObject({ intent: 'style', status: 'ready' })
+  expect(proposal.proposedDocument.nodes[leadFormId]).toMatchObject({
+    props: acceptedLeadForm.props,
+    style: {
+      width: 'full',
+      maxWidth: 720,
+      marginLeft: 'auto',
+      marginRight: 'auto',
+    },
+  })
+
+  await page.getByRole('button', { name: 'Chấp nhận thay đổi' }).click()
+  await expect.poll(async () => (await projectDocument(page, projectId)).version).toBe(before.version + 1)
+  const accepted = await projectDocument(page, projectId)
+  expect(accepted.document.nodes[leadFormId]).toMatchObject({
+    props: acceptedLeadForm.props,
+    style: {
+      width: 'full',
+      maxWidth: 720,
+      marginLeft: 'auto',
+      marginRight: 'auto',
+    },
+  })
+  await expect(page.getByRole('form', { name: 'Đăng ký tư vấn AI' })).toBeVisible()
+})
+
 test('creates pages, edits navigation and switches active routes in Simple mode', async ({ page }) => {
   const projectId = await createProject(page, 'Multi-page flow')
   await page.goto(`/projects/${projectId}`)
 
-  await page.getByLabel('Tên trang mới').fill('About')
-  await page.getByLabel('Đường dẫn trang mới').fill('About Us')
-  await page.getByRole('button', { name: 'Thêm trang' }).click()
+  await page.getByRole('button', { name: 'Quản lý trang' }).click()
+  const pageManager = page.getByRole('complementary', { name: 'Quản lý trang' })
+  await pageManager.getByLabel('Tên trang mới').fill('About')
+  await pageManager.getByLabel('Đường dẫn trang mới').fill('About Us')
+  await pageManager.getByRole('button', { name: 'Thêm trang' }).click()
   await expect(page.getByRole('button', { name: /About \/about-us/ })).toHaveAttribute('aria-current', 'page')
-  await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
+  await expect.poll(async () => (await projectDocument(page, projectId)).document.pages).toEqual(
+    expect.arrayContaining([expect.objectContaining({ name: 'About', slug: '/about-us' })]),
+  )
 
   await page.getByRole('button', { name: /Trang chủ \// }).click()
   await expect(page.getByRole('heading', { name: 'Biến ý tưởng thành website của riêng bạn' })).toBeVisible()
   await page.getByRole('checkbox', { name: 'About' }).check()
   await page.getByLabel('Nhãn điều hướng About').fill('Về chúng tôi')
   await page.getByRole('button', { name: 'Lưu nhãn About' }).click()
-  await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
+  await expect.poll(async () => (await projectDocument(page, projectId)).document.navigation.items).toEqual(
+    expect.arrayContaining([expect.objectContaining({ label: 'Về chúng tôi' })]),
+  )
 
   await page.reload()
+  await page.getByRole('button', { name: 'Quản lý trang' }).click()
   await expect(page.getByRole('button', { name: /About \/about-us/ })).toBeVisible()
   const stored = await projectDocument(page, projectId)
   expect(stored.document.schemaVersion).toBe(2)
@@ -87,17 +307,17 @@ test('creates pages, edits navigation and switches active routes in Simple mode'
       const rectangle = element.getBoundingClientRect()
       return { top: rectangle.top, right: rectangle.right, bottom: rectangle.bottom, left: rectangle.left }
     }
-    const manager = document.querySelector<HTMLElement>('.page-manager-panel')
+    const manager = document.querySelector<HTMLElement>('.page-manager-pro')
     if (!manager) throw new Error('Missing Page Manager')
     return {
       viewportWidth: document.documentElement.clientWidth,
       documentWidth: document.documentElement.scrollWidth,
       shell: bounds('.editor-shell'),
-      manager: bounds('.page-manager-panel'),
+      manager: bounds('.page-manager-pro'),
       managerClientHeight: manager.clientHeight,
       managerScrollHeight: manager.scrollHeight,
       managerOverflowY: getComputedStyle(manager).overflowY,
-      story: bounds('.page-story'),
+      story: bounds('.page-story-pro'),
       canvas: bounds('.canvas-panel'),
       guide: bounds('.section-guide'),
       assets: bounds('.asset-brand-panel'),
@@ -126,7 +346,7 @@ test('creates pages, edits navigation and switches active routes in Simple mode'
   }))
   expect(narrowLayout.documentWidth).toBeLessThanOrEqual(narrowLayout.viewportWidth)
   expect(narrowLayout.shellWidth).toBeLessThanOrEqual(narrowLayout.viewportWidth)
-  const accessibility = await new AxeBuilder({ page }).include('.page-manager-panel').analyze()
+  const accessibility = await new AxeBuilder({ page }).include('.page-manager-pro').analyze()
   expect(accessibility.violations.filter(item => ['serious', 'critical'].includes(item.impact ?? ''))).toEqual([])
 })
 
@@ -210,15 +430,19 @@ test('edits top-level sections in Simple mode and preserves the Advanced editor'
   expect(attachment.overlapsContent).toBe(false)
   expect(attachment.toolbarRight).toBeLessThanOrEqual(attachment.viewportRight)
 
+  const countPersistedSections = async () => Object.values(
+    (await projectDocument(page, projectId)).document.nodes,
+  ).filter(node => node.type === 'section').length
+  const initialSectionCount = await countPersistedSections()
   await selectedToolbar.getByRole('button', { name: 'Nhân bản Nội dung' }).click()
   await expect(page.getByRole('button', { name: 'Hoàn tác' })).toBeEnabled()
-  await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
+  await expect.poll(countPersistedSections).toBe(initialSectionCount + 1)
 
   await page.getByRole('button', { name: 'Xóa Nội dung' }).click()
   await expect(page.getByRole('dialog', { name: 'Xóa section?' })).toBeVisible()
   await page.getByRole('button', { name: 'Xác nhận xóa section' }).click()
   await expect(page.getByRole('button', { name: /Chọn Nội dung — Giải thích giá trị/ })).toHaveCount(1)
-  await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
+  await expect.poll(countPersistedSections).toBe(initialSectionCount)
 
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Câu chuyện trang' })).toBeVisible()
@@ -325,7 +549,6 @@ test('selects and edits directly on the Simple Canvas without relying on AI', as
   await contentInput.fill('Sửa tay trong chế độ đơn giản')
   await expect(canvas.getByRole('heading', { name: 'Sửa tay trong chế độ đơn giản' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Hoàn tác' })).toBeEnabled()
-  await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
   await expect.poll(async () => JSON.stringify((await projectDocument(page, projectId)).document)).toContain('Sửa tay trong chế độ đơn giản')
 
   await page.reload()
@@ -334,13 +557,17 @@ test('selects and edits directly on the Simple Canvas without relying on AI', as
 
   await page.setViewportSize({ width: 390, height: 844 })
   await canvas.getByRole('heading', { name: 'Sửa tay trong chế độ đơn giản' }).click()
-  await page.getByRole('button', { name: 'Chỉnh sửa' }).click()
+  const editButton = page.getByRole('button', {
+    name: 'Chỉnh sửa',
+    exact: true,
+  })
+  await editButton.click()
   const editDialog = page.getByRole('dialog', { name: 'Chỉnh sửa trực tiếp' })
   await expect(editDialog.getByRole('textbox', { name: 'Nội dung' })).toHaveValue('Sửa tay trong chế độ đơn giản')
   const accessibility = await new AxeBuilder({ page }).include('.section-sheet').analyze()
   expect(accessibility.violations.filter(item => ['serious', 'critical'].includes(item.impact ?? ''))).toEqual([])
   await page.keyboard.press('Escape')
-  await expect(page.getByRole('button', { name: 'Chỉnh sửa' })).toBeFocused()
+  await expect(editButton).toBeFocused()
 })
 
 test('selects and edits directly on the Advanced Canvas with a readable Layers panel', async ({ page }) => {
@@ -380,14 +607,18 @@ test('selects and edits directly on the Advanced Canvas with a readable Layers p
   expect(advancedAttachment.overlapsContent).toBe(false)
   expect(advancedAttachment.documentWidth).toBeLessThanOrEqual(advancedAttachment.viewportWidth)
 
+  const countPersistedHeadings = async () => Object.values(
+    (await projectDocument(page, projectId)).document.nodes,
+  ).filter(node => node.type === 'heading').length
+  const initialHeadingCount = await countPersistedHeadings()
   await advancedToolbar.getByRole('button', { name: 'Nhân bản Biến ý tưởng thành website của riêng bạn' }).click()
   await expect(page.getByRole('treeitem', { name: /^Tiêu đề: Biến ý tưởng thành website của riêng bạn/ })).toHaveCount(2)
-  await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
+  await expect.poll(countPersistedHeadings).toBe(initialHeadingCount + 1)
   await page.getByRole('button', { name: 'Xóa Biến ý tưởng thành website của riêng bạn' }).click()
   await expect(page.getByRole('dialog', { name: 'Xóa thành phần?' })).toBeVisible()
   await page.getByRole('button', { name: 'Xác nhận xóa thành phần' }).click()
   await expect(page.getByRole('treeitem', { name: /^Tiêu đề: Biến ý tưởng thành website của riêng bạn/ })).toHaveCount(1)
-  await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
+  await expect.poll(countPersistedHeadings).toBe(initialHeadingCount)
   await page.getByRole('treeitem', { name: /^Tiêu đề: Biến ý tưởng thành website của riêng bạn/ }).click()
 
   const layerLayout = await page.evaluate(() => {
@@ -412,7 +643,6 @@ test('selects and edits directly on the Advanced Canvas with a readable Layers p
   await contentInput.fill('Chỉnh trực tiếp từ Canvas')
   await expect(canvas.getByRole('heading', { name: 'Chỉnh trực tiếp từ Canvas' })).toBeVisible()
   await expect(page.getByRole('treeitem', { name: /^Tiêu đề: Chỉnh trực tiếp từ Canvas/ })).toHaveAttribute('aria-selected', 'true')
-  await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
 
   await expect.poll(async () => {
     const response = await page.request.get(`/api/v1/projects/${projectId}/document?workspaceId=${workspaceId}`)

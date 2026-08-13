@@ -111,6 +111,10 @@ export function createPreviewRuntime(options: PreviewRuntimeOptions) {
     if (element?.dataset.nodeId) send('NODE_CLICKED', { nodeId: element.dataset.nodeId })
   }
 
+  const onSubmit = (event: SubmitEvent): void => {
+    event.preventDefault()
+  }
+
   const onPointerOver = (event: PointerEvent): void => {
     if (mode !== 'inspect') return
     const element = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-node-id]') : null
@@ -119,11 +123,13 @@ export function createPreviewRuntime(options: PreviewRuntimeOptions) {
 
   globalThis.addEventListener('message', onMessage)
   root.addEventListener('click', onClick)
+  root.addEventListener('submit', onSubmit)
   root.addEventListener('pointerover', onPointerOver)
   return {
     dispose() {
       globalThis.removeEventListener('message', onMessage)
       root.removeEventListener('click', onClick)
+      root.removeEventListener('submit', onSubmit)
       root.removeEventListener('pointerover', onPointerOver)
     },
   }

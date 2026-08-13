@@ -171,6 +171,58 @@ describe('Blueprint v2 and section presets', () => {
     }).success).toBe(false)
   })
 
+  it('materializes one deterministic server-owned Lead Form and canonical primary actions', () => {
+    const leadBlueprint = {
+      ...blueprintV2,
+      conversionGoal: { type: 'lead_form' as const },
+    }
+    const current = createValidDesignFixture()
+    const first = materializeLandingPageBlueprintV2({ blueprint: leadBlueprint, current })
+    const repeated = materializeLandingPageBlueprintV2({ blueprint: leadBlueprint, current })
+
+    expect(first).toEqual(repeated)
+    expect(first).toMatchObject({ accepted: true })
+    if (!first.accepted) return
+    const forms = Object.values(first.document.nodes).filter(node => node.type === 'lead-form')
+    expect(forms).toHaveLength(1)
+    expect(forms[0]).toMatchObject({
+      id: 'lead-form-1',
+      type: 'lead-form',
+      children: [],
+      props: {
+        title: 'Request a consultation',
+        description: 'Tell us how we can help.',
+        submitLabel: 'Send request',
+        successCopy: 'Thank you. We will be in touch.',
+        fields: [
+          { key: 'name', type: 'text', label: 'Name', required: true },
+          { key: 'email', type: 'email', label: 'Email', required: true },
+        ],
+      },
+    })
+    for (const ctaId of ['navbar-cta', 'hero-primary-cta', 'final-primary-cta']) {
+      expect(first.document.nodes[ctaId]?.props).toMatchObject({
+        action: { type: 'lead_form', formNodeId: 'lead-form-1' },
+      })
+      expect(first.document.nodes[ctaId]?.props).not.toHaveProperty('href')
+    }
+    expect(validateDesignDocument(first.document).success).toBe(true)
+  })
+
+  it('does not create a Lead Form for non-form conversion intent', () => {
+    const result = materializeLandingPageBlueprintV2({
+      blueprint: { ...blueprintV2, conversionGoal: { type: 'internal_page' as const } },
+      current: createValidDesignFixture(),
+    })
+
+    expect(result).toMatchObject({ accepted: true })
+    if (!result.accepted) return
+    expect(Object.values(result.document.nodes).filter(node => node.type === 'lead-form')).toHaveLength(0)
+    expect(result.document.nodes['hero-primary-cta']?.props).toMatchObject({
+      action: { type: 'internal_page', pageId: 'home' },
+    })
+  })
+
   it('materializes a complete deterministic editable landing page', () => {
     const current = createValidDesignFixture()
     const policy = createRemoteImagePolicy('images.example.com,images.unsplash.com,images.pexels.com')

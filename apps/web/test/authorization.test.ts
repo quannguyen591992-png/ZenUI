@@ -24,9 +24,15 @@ describe('workspace authorization', () => {
   it.each([
     ['viewer', 'read', true],
     ['viewer', 'mutateDocument', false],
+    ['viewer', 'readLeads', false],
+    ['viewer', 'manageLeads', false],
     ['editor', 'mutateDocument', true],
+    ['editor', 'readLeads', true],
+    ['editor', 'manageLeads', true],
     ['editor', 'manageProject', false],
     ['owner', 'manageProject', true],
+    ['owner', 'readLeads', true],
+    ['owner', 'manageLeads', true],
   ] as const)('maps role %s to permission %s', (role, permission, allowed) => {
     expect(hasWorkspacePermission(role, permission)).toBe(allowed)
   })

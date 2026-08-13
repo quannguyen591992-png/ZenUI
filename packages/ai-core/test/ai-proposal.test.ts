@@ -53,6 +53,30 @@ function document() {
   return value
 }
 
+function documentWithLeadForm() {
+  const value = document()
+  value.nodes['lead-form-1'] = {
+    id: 'lead-form-1',
+    type: 'lead-form',
+    parentId: 'container-1',
+    children: [],
+    props: {
+      title: 'Request a consultation',
+      description: 'Tell us how we can help.',
+      submitLabel: 'Send request',
+      successCopy: 'Thank you. We will be in touch.',
+      fields: [
+        { key: 'name', type: 'text', label: 'Name', required: true, placeholder: 'Your name' },
+        { key: 'email', type: 'email', label: 'Email', required: true, placeholder: 'you@example.com' },
+      ],
+    },
+    style: { width: 'full', maxWidth: 720, marginLeft: 0, marginRight: 'auto' },
+    responsive: {},
+  }
+  value.nodes['container-1']!.children.push('lead-form-1')
+  return value
+}
+
 describe('AI proposal contracts', () => {
   it('derives canonical page, section and element scopes from the accepted document', () => {
     const accepted = document()
@@ -669,6 +693,101 @@ describe('AI proposal contracts', () => {
       }),
       provider: { planStyleEdit: () => Promise.reject(new Error('provider_must_not_be_called')) },
     })).toEqual({ accepted: false, code: 'unsupported_style_target' })
+  })
+
+  it('plans and routes Lead Form placement through the exact structured style target', async () => {
+    const accepted = documentWithLeadForm()
+    const context = buildAssistantContextPack({
+      document: accepted,
+      selectedNodeId: 'lead-form-1',
+      request: 'Căn giữa biểu mẫu',
+      locale: 'vi',
+    })
+    const provider = {
+      planStyleEdit: () => Promise.resolve({
+        output: {
+          version: 'style-edit-spec-v1', emphasis: 'preserve', spacingDensity: 'preserve',
+          alignment: 'center', surface: 'preserve', mobileStack: 'preserve',
+        },
+        usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+      }),
+    }
+
+    await expect(planStyleEdit({ context, provider })).resolves.toMatchObject({
+      accepted: true,
+      spec: { alignment: 'center' },
+    })
+    for (const prompt of [
+      'canh giữa biểu mẫu', 'căn giữa biểu mẫu', 'center this form',
+      'canh trái biểu mẫu', 'căn phải biểu mẫu', 'align this form left', 'align this form right',
+    ]) {
+      expect(routeProposalIntent({
+        document: accepted,
+        selectedNodeId: 'lead-form-1',
+        requestedIntent: 'standard',
+        prompt,
+      })).toEqual({ accepted: true, intent: 'style', targetNodeId: 'lead-form-1' })
+    }
+    expect(routeProposalIntent({
+      document: accepted,
+      selectedNodeId: 'lead-form-1',
+      requestedIntent: 'standard',
+      prompt: 'align this form left and right',
+    })).toEqual({ accepted: true, intent: 'standard', targetNodeId: 'lead-form-1' })
+    expect(routeProposalIntent({
+      document: accepted,
+      selectedNodeId: 'heading-1',
+      requestedIntent: 'standard',
+      prompt: 'Căn giữa tiêu đề',
+    })).toEqual({ accepted: true, intent: 'standard', targetNodeId: 'heading-1' })
+  })
+
+  it('materializes Lead Form alignment as bounded box placement without changing copy', () => {
+    const accepted = documentWithLeadForm()
+    const before = structuredClone(accepted)
+    const result = materializeStyleProposal({
+      document: accepted,
+      targetNodeId: 'lead-form-1',
+      spec: {
+        version: 'style-edit-spec-v1',
+        emphasis: 'preserve',
+        spacingDensity: 'preserve',
+        alignment: 'center',
+        surface: 'preserve',
+        mobileStack: 'preserve',
+      },
+      runId,
+      expectedVersion: 1,
+      summary: 'Centered the selected Lead Form',
+    })
+
+    expect(result).toMatchObject({
+      accepted: true,
+      commands: [{
+        type: 'UPDATE_STYLE',
+        nodeId: 'lead-form-1',
+        patch: {
+          width: 'full', maxWidth: 720,
+          marginLeft: 'auto', marginRight: 'auto',
+        },
+      }],
+      proposedDocument: {
+        nodes: {
+          'lead-form-1': {
+            props: before.nodes['lead-form-1']!.props,
+            style: expect.objectContaining({
+              width: 'full', maxWidth: 720,
+              marginLeft: 'auto', marginRight: 'auto',
+            }),
+          },
+        },
+      },
+    })
+    if (!result.accepted) throw new Error('expected Lead Form style proposal')
+    expect(result.commands).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'UPDATE_PROPS' }),
+    ]))
+    expect(accepted).toEqual(before)
   })
 
   it('materializes allowlisted semantic style specs for the exact selected element only', () => {

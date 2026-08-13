@@ -389,6 +389,7 @@ function blueprintFor(
     version: 2,
     pagePreset: content.pagePreset,
     brand: content.brand,
+    conversionGoal: brief.conversionGoal,
     theme: {
       preset: preset.themePreset,
       mood: preset.mood,
@@ -573,6 +574,7 @@ function contentBrief(brief: WebsiteBrief): DesignDirectionContentBrief {
     cta: brief.cta,
     tone: brief.tone,
     brandDetails: brief.brandDetails,
+    ...(brief.conversionGoal ? { conversionGoal: brief.conversionGoal } : {}),
     mustHaveSections: brief.mustHaveSections,
   }
 }

@@ -85,6 +85,28 @@ No stack trace, SQL detail, provider token or provider response body is returned
 | POST | `/api/v1/projects/:projectId/brand-kit/apply` | Atomically apply one Brand Kit version to the expected draft version | 200/401/403/404/409/422 | Implemented |
 | GET | `/a/:assetId` on exact `ASSET_ORIGIN` | Serve only integrity-checked ready WebP bytes without cookies/tenant metadata | 200/304/404/503 | Implemented |
 
+Customer Leads is implemented as one managed-Share vertical slice and remains `In review` until normal local-live owner acceptance. Notes, CSV export, selectable retention, email, push, webhook/CRM and deployment bindings remain outside this MVP.
+
+## Lead Form contract (Phase 12 / restored F1 baseline)
+
+### Definition and limits
+
+- Website form definition remains in the Design Document and every mutation continues through `POST /api/v1/projects/:projectId/commands`; there is no form-definition CRUD bypass.
+- Maximums are 10 forms per document and 12 fields per form. Allowed fields are `text | email | tel | textarea | select` plus one optional consent checkbox. Password, file, payment, arbitrary hidden field/action/header/method/endpoint and rich HTML are rejected.
+- Field key is at most 64 ASCII characters; title 160; description/success/consent copy 500; label 120; placeholder 160; select has at most 20 options with label/value at most 120 characters each.
+- Editor Canvas, isolated Preview, Share and standalone ZIP render semantic visual-only controls. They emit no form action or method, retain `form-action 'none'`, `script-src 'none'` and `connect-src 'none'`, and must not claim successful submission.
+
+### Customer Leads MVP — implemented, in review
+
+- The rejected F2 backend-only intake slice was reverted on 2026-08-12 because a visitor submission without an owner-visible Inbox did not close the customer-contact outcome. The replacement implementation keeps the complete journey together: managed public form → encrypted durable lead → generic no-PII receipt → project badge/Inbox → owner/editor detail → `new → contacted`.
+- `POST /s/:slug` on exact `SHARE_ORIGIN` accepts only bounded `application/x-www-form-urlencoded` data for an active immutable Lead Form binding. It validates exact route/node/fields/consent, uses HMAC-only Redis admission keys, encrypts before append and returns `303` only after persistence. Preview, ordinary compiler output and ZIP remain visual-only with `form-action 'none'`, `script-src 'none'` and `connect-src 'none'`.
+- `GET /api/v1/projects/:projectId/leads?workspaceId=...` returns bounded newest-first redacted summaries; `/leads/count` returns only `{ newCount }`; `/leads/:leadId` authorizes before server-side decrypt; `PATCH /leads/:leadId` requires exact Origin and `{ workspaceId, expectedVersion }` for atomic `new → contacted`.
+- Owner/editor have `readLeads` and `manageLeads`; viewer is denied. Cross-tenant/project reads use tenant-safe not-found semantics. List/count responses never expose PII, ciphertext, binding/share/revision metadata or key version.
+- Share management responses include only `leadFormsLive: boolean` as server-confirmed UI state. Simple Share copy may say “Chia sẻ website để nhận khách hàng” only for links whose immutable revision has an active Lead Form binding; visual-only links retain ordinary sharing copy.
+- Lead payload expires 90 days after receipt. The worker purges bounded batches using `LEAD_RETENTION_INTERVAL_SECONDS` and `LEAD_RETENTION_BATCH_SIZE`; failure events contain no PII or resource identifiers.
+- The in-product “báo ngay” mechanism is the `Khách hàng mới` badge: initial fetch, approximately 30-second visible-only polling and immediate focus/visibility refresh. There is no email, push, webhook or CRM notification in this MVP.
+- Local-live owner acceptance through normal authentication remains the completion gate; Playwright/E2E routes, DevTools or database inspection cannot substitute for it.
+
 ## Stage 10B1 multi-page contract
 
 Stage 10B1 keeps the existing project command endpoint as the only page/navigation mutation boundary; it does not add page CRUD routes that could bypass document validation.
@@ -260,10 +282,10 @@ Create request:
 
 - Only `manageProject` members can list, create or disable share links. Mutations enforce exact `APP_ORIGIN` before body parsing, and cross-tenant resources use not-found semantics.
 - `requestId` is idempotent per project. The server creates a 32-character base64url slug from 24 random bytes and pins it to a revision belonging to that project. Phase 5 creates persistent links (`expiresAt: null`), while the nullable database field keeps future expiry policy migration-free.
-- Management responses contain only link ID, revision ID, public URL, derived status (`active | disabled | expired`), expiry and timestamps. They never return workspace/project IDs, raw document snapshots or storage metadata.
+- Management responses contain only link ID, revision ID, public URL, derived status (`active | disabled | expired`), expiry, timestamps and server-confirmed `leadFormsLive`. They never return workspace/project IDs, raw document snapshots, Lead Form binding IDs or storage metadata.
 - Redis atomically limits create requests per user/workspace. HTTP 429 includes `Retry-After`; production has no process-local fallback.
 - Public `GET /s/:slug` and `/s/:slug/:path*` are accepted only on exact `SHARE_ORIGIN`, which must use a hostname different from `APP_ORIGIN`. They do not authenticate, read editor sessions or accept tenant IDs; malformed or traversal-like paths fail with uniform 404.
-- Active links synchronously compile the requested canonical route from the immutable revision with the shared deterministic compiler. Structured internal page links receive the share-slug prefix. Responses are standalone script-free HTML with CSP in header/meta, `X-Robots-Tag: noindex, nofollow, noarchive`, `no-store`, `no-referrer`, `nosniff`, restrictive Permissions Policy and no `Set-Cookie`.
+- Active links synchronously compile the requested canonical route from the immutable revision with the shared deterministic compiler. Structured internal page links receive the share-slug prefix. Responses are standalone script-free HTML with CSP in header/meta, `X-Robots-Tag: noindex, nofollow, noarchive`, `no-store`, `strict-origin`, `nosniff`, restrictive Permissions Policy and no `Set-Cookie`. `strict-origin` exists only to preserve the exact Share origin on managed native form POST; path, query and bearer slug remain omitted.
 - Malformed, missing, disabled, expired or wrong-host links return generic HTTP 404. Public view limits use keyed hashes rather than raw slug/IP Redis keys and return generic HTTP 429.
 
 ## Vercel connection and immutable deployment

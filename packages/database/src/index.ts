@@ -62,7 +62,12 @@ import {
   type DeploymentTarget,
 } from '@zenui/deployment-core'
 import { applyCommandTransaction, type DesignCommand } from '@zenui/design-commands'
-import { parseDesignDocument, validateDesignDocument, type DesignDocument } from '@zenui/design-schema'
+import {
+  parseDesignDocument,
+  validateDesignDocument,
+  type DesignDocument,
+  type LeadFormProps,
+} from '@zenui/design-schema'
 import {
   EXPORT_CONTENT_TYPE,
   exportArtifactSchema,
@@ -82,6 +87,8 @@ import {
   designDocuments,
   exportRuns,
   generationRuns,
+  leadFormBindings,
+  leadSubmissions,
   projectBriefs,
   projects,
   providerConnections,
@@ -95,6 +102,10 @@ import {
 
 import type * as schema from './schema'
 import type { PGlite } from '@electric-sql/pglite'
+import type {
+  EncryptedLeadPayload,
+  LeadEncryptionContext,
+} from '@zenui/lead-core/server'
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
 
 export * from './schema'
@@ -2437,15 +2448,463 @@ export function createShareLinkRepository(db: PgDatabase<PgQueryResultHKT, typeo
     async findPublicBySlug(slugInput: string, now = new Date()) {
       const slug = shareSlugSchema.safeParse(slugInput)
       if (!slug.success) return null
-      const [row] = await db.select({ link: shareLinks, document: revisions.documentSnapshot })
+      const [row] = await db.select({
+        link: shareLinks,
+        document: revisions.documentSnapshot,
+      })
         .from(shareLinks)
         .innerJoin(revisions, eq(revisions.id, shareLinks.revisionId))
-        .where(and(eq(shareLinks.slug, slug.data), eq(shareLinks.status, 'active')))
+        .where(and(
+          eq(shareLinks.slug, slug.data),
+          eq(shareLinks.status, 'active'),
+        ))
         .limit(1)
-      if (!row || resolveShareStatus(row.link.status, row.link.expiresAt, now) !== 'active') return null
+      if (
+        !row
+        || resolveShareStatus(
+          row.link.status,
+          row.link.expiresAt,
+          now,
+        ) !== 'active'
+      ) return null
       const validation = validateDesignDocument(row.document)
       if (!validation.success) return null
-      return { document: validation.data }
+      const bindingRows = await db.select()
+        .from(leadFormBindings)
+        .where(and(
+          eq(leadFormBindings.shareLinkId, row.link.id),
+          eq(leadFormBindings.status, 'active'),
+        ))
+        .orderBy(asc(leadFormBindings.createdAt))
+      return {
+        workspaceId: row.link.workspaceId,
+        projectId: row.link.projectId,
+        shareLinkId: row.link.id,
+        revisionId: row.link.revisionId,
+        document: validation.data,
+        bindings: bindingRows.map(mapLeadBinding),
+      }
+    },
+  }
+}
+
+export interface LeadBindingRecord {
+  id: string
+  shareLinkId: string
+  revisionId: string
+  formNodeId: string
+  pageRoute: string
+  formTitle: string
+  status: 'active' | 'disabled'
+}
+
+export interface LeadSummaryRecord {
+  id: string
+  status: 'new' | 'contacted'
+  version: number
+  formTitle: string
+  receivedAt: Date
+  expiresAt: Date
+  contactedAt: Date | null
+}
+
+const appendEncryptedLeadSchema = z.object({
+  bindingId: z.string().uuid(),
+  leadId: z.string().uuid(),
+  requestId: z.string().uuid(),
+  envelope: z.object({
+    ciphertext: z.string().min(1).max(50_000),
+    iv: z.string().min(1).max(200),
+    authTag: z.string().min(1).max(200),
+    keyVersion: z.number().int().positive(),
+  }).strict(),
+  receivedAt: z.date(),
+}).strict()
+
+function mapLeadBinding(
+  row: typeof leadFormBindings.$inferSelect,
+): LeadBindingRecord {
+  return {
+    id: row.id,
+    shareLinkId: row.shareLinkId,
+    revisionId: row.revisionId,
+    formNodeId: row.formNodeId,
+    pageRoute: row.pageRoute,
+    formTitle: row.formTitle,
+    status: row.status,
+  }
+}
+
+function mapLeadSummary(
+  row: typeof leadSubmissions.$inferSelect,
+): LeadSummaryRecord {
+  return {
+    id: row.id,
+    status: row.status,
+    version: row.version,
+    formTitle: row.formTitle,
+    receivedAt: row.receivedAt,
+    expiresAt: row.expiresAt,
+    contactedAt: row.contactedAt,
+  }
+}
+
+function leadFormsByPage(document: DesignDocument) {
+  return document.pages.flatMap(page => {
+    const seen = new Set<string>()
+    const queue = [page.rootNodeId]
+    const forms: Array<{
+      formNodeId: string
+      pageRoute: string
+      form: LeadFormProps
+    }> = []
+    while (queue.length) {
+      const nodeId = queue.shift()!
+      if (seen.has(nodeId)) continue
+      seen.add(nodeId)
+      const node = document.nodes[nodeId]
+      if (!node) continue
+      queue.push(...node.children)
+      if (node.type === 'lead-form') {
+        forms.push({
+          formNodeId: node.id,
+          pageRoute: page.slug,
+          form: node.props as LeadFormProps,
+        })
+      }
+    }
+    return forms
+  })
+}
+
+export function createLeadRepository(
+  db: PgDatabase<PgQueryResultHKT, typeof schema>,
+) {
+  const projectAuthorized = (
+    context: AuthContext,
+    projectId: string,
+  ) => createProjectRepository(db).findById(context, projectId)
+
+  return {
+    async provisionBindings(
+      context: AuthContext,
+      projectId: string,
+      shareLinkId: string,
+    ): Promise<{ bindings: LeadBindingRecord[] }> {
+      if (!await projectAuthorized(context, projectId)) {
+        throw new Error('not_found')
+      }
+      const [row] = await db.select({
+        link: shareLinks,
+        document: revisions.documentSnapshot,
+      }).from(shareLinks)
+        .innerJoin(
+          revisions,
+          eq(revisions.id, shareLinks.revisionId),
+        )
+        .where(and(
+          eq(shareLinks.id, shareLinkId),
+          eq(shareLinks.workspaceId, context.workspaceId),
+          eq(shareLinks.projectId, projectId),
+          eq(revisions.projectId, projectId),
+        ))
+        .limit(1)
+      if (!row) throw new Error('not_found')
+      const document = validateDesignDocument(row.document)
+      if (!document.success) throw new Error('invalid_revision')
+
+      await db.transaction(async transaction => {
+        for (const form of leadFormsByPage(document.data)) {
+          await transaction.insert(leadFormBindings).values({
+            workspaceId: context.workspaceId,
+            projectId,
+            shareLinkId,
+            revisionId: row.link.revisionId,
+            formNodeId: form.formNodeId,
+            pageRoute: form.pageRoute,
+            formTitle: form.form.title,
+            formSnapshot: structuredClone(form.form),
+          }).onConflictDoNothing()
+        }
+      })
+      const bindings = await db.select()
+        .from(leadFormBindings)
+        .where(and(
+          eq(leadFormBindings.workspaceId, context.workspaceId),
+          eq(leadFormBindings.projectId, projectId),
+          eq(leadFormBindings.shareLinkId, shareLinkId),
+        ))
+        .orderBy(asc(leadFormBindings.createdAt))
+      return { bindings: bindings.map(mapLeadBinding) }
+    },
+
+    async listBindings(
+      context: AuthContext,
+      projectId: string,
+      shareLinkId: string,
+    ): Promise<LeadBindingRecord[]> {
+      if (!await projectAuthorized(context, projectId)) return []
+      const bindings = await db.select()
+        .from(leadFormBindings)
+        .where(and(
+          eq(leadFormBindings.workspaceId, context.workspaceId),
+          eq(leadFormBindings.projectId, projectId),
+          eq(leadFormBindings.shareLinkId, shareLinkId),
+        ))
+        .orderBy(asc(leadFormBindings.createdAt))
+      return bindings.map(mapLeadBinding)
+    },
+
+    async resolvePublicBinding(
+      slugInput: string,
+      pageRoute: string,
+      formNodeId: string,
+      now = new Date(),
+    ) {
+      const slug = shareSlugSchema.safeParse(slugInput)
+      if (!slug.success) return null
+      const [row] = await db.select({
+        binding: leadFormBindings,
+        link: shareLinks,
+      }).from(leadFormBindings)
+        .innerJoin(
+          shareLinks,
+          eq(shareLinks.id, leadFormBindings.shareLinkId),
+        )
+        .where(and(
+          eq(shareLinks.slug, slug.data),
+          eq(shareLinks.status, 'active'),
+          eq(leadFormBindings.status, 'active'),
+          eq(leadFormBindings.pageRoute, pageRoute),
+          eq(leadFormBindings.formNodeId, formNodeId),
+        ))
+        .limit(1)
+      if (
+        !row
+        || resolveShareStatus(
+          row.link.status,
+          row.link.expiresAt,
+          now,
+        ) !== 'active'
+      ) return null
+      return {
+        bindingId: row.binding.id,
+        workspaceId: row.binding.workspaceId,
+        projectId: row.binding.projectId,
+        shareLinkId: row.binding.shareLinkId,
+        revisionId: row.binding.revisionId,
+        formNodeId: row.binding.formNodeId,
+        pageRoute: row.binding.pageRoute,
+        form: structuredClone(row.binding.formSnapshot),
+      }
+    },
+
+    async appendEncrypted(
+      input: z.input<typeof appendEncryptedLeadSchema>,
+    ) {
+      const parsed = appendEncryptedLeadSchema.safeParse(input)
+      if (!parsed.success) throw new Error('invalid_lead_input')
+      return db.transaction(async transaction => {
+        const [binding] = await transaction.select()
+          .from(leadFormBindings)
+          .innerJoin(
+            shareLinks,
+            eq(shareLinks.id, leadFormBindings.shareLinkId),
+          )
+          .where(and(
+            eq(leadFormBindings.id, parsed.data.bindingId),
+            eq(leadFormBindings.status, 'active'),
+            eq(shareLinks.status, 'active'),
+          ))
+          .limit(1)
+        if (!binding) throw new Error('not_found')
+        const [existing] = await transaction.select()
+          .from(leadSubmissions)
+          .where(and(
+            eq(leadSubmissions.bindingId, parsed.data.bindingId),
+            eq(leadSubmissions.requestId, parsed.data.requestId),
+          ))
+          .limit(1)
+        if (existing) {
+          return { created: false, lead: mapLeadSummary(existing) }
+        }
+        const receivedAt = parsed.data.receivedAt
+        const expiresAt = new Date(
+          receivedAt.getTime() + 90 * 86_400_000,
+        )
+        const [created] = await transaction.insert(leadSubmissions)
+          .values({
+            id: parsed.data.leadId,
+            workspaceId: binding.lead_form_bindings.workspaceId,
+            projectId: binding.lead_form_bindings.projectId,
+            bindingId: binding.lead_form_bindings.id,
+            shareLinkId: binding.lead_form_bindings.shareLinkId,
+            revisionId: binding.lead_form_bindings.revisionId,
+            requestId: parsed.data.requestId,
+            formNodeId: binding.lead_form_bindings.formNodeId,
+            formTitle: binding.lead_form_bindings.formTitle,
+            ciphertext: parsed.data.envelope.ciphertext,
+            iv: parsed.data.envelope.iv,
+            authTag: parsed.data.envelope.authTag,
+            keyVersion: parsed.data.envelope.keyVersion,
+            receivedAt,
+            expiresAt,
+            updatedAt: receivedAt,
+          })
+          .returning()
+        if (!created) throw new Error('lead_append_failed')
+        return { created: true, lead: mapLeadSummary(created) }
+      })
+    },
+
+    async list(
+      context: AuthContext,
+      projectId: string,
+      limit = 50,
+    ): Promise<LeadSummaryRecord[]> {
+      if (!await projectAuthorized(context, projectId)) return []
+      const rows = await db.select()
+        .from(leadSubmissions)
+        .where(and(
+          eq(leadSubmissions.workspaceId, context.workspaceId),
+          eq(leadSubmissions.projectId, projectId),
+        ))
+        .orderBy(desc(leadSubmissions.receivedAt))
+        .limit(Math.max(1, Math.min(limit, 100)))
+      return rows.map(mapLeadSummary)
+    },
+
+    async countNew(context: AuthContext, projectId: string) {
+      if (!await projectAuthorized(context, projectId)) {
+        return { newCount: 0 }
+      }
+      const [result] = await db.select({
+        count: sql<number>`count(*)::int`,
+      }).from(leadSubmissions).where(and(
+        eq(leadSubmissions.workspaceId, context.workspaceId),
+        eq(leadSubmissions.projectId, projectId),
+        eq(leadSubmissions.status, 'new'),
+      ))
+      return { newCount: Number(result?.count ?? 0) }
+    },
+
+    async findEncryptedById(
+      context: AuthContext,
+      projectId: string,
+      leadId: string,
+    ): Promise<{
+      summary: LeadSummaryRecord
+      envelope: EncryptedLeadPayload
+      context: LeadEncryptionContext
+    } | null> {
+      if (!await projectAuthorized(context, projectId)) return null
+      const [row] = await db.select()
+        .from(leadSubmissions)
+        .where(and(
+          eq(leadSubmissions.id, leadId),
+          eq(leadSubmissions.workspaceId, context.workspaceId),
+          eq(leadSubmissions.projectId, projectId),
+        ))
+        .limit(1)
+      if (!row) return null
+      return {
+        summary: mapLeadSummary(row),
+        envelope: {
+          ciphertext: row.ciphertext,
+          iv: row.iv,
+          authTag: row.authTag,
+          keyVersion: row.keyVersion,
+        },
+        context: {
+          workspaceId: row.workspaceId,
+          projectId: row.projectId,
+          shareLinkId: row.shareLinkId,
+          revisionId: row.revisionId,
+          formNodeId: row.formNodeId,
+          leadId: row.id,
+        },
+      }
+    },
+
+    async markContacted(
+      context: AuthContext,
+      projectId: string,
+      leadId: string,
+      expectedVersion: number,
+      contactedAt = new Date(),
+    ) {
+      if (
+        !Number.isInteger(expectedVersion)
+        || expectedVersion < 1
+        || !await projectAuthorized(context, projectId)
+      ) return { accepted: false, code: 'not_found' } as const
+      return db.transaction(async transaction => {
+        const [current] = await transaction.select()
+          .from(leadSubmissions)
+          .where(and(
+            eq(leadSubmissions.id, leadId),
+            eq(leadSubmissions.workspaceId, context.workspaceId),
+            eq(leadSubmissions.projectId, projectId),
+          ))
+          .limit(1)
+        if (!current) {
+          return { accepted: false, code: 'not_found' } as const
+        }
+        if (
+          current.status === 'contacted'
+          && current.version === expectedVersion + 1
+        ) {
+          return {
+            accepted: true,
+            lead: mapLeadSummary(current),
+          } as const
+        }
+        if (
+          current.status !== 'new'
+          || current.version !== expectedVersion
+        ) {
+          return { accepted: false, code: 'conflict' } as const
+        }
+        const [updated] = await transaction.update(leadSubmissions)
+          .set({
+            status: 'contacted',
+            version: sql`${leadSubmissions.version} + 1`,
+            contactedAt,
+            updatedAt: contactedAt,
+          })
+          .where(and(
+            eq(leadSubmissions.id, leadId),
+            eq(leadSubmissions.status, 'new'),
+            eq(leadSubmissions.version, expectedVersion),
+          ))
+          .returning()
+        return updated
+          ? { accepted: true, lead: mapLeadSummary(updated) } as const
+          : { accepted: false, code: 'conflict' } as const
+      })
+    },
+
+    async purgeExpired(input: { now: Date; batchSize: number }) {
+      const parsed = z.object({
+        now: z.date(),
+        batchSize: z.number().int().min(1).max(500),
+      }).strict().safeParse(input)
+      if (!parsed.success) throw new Error('invalid_lead_purge_input')
+      const candidates = await db.select({ id: leadSubmissions.id })
+        .from(leadSubmissions)
+        .where(lte(leadSubmissions.expiresAt, parsed.data.now))
+        .orderBy(asc(leadSubmissions.expiresAt))
+        .limit(parsed.data.batchSize)
+      if (candidates.length) {
+        await db.delete(leadSubmissions).where(inArray(
+          leadSubmissions.id,
+          candidates.map(candidate => candidate.id),
+        ))
+      }
+      return {
+        scanned: candidates.length,
+        deleted: candidates.length,
+      }
     },
   }
 }

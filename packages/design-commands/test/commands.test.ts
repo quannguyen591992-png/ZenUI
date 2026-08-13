@@ -202,6 +202,107 @@ describe('design command contract', () => {
     if (removed.accepted) expect(removed.document.nodes['heading-copy']).toBeUndefined()
   })
 
+  it('updates and deep-duplicates a bounded Lead Form through atomic commands', () => {
+    const document = createValidDesignFixture()
+    document.nodes['lead-form-1'] = {
+      id: 'lead-form-1',
+      type: 'lead-form',
+      parentId: 'container-1',
+      children: [],
+      props: {
+        title: 'Request a consultation',
+        description: 'Tell us how we can help.',
+        submitLabel: 'Send request',
+        successCopy: 'Thank you. We will be in touch.',
+        fields: [{
+          key: 'email',
+          type: 'email',
+          label: 'Work email',
+          required: true,
+          placeholder: 'you@example.com',
+        }],
+        consent: { label: 'I agree to be contacted', required: true },
+      },
+      style: {},
+      responsive: {},
+    }
+    document.nodes['container-1']!.children.push('lead-form-1')
+
+    const updated = applyCommandTransaction(document, 1, [{
+      ...metadata,
+      type: 'UPDATE_PROPS',
+      nodeId: 'lead-form-1',
+      patch: {
+        fields: [{
+          key: 'email',
+          type: 'email',
+          label: 'Business email',
+          required: true,
+          placeholder: 'name@company.com',
+        }],
+      },
+    }])
+    expect(updated).toMatchObject({ accepted: true, version: 2 })
+    if (!updated.accepted) return
+
+    const duplicated = applyCommandTransaction(updated.document, 2, [{
+      ...metadata,
+      documentVersion: 2,
+      type: 'DUPLICATE_NODE',
+      nodeId: 'lead-form-1',
+      newNodeId: 'lead-form-copy',
+      targetParentId: 'container-1',
+      index: updated.document.nodes['container-1']!.children.length,
+    }])
+    expect(duplicated).toMatchObject({ accepted: true, version: 3 })
+    if (!duplicated.accepted) return
+
+    const original = duplicated.document.nodes['lead-form-1']
+    const copy = duplicated.document.nodes['lead-form-copy']
+    expect(original?.type).toBe('lead-form')
+    expect(copy?.type).toBe('lead-form')
+    if (
+      original?.type !== 'lead-form'
+      || copy?.type !== 'lead-form'
+      || !('fields' in original.props)
+      || !('fields' in copy.props)
+    ) return
+    expect(copy.props.fields).toEqual(original.props.fields)
+    expect(copy.props.fields).not.toBe(original.props.fields)
+  })
+
+  it('rejects an invalid Lead Form patch atomically without mutating input', () => {
+    const document = createValidDesignFixture()
+    document.nodes['lead-form-1'] = {
+      id: 'lead-form-1', type: 'lead-form', parentId: 'container-1', children: [],
+      props: {
+        title: 'Contact us', description: '', submitLabel: 'Send', successCopy: 'Thanks',
+        fields: [{ key: 'email', type: 'email', label: 'Email', required: true }],
+      },
+      style: {}, responsive: {},
+    }
+    document.nodes['container-1']!.children.push('lead-form-1')
+    const before = structuredClone(document)
+
+    const result = applyCommandTransaction(document, 1, [{
+      ...metadata,
+      type: 'UPDATE_PROPS',
+      nodeId: 'heading-1',
+      patch: { text: 'Must roll back' },
+    }, {
+      ...metadata,
+      commandId: 'invalid-form',
+      type: 'UPDATE_PROPS',
+      nodeId: 'lead-form-1',
+      patch: {
+        fields: [{ key: 'email', type: 'password', label: 'Password', required: true }],
+      },
+    }])
+
+    expect(result).toMatchObject({ accepted: false, error: { code: 'document_invalid' } })
+    expect(document).toEqual(before)
+  })
+
   it('updates responsive styles and theme', () => {
     const commands: DesignCommand[] = [
       { ...metadata, type: 'UPDATE_RESPONSIVE_STYLE', nodeId: 'heading-1', breakpoint: 'mobile', patch: { fontSize: 24 } },
@@ -578,7 +679,7 @@ describe('design command contract', () => {
     expect(restored).toMatchObject({ accepted: true, document: { pages: [{ id: 'home' }, { id: 'about' }] } })
   })
 
-  it('protects Home and referenced pages from destructive commands', () => {
+  it('protects Home and legacy or canonical referenced pages from destructive commands', () => {
     const document = migrateDesignDocumentV1ToV2(createValidDesignFixture())
     expect(applyCommandTransaction(document, 1, [{
       ...metadata, type: 'UPDATE_PAGE', pageId: 'home', patch: { slug: '/renamed-home' },
@@ -586,6 +687,31 @@ describe('design command contract', () => {
     expect(applyCommandTransaction(document, 1, [{
       ...metadata, type: 'REMOVE_PAGE', pageId: 'home',
     }])).toMatchObject({ accepted: false, error: { code: 'root_operation_forbidden' } })
+
+    const withAbout = applyCommandTransaction(document, 1, [{
+      ...metadata,
+      type: 'CREATE_PAGE',
+      index: 1,
+      page: { id: 'about', name: 'About', slug: '/about', rootNodeId: 'about-root' },
+      nodes: [{ id: 'about-root', type: 'page', parentId: null, children: [], props: {}, style: {}, responsive: {} }],
+    }])
+    expect(withAbout).toMatchObject({ accepted: true })
+    if (!withAbout.accepted) return
+
+    const legacy = structuredClone(withAbout.document)
+    legacy.nodes['button-1']!.props = { text: 'About', pageId: 'about' }
+    expect(applyCommandTransaction(legacy, 2, [{
+      ...metadata, documentVersion: 2, type: 'REMOVE_PAGE', pageId: 'about',
+    }])).toMatchObject({ accepted: false, error: { code: 'document_invalid' } })
+
+    const canonical = structuredClone(withAbout.document)
+    canonical.nodes['button-1']!.props = {
+      text: 'About',
+      action: { type: 'internal_page', pageId: 'about' },
+    }
+    expect(applyCommandTransaction(canonical, 2, [{
+      ...metadata, documentVersion: 2, type: 'REMOVE_PAGE', pageId: 'about',
+    }])).toMatchObject({ accepted: false, error: { code: 'document_invalid' } })
   })
 
   it('rejects malformed and empty command batches', () => {

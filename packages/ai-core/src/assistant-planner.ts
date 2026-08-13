@@ -181,7 +181,7 @@ export async function planLayoutRecipe(input: {
 
 const styleTargetTypes = new Set([
   'section', 'container', 'stack', 'columns', 'column', 'heading', 'paragraph',
-  'button', 'link', 'badge', 'navbar', 'hero', 'feature-card',
+  'button', 'link', 'badge', 'navbar', 'hero', 'feature-card', 'lead-form',
 ])
 
 export async function planStyleEdit(input: {

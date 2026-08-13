@@ -2,11 +2,13 @@
 
 import { websiteBriefSchema, type WebsiteBrief } from '@zenui/ai-core'
 import { createRemoteImagePolicy, validateDesignDocument, type DesignDocument } from '@zenui/design-schema'
+import { leadCountSchema } from '@zenui/lead-core'
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { EditorApp } from '../../editor/editor-app'
 
+import { CustomerLeadsInbox } from './customer-leads-inbox'
 import { GuidedOnboarding } from './onboarding/guided-onboarding'
 
 interface ProjectEditorProps {
@@ -51,6 +53,36 @@ export function ProjectEditor({ projectId, editorOrigin, previewOrigin, assetOri
   const [loaded, setLoaded] = useState<LoadedProject | null>(null)
   const [error, setError] = useState('')
   const [attempt, setAttempt] = useState(0)
+  const [surface, setSurface] = useState<'design' | 'leads'>('design')
+  const [newLeadCount, setNewLeadCount] = useState(0)
+  const [leadAnnouncement, setLeadAnnouncement] = useState('')
+  const previousLeadCount = useRef<number | null>(null)
+  const canManageLeads = loaded?.role === 'owner'
+    || loaded?.role === 'editor'
+
+  const refreshLeadCount = useCallback(async () => {
+    if (!loaded || !canManageLeads) return
+    try {
+      const count = await readData(
+        await fetch(
+          `/api/v1/projects/${projectId}/leads/count?workspaceId=${encodeURIComponent(loaded.workspaceId)}`,
+        ),
+      )
+      const parsed = leadCountSchema.parse(count)
+      if (
+        previousLeadCount.current !== null
+        && parsed.newCount > previousLeadCount.current
+      ) {
+        setLeadAnnouncement(
+          `${parsed.newCount} khách hàng mới`,
+        )
+      }
+      previousLeadCount.current = parsed.newCount
+      setNewLeadCount(parsed.newCount)
+    } catch {
+      // The editor remains usable when the lightweight badge refresh fails.
+    }
+  }, [canManageLeads, loaded, projectId])
 
   useEffect(() => {
     let active = true
@@ -87,6 +119,27 @@ export function ProjectEditor({ projectId, editorOrigin, previewOrigin, assetOri
     return () => { active = false }
   }, [attempt, projectId, remoteImageHostAllowlist])
 
+  useEffect(() => {
+    if (!canManageLeads || !loaded) return
+    void refreshLeadCount()
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshLeadCount()
+      }
+    }
+    const interval = window.setInterval(refreshWhenVisible, 30_000)
+    window.addEventListener('focus', refreshWhenVisible)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', refreshWhenVisible)
+      document.removeEventListener(
+        'visibilitychange',
+        refreshWhenVisible,
+      )
+    }
+  }, [canManageLeads, loaded?.workspaceId, refreshLeadCount])
+
   if (error) {
     return (
       <main className="dashboard-state">
@@ -121,7 +174,7 @@ export function ProjectEditor({ projectId, editorOrigin, previewOrigin, assetOri
       />
     )
   }
-  return (
+  const editor = (
     <EditorApp
       projectId={projectId}
       projectName={loaded.name}
@@ -138,5 +191,61 @@ export function ProjectEditor({ projectId, editorOrigin, previewOrigin, assetOri
       assistantCompositionEnabled={assistantCompositionEnabled ?? false}
       brief={loaded.brief}
     />
+  )
+  if (!canManageLeads) return editor
+
+  return (
+    <div className="project-workspace-shell">
+      <nav className="project-surface-tabs" role="tablist" aria-label="Khu vực dự án">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={surface === 'design'}
+          aria-controls="project-design-panel"
+          onClick={() => setSurface('design')}
+        >
+          Thiết kế
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={surface === 'leads'}
+          aria-controls="project-leads-panel"
+          onClick={() => setSurface('leads')}
+        >
+          Khách hàng
+          {newLeadCount > 0 && (
+            <span className="project-lead-badge" aria-label={`${newLeadCount} khách hàng mới`}>
+              {newLeadCount}
+            </span>
+          )}
+        </button>
+      </nav>
+      <p className="project-lead-announcement" aria-live="polite">
+        {leadAnnouncement}
+      </p>
+      <section
+        id="project-design-panel"
+        role="tabpanel"
+        hidden={surface !== 'design'}
+      >
+        {editor}
+      </section>
+      <section
+        id="project-leads-panel"
+        role="tabpanel"
+        hidden={surface !== 'leads'}
+      >
+        {surface === 'leads' && (
+          <CustomerLeadsInbox
+            projectId={projectId}
+            workspaceId={loaded.workspaceId}
+            onLeadContacted={() => {
+              setNewLeadCount(count => Math.max(0, count - 1))
+            }}
+          />
+        )}
+      </section>
+    </div>
   )
 }

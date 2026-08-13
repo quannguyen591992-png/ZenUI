@@ -1,7 +1,12 @@
 import { ApiError } from './api'
 
 export type WorkspaceRole = 'owner' | 'editor' | 'viewer'
-export type WorkspacePermission = 'read' | 'mutateDocument' | 'manageProject'
+export type WorkspacePermission =
+  | 'read'
+  | 'mutateDocument'
+  | 'manageProject'
+  | 'readLeads'
+  | 'manageLeads'
 
 export interface SessionIdentity {
   userId: string
@@ -18,10 +23,24 @@ export interface WorkspaceAccessLookup {
   projectBelongsToWorkspace(projectId: string, workspaceId: string): Promise<boolean>
 }
 
-const rolePermissions: Record<WorkspaceRole, readonly WorkspacePermission[]> = {
+const rolePermissions: Record<
+  WorkspaceRole,
+  readonly WorkspacePermission[]
+> = {
   viewer: ['read'],
-  editor: ['read', 'mutateDocument'],
-  owner: ['read', 'mutateDocument', 'manageProject'],
+  editor: [
+    'read',
+    'mutateDocument',
+    'readLeads',
+    'manageLeads',
+  ],
+  owner: [
+    'read',
+    'mutateDocument',
+    'manageProject',
+    'readLeads',
+    'manageLeads',
+  ],
 }
 
 export function hasWorkspacePermission(role: WorkspaceRole, permission: WorkspacePermission): boolean {

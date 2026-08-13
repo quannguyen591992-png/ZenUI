@@ -56,12 +56,31 @@ describe('Vietnamese-first Web interface contract', () => {
 
     for (const type of [
       'heading', 'paragraph', 'image', 'button', 'link', 'icon', 'badge', 'navbar',
-      'hero', 'feature-card', 'section',
+      'hero', 'feature-card', 'lead-form', 'section',
     ] as const) {
       const props = newComponentProps(type)
       if (type === 'section') expect(props).toBeNull()
       else expect(props).not.toBeNull()
     }
+
+    expect(newComponentProps('button')).toEqual({
+      text: 'Hành động chính',
+      action: { type: 'external_url', url: 'https://example.com' },
+    })
+    expect(newComponentProps('link')).toEqual({
+      text: 'Liên kết',
+      action: { type: 'external_url', url: 'https://example.com' },
+    })
+    expect(newComponentProps('lead-form')).toEqual({
+      title: 'Yêu cầu tư vấn',
+      description: 'Hãy cho chúng tôi biết nhu cầu của bạn.',
+      submitLabel: 'Gửi yêu cầu',
+      successCopy: 'Cảm ơn bạn. Chúng tôi sẽ sớm liên hệ.',
+      fields: [
+        { key: 'name', type: 'text', label: 'Họ và tên', required: true, placeholder: 'Tên của bạn' },
+        { key: 'email', type: 'email', label: 'Email', required: true, placeholder: 'ban@example.com' },
+      ],
+    })
   })
 
   it('creates a valid Vietnamese starter document without changing stable node IDs', () => {

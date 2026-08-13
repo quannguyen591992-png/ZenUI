@@ -36,6 +36,7 @@ const componentLabels: Record<ComponentType, string> = {
   navbar: 'Thanh điều hướng',
   hero: 'Phần mở đầu',
   'feature-card': 'Thẻ lợi ích',
+  'lead-form': 'Biểu mẫu khách hàng',
 }
 
 const exportErrorLabels: Record<ExportErrorCode, string> = {
@@ -120,13 +121,23 @@ export function newComponentProps(type: ComponentType): Record<string, unknown> 
     case 'heading': return { text: 'Tiêu đề mới', level: 2 }
     case 'paragraph': return { text: 'Đoạn văn mới' }
     case 'image': return { src: 'https://images.example.com/placeholder.png', alt: 'Hình ảnh minh họa' }
-    case 'button': return { text: 'Hành động chính', href: '#action' }
-    case 'link': return { text: 'Liên kết', href: '#link' }
+    case 'button': return { text: 'Hành động chính', action: { type: 'external_url', url: 'https://example.com' } }
+    case 'link': return { text: 'Liên kết', action: { type: 'external_url', url: 'https://example.com' } }
     case 'icon': return { name: 'star', label: 'Ngôi sao' }
     case 'badge': return { text: 'Mới' }
     case 'navbar': return { brand: 'ZenUI' }
     case 'hero': return { label: 'Phần mở đầu' }
     case 'feature-card': return { title: 'Lợi ích', description: 'Mô tả lợi ích nổi bật.' }
+    case 'lead-form': return {
+      title: 'Yêu cầu tư vấn',
+      description: 'Hãy cho chúng tôi biết nhu cầu của bạn.',
+      submitLabel: 'Gửi yêu cầu',
+      successCopy: 'Cảm ơn bạn. Chúng tôi sẽ sớm liên hệ.',
+      fields: [
+        { key: 'name', type: 'text', label: 'Họ và tên', required: true, placeholder: 'Tên của bạn' },
+        { key: 'email', type: 'email', label: 'Email', required: true, placeholder: 'ban@example.com' },
+      ],
+    }
     default: return null
   }
 }

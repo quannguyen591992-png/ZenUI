@@ -1,5 +1,11 @@
-import { isNodeHidden, nodeToBrowserStyle, resolveNodeTag, type RenderViewport } from '@zenui/html-compiler/render'
-import { createElement, type ReactNode } from 'react'
+import {
+  conversionActionHref,
+  isNodeHidden,
+  nodeToBrowserStyle,
+  resolveNodeTag,
+  type RenderViewport,
+} from '@zenui/html-compiler/render'
+import { createElement, type FormEvent, type ReactNode } from 'react'
 
 import { DesignIcon } from './design-icon'
 
@@ -24,6 +30,54 @@ function visualContent(node: DesignNode, children: ReactNode): ReactNode {
   return children
 }
 
+function LeadForm({ node, viewport }: { node: DesignNode; viewport: RenderViewport }) {
+  if (node.type !== 'lead-form' || !('fields' in node.props)) return null
+  const titleId = `${node.id}-title`
+  const descriptionId = `${node.id}-description`
+  const noticeId = `${node.id}-preview-notice`
+  const describedBy = [node.props.description ? descriptionId : null, noticeId].filter(Boolean).join(' ')
+  const preventSubmit = (event: FormEvent<HTMLFormElement>): void => event.preventDefault()
+
+  return (
+    <form
+      style={nodeToBrowserStyle(node, viewport)}
+      data-node-type="lead-form"
+      data-node-id={node.id}
+      aria-labelledby={titleId}
+      aria-describedby={describedBy}
+      onSubmit={preventSubmit}
+    >
+      <h2 id={titleId}>{node.props.title}</h2>
+      {node.props.description ? <p id={descriptionId}>{node.props.description}</p> : null}
+      {node.props.fields.map(field => {
+        const id = `${node.id}-${field.key}`
+        return (
+          <div key={field.key} data-lead-form-field={field.key}>
+            <label htmlFor={id}>{field.label}</label>
+            {field.type === 'textarea' ? (
+              <textarea id={id} name={field.key} required={field.required} placeholder={field.placeholder} />
+            ) : field.type === 'select' ? (
+              <select id={id} name={field.key} required={field.required} defaultValue={field.options[0]?.value}>
+                {field.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            ) : (
+              <input id={id} name={field.key} type={field.type} required={field.required} placeholder={field.placeholder} />
+            )}
+          </div>
+        )
+      })}
+      {node.props.consent ? (
+        <div data-lead-form-consent="">
+          <input id={`${node.id}-consent`} name="consent" type="checkbox" required={node.props.consent.required} />
+          <label htmlFor={`${node.id}-consent`}>{node.props.consent.label}</label>
+        </div>
+      ) : null}
+      <button type="submit">{node.props.submitLabel}</button>
+      <p id={noticeId} data-lead-form-notice="preview">Bản xem trước — chưa gửi dữ liệu</p>
+    </form>
+  )
+}
+
 function RenderNode({ document, nodeId, viewport, assetOrigin }: {
   document: DesignDocument
   nodeId: string
@@ -32,6 +86,7 @@ function RenderNode({ document, nodeId, viewport, assetOrigin }: {
 }) {
   const node = document.nodes[nodeId]!
   if (isNodeHidden(node)) return null
+  if (node.type === 'lead-form') return <LeadForm node={node} viewport={viewport} />
   const attributes: Record<string, unknown> = {
     style: nodeToBrowserStyle(node, viewport),
     'data-node-type': node.type,
@@ -45,11 +100,23 @@ function RenderNode({ document, nodeId, viewport, assetOrigin }: {
     attributes.loading = 'lazy'
     attributes.referrerPolicy = 'no-referrer'
   }
-  if ((node.type === 'button' || node.type === 'link') && 'href' in node.props) {
-    attributes.href = node.props.href
+  if (node.type === 'button' || node.type === 'link') {
+    if ('href' in node.props) attributes.href = node.props.href
+    else if ('pageId' in node.props) {
+      const pageId = node.props.pageId
+      const fragment = node.props.fragment
+      const page = document.pages.find(candidate => candidate.id === pageId)
+      if (page) attributes.href = fragment ? `${page.slug}#${fragment}` : page.slug
+    } else if ('action' in node.props) {
+      const href = conversionActionHref(document, node.props.action)
+      if (href) attributes.href = href
+    }
     attributes.onClick = (event: { preventDefault(): void }) => event.preventDefault()
   }
-  if (node.type === 'icon' && 'label' in node.props) attributes['aria-label'] = node.props.label
+  if (node.type === 'icon' && 'label' in node.props) {
+    attributes.role = 'img'
+    attributes['aria-label'] = node.props.label
+  }
   if (node.type === 'spacer') attributes['aria-hidden'] = 'true'
   const children = node.children.map(childId => (
     <RenderNode

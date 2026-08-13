@@ -38,6 +38,32 @@ describe('preview runtime', () => {
     runtime.dispose()
   })
 
+  it('prevents native Lead Form submissions and removes the guard on dispose', () => {
+    const fixture = createValidDesignFixture()
+    fixture.nodes['lead-form-1'] = {
+      id: 'lead-form-1', type: 'lead-form', parentId: 'container-1', children: [],
+      props: {
+        title: 'Contact us', description: '', submitLabel: 'Send', successCopy: 'Thanks',
+        fields: [{ key: 'email', type: 'email', label: 'Email', required: true }],
+      },
+      style: {}, responsive: {},
+    }
+    fixture.nodes['container-1']!.children.push('lead-form-1')
+    const runtime = createPreviewRuntime({ editorOrigin, channelId, parentWindow, document, remoteImageHostAllowlist: 'images.example.com' })
+    dispatch(createEditorMessage(channelId, 'SET_DOCUMENT', { document: fixture }))
+
+    const form = document.querySelector('form')!
+    const guarded = new Event('submit', { bubbles: true, cancelable: true })
+    form.dispatchEvent(guarded)
+    expect(guarded.defaultPrevented).toBe(true)
+    expect(document.body.textContent).toContain('Bản xem trước — chưa gửi dữ liệu')
+
+    runtime.dispose()
+    const afterDispose = new Event('submit', { bubbles: true, cancelable: true })
+    form.dispatchEvent(afterDispose)
+    expect(afterDispose.defaultPrevented).toBe(false)
+  })
+
   it('resolves owned image and brand-logo assets from the configured asset origin', () => {
     const fixture = createValidDesignFixture()
     fixture.nodes['image-1']!.props = {

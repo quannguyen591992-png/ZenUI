@@ -12,6 +12,15 @@ export const DESIGN_LIMITS = {
   maxCompiledFileBytes: 2 * 1024 * 1024,
   maxCompiledSiteBytes: 8 * 1024 * 1024,
   maxExportZipBytes: 10 * 1024 * 1024,
+  maxLeadForms: 10,
+  maxLeadFormFields: 12,
+  maxLeadFieldKeyLength: 64,
+  maxLeadFormTitleLength: 160,
+  maxLeadFormCopyLength: 500,
+  maxLeadFieldLabelLength: 120,
+  maxLeadFieldPlaceholderLength: 160,
+  maxLeadSelectOptions: 20,
+  maxLeadSelectOptionLength: 120,
 } as const
 
 const RESERVED_PAGE_SEGMENTS = new Set([
@@ -79,6 +88,7 @@ export const COMPONENT_TYPES = [
   'navbar',
   'hero',
   'feature-card',
+  'lead-form',
 ] as const
 
 export const FONT_ALLOWLIST = ['Arial', 'Georgia', 'Manrope', 'system-ui'] as const
@@ -204,9 +214,15 @@ export const styleSchema = z.object({
   paddingBottom: z.number().int().min(0).max(400).optional(),
   paddingLeft: z.number().int().min(0).max(400).optional(),
   marginTop: z.number().int().min(-200).max(400).optional(),
-  marginRight: z.number().int().min(-200).max(400).optional(),
+  marginRight: z.union([
+    z.number().int().min(-200).max(400),
+    z.literal('auto'),
+  ]).optional(),
   marginBottom: z.number().int().min(-200).max(400).optional(),
-  marginLeft: z.number().int().min(-200).max(400).optional(),
+  marginLeft: z.union([
+    z.number().int().min(-200).max(400),
+    z.literal('auto'),
+  ]).optional(),
   fontFamily: z.enum(FONT_ALLOWLIST).optional(),
   fontSize: z.number().int().min(10).max(160).optional(),
   fontWeight: z.enum(['400', '500', '600', '700', '800']).optional(),
@@ -223,6 +239,28 @@ export const styleSchema = z.object({
 }).strict()
 
 export type NodeStyle = z.infer<typeof styleSchema>
+
+export type LeadFormLayout = 'left' | 'center' | 'right' | 'full'
+
+export interface LeadFormLayoutPatch {
+  width: 'full'
+  maxWidth: 720 | null
+  marginLeft: 0 | 'auto'
+  marginRight: 0 | 'auto'
+}
+
+export function leadFormLayoutPatch(layout: LeadFormLayout): LeadFormLayoutPatch {
+  switch (layout) {
+    case 'left':
+      return { width: 'full', maxWidth: 720, marginLeft: 0, marginRight: 'auto' }
+    case 'center':
+      return { width: 'full', maxWidth: 720, marginLeft: 'auto', marginRight: 'auto' }
+    case 'right':
+      return { width: 'full', maxWidth: 720, marginLeft: 'auto', marginRight: 0 }
+    case 'full':
+      return { width: 'full', maxWidth: null, marginLeft: 0, marginRight: 0 }
+  }
+}
 
 const responsiveSchema = z.object({
   tablet: styleSchema.optional(),
@@ -254,6 +292,70 @@ const pageReferenceFields = {
   fragment: nodeIdSchema.optional(),
 } as const
 
+const externalHttpUrlSchema = z.string().url().max(2000).refine(value => {
+  const url = new URL(value)
+  return (url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password
+}, 'External URL must use HTTP(S) without credentials')
+
+const phoneNumberSchema = z.string().trim().min(3).max(40).regex(/^\+?[0-9 ()-]+$/)
+
+export const conversionActionSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('lead_form'), formNodeId: nodeIdSchema }).strict(),
+  z.object({ type: z.literal('internal_page'), ...pageReferenceFields }).strict(),
+  z.object({ type: z.literal('external_url'), url: externalHttpUrlSchema }).strict(),
+  z.object({ type: z.literal('email'), address: z.string().email().max(320) }).strict(),
+  z.object({ type: z.literal('phone'), number: phoneNumberSchema }).strict(),
+])
+export type ConversionAction = z.infer<typeof conversionActionSchema>
+
+const leadSelectOptionSchema = z.object({
+  label: z.string().trim().min(1).max(DESIGN_LIMITS.maxLeadSelectOptionLength),
+  value: z.string().trim().min(1).max(DESIGN_LIMITS.maxLeadSelectOptionLength),
+}).strict()
+
+const leadFieldBaseFields = {
+  key: z.string().min(1).max(DESIGN_LIMITS.maxLeadFieldKeyLength).regex(/^[A-Za-z][A-Za-z0-9_-]*$/),
+  label: z.string().trim().min(1).max(DESIGN_LIMITS.maxLeadFieldLabelLength),
+  required: z.boolean(),
+  placeholder: z.string().max(DESIGN_LIMITS.maxLeadFieldPlaceholderLength).optional(),
+} as const
+
+export const leadFormFieldSchema = z.discriminatedUnion('type', [
+  z.object({ ...leadFieldBaseFields, type: z.literal('text') }).strict(),
+  z.object({ ...leadFieldBaseFields, type: z.literal('email') }).strict(),
+  z.object({ ...leadFieldBaseFields, type: z.literal('tel') }).strict(),
+  z.object({ ...leadFieldBaseFields, type: z.literal('textarea') }).strict(),
+  z.object({
+    ...leadFieldBaseFields,
+    type: z.literal('select'),
+    options: z.array(leadSelectOptionSchema).min(1).max(DESIGN_LIMITS.maxLeadSelectOptions),
+  }).strict().superRefine((value, context) => {
+    const values = value.options.map(option => option.value)
+    if (new Set(values).size !== values.length) {
+      context.addIssue({ code: 'custom', path: ['options'], message: 'Select option values must be unique' })
+    }
+  }),
+])
+export type LeadFormField = z.infer<typeof leadFormFieldSchema>
+
+export const leadFormPropsSchema = z.object({
+  title: z.string().trim().min(1).max(DESIGN_LIMITS.maxLeadFormTitleLength),
+  description: z.string().max(DESIGN_LIMITS.maxLeadFormCopyLength),
+  submitLabel: z.string().trim().min(1).max(DESIGN_LIMITS.maxLeadFieldLabelLength),
+  successCopy: z.string().max(DESIGN_LIMITS.maxLeadFormCopyLength),
+  fields: z.array(leadFormFieldSchema).min(1).max(DESIGN_LIMITS.maxLeadFormFields),
+  consent: z.object({
+    label: z.string().trim().min(1).max(DESIGN_LIMITS.maxLeadFormCopyLength),
+    required: z.boolean(),
+  }).strict().optional(),
+}).strict().superRefine((value, context) => {
+  const keys = value.fields.map(field => field.key)
+  if (new Set(keys).size !== keys.length) {
+    context.addIssue({ code: 'custom', path: ['fields'], message: 'Lead Form field keys must be unique' })
+  }
+})
+export type LeadFormProps = z.infer<typeof leadFormPropsSchema>
+
 const linkBaseFields = {
   text: z.string().min(1).max(500),
   brandSlot: z.literal(true).optional(),
@@ -264,6 +366,7 @@ const linkBaseFields = {
 export const linkPropsSchema = z.union([
   z.object({ ...linkBaseFields, href: safeLinkSchema }).strict(),
   z.object({ ...linkBaseFields, ...pageReferenceFields }).strict(),
+  z.object({ ...linkBaseFields, action: conversionActionSchema }).strict(),
 ]).superRefine((value, context) => {
   if (Boolean(value.logoAssetId) !== Boolean(value.logoAlt)) {
     context.addIssue({ code: 'custom', path: ['logoAssetId'], message: 'Brand logos require both an owned asset and alternative text' })
@@ -276,6 +379,7 @@ export const linkPropsSchema = z.union([
 export const buttonPropsSchema = z.union([
   z.object({ text: z.string().min(1).max(200), href: safeLinkSchema }).strict(),
   z.object({ text: z.string().min(1).max(200), ...pageReferenceFields }).strict(),
+  z.object({ text: z.string().min(1).max(200), action: conversionActionSchema }).strict(),
 ])
 
 const propsByType = {
@@ -310,6 +414,7 @@ const propsByType = {
     description: z.string().min(1).max(1000),
     mediaSlot: z.enum(['hero-image', 'feature-1', 'feature-2', 'feature-3']).optional(),
   }).strict(),
+  'lead-form': leadFormPropsSchema,
 } as const
 
 const nodeSchemas = COMPONENT_TYPES.map(type => z.object({
@@ -445,6 +550,8 @@ export type DesignValidationIssueCode =
   | 'duplicate_page_slug'
   | 'navigation_invalid'
   | 'broken_page_reference'
+  | 'broken_form_reference'
+  | 'lead_form_limit_exceeded'
   | 'cross_page_relationship'
 
 export interface DesignValidationIssue {
@@ -509,16 +616,44 @@ export type BrokenPageReference =
   | { kind: 'navigation'; index: number; pageId: string }
   | { kind: 'node'; nodeId: string; pageId: string }
 
+export interface BrokenFormReference {
+  kind: 'form'
+  nodeId: string
+  formNodeId: string
+}
+
 export function collectBrokenPageReferences(document: DesignDocument): BrokenPageReference[] {
-  if (document.schemaVersion !== 2) return []
   const pageIds = new Set(document.pages.map(page => page.id))
   const broken: BrokenPageReference[] = []
-  document.navigation.items.forEach((item, index) => {
-    if (!pageIds.has(item.pageId)) broken.push({ kind: 'navigation', index, pageId: item.pageId })
-  })
+  if (document.schemaVersion === 2) {
+    document.navigation.items.forEach((item, index) => {
+      if (!pageIds.has(item.pageId)) broken.push({ kind: 'navigation', index, pageId: item.pageId })
+    })
+  }
   for (const node of Object.values(document.nodes)) {
-    if ((node.type === 'button' || node.type === 'link') && 'pageId' in node.props && !pageIds.has(node.props.pageId)) {
-      broken.push({ kind: 'node', nodeId: node.id, pageId: node.props.pageId })
+    if (node.type !== 'button' && node.type !== 'link') continue
+    const pageId = 'pageId' in node.props
+      ? node.props.pageId
+      : 'action' in node.props && node.props.action.type === 'internal_page'
+        ? node.props.action.pageId
+        : null
+    if (pageId && !pageIds.has(pageId)) broken.push({ kind: 'node', nodeId: node.id, pageId })
+  }
+  return broken.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
+}
+
+export function collectBrokenFormReferences(document: DesignDocument): BrokenFormReference[] {
+  const broken: BrokenFormReference[] = []
+  for (const node of Object.values(document.nodes)) {
+    if (
+      (node.type === 'button' || node.type === 'link')
+      && 'action' in node.props
+      && node.props.action.type === 'lead_form'
+    ) {
+      const target = document.nodes[node.props.action.formNodeId]
+      if (target?.type !== 'lead-form') {
+        broken.push({ kind: 'form', nodeId: node.id, formNodeId: node.props.action.formNodeId })
+      }
     }
   }
   return broken.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
@@ -664,9 +799,26 @@ export function validateDesignDocument(
       navigationPageIds.add(item.pageId)
     })
     for (const broken of collectBrokenPageReferences(document)) {
-      const path = broken.kind === 'navigation' ? `navigation.items.${broken.index}.pageId` : `nodes.${broken.nodeId}.props.pageId`
+      const path = broken.kind === 'navigation'
+        ? `navigation.items.${broken.index}.pageId`
+        : `nodes.${broken.nodeId}.props`
       issues.push({ code: 'broken_page_reference', path, message: 'Page reference does not exist' })
     }
+  }
+  for (const broken of collectBrokenFormReferences(document)) {
+    issues.push({
+      code: 'broken_form_reference',
+      path: `nodes.${broken.nodeId}.props.action.formNodeId`,
+      message: 'Lead Form reference does not exist',
+    })
+  }
+  const leadFormCount = entries.filter(([, node]) => node.type === 'lead-form').length
+  if (leadFormCount > DESIGN_LIMITS.maxLeadForms) {
+    issues.push({
+      code: 'lead_form_limit_exceeded',
+      path: 'nodes',
+      message: `Document exceeds ${DESIGN_LIMITS.maxLeadForms} Lead Forms`,
+    })
   }
   return issues.length === 0 ? { success: true, data: document } : { success: false, issues }
 }

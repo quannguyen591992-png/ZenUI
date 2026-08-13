@@ -60,6 +60,13 @@ export function isLocalAuthRuntimeEnabled(environment: RuntimeEnvironment = proc
   return resolveRuntimeMode(environment) === 'local'
 }
 
+export function isGitHubAuthConfigured(environment: RuntimeEnvironment & {
+  AUTH_GITHUB_ID?: string
+  AUTH_GITHUB_SECRET?: string
+} = process.env): boolean {
+  return Boolean(environment.AUTH_GITHUB_ID?.trim() && environment.AUTH_GITHUB_SECRET?.trim())
+}
+
 export function isGuardedIdentityRuntimeEnabled(environment: RuntimeEnvironment = process.env): boolean {
   const mode = resolveRuntimeMode(environment)
   return mode === 'local' || mode === 'e2e'

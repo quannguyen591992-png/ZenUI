@@ -33,7 +33,7 @@ import type {
 import type { AssetAttribution, AssetErrorCode, AssetStatus, BrandKit, CropTransform } from '@zenui/asset-core'
 import type { DeploymentErrorCode, DeploymentStatus, DeploymentTarget } from '@zenui/deployment-core'
 import type { DesignCommand } from '@zenui/design-commands'
-import type { DesignDocument } from '@zenui/design-schema'
+import type { DesignDocument, LeadFormProps } from '@zenui/design-schema'
 import type { ExportErrorCode, ExportStatus } from '@zenui/export-core'
 import type { ShareStoredStatus } from '@zenui/share-core'
 
@@ -53,6 +53,8 @@ export const designDirectionStatus = pgEnum('design_direction_status', [
 ])
 export const exportStatus = pgEnum('export_status', ['queued', 'running', 'completed', 'failed'])
 export const shareLinkStatus = pgEnum('share_link_status', ['active', 'disabled'])
+export const leadBindingStatus = pgEnum('lead_binding_status', ['active', 'disabled'])
+export const leadSubmissionStatus = pgEnum('lead_submission_status', ['new', 'contacted'])
 export const providerConnectionStatus = pgEnum('provider_connection_status', ['connected', 'disconnected', 'disabled'])
 export const deploymentTarget = pgEnum('deployment_target', ['preview', 'production'])
 export const deploymentStatus = pgEnum('deployment_status', ['queued', 'uploading', 'building', 'ready', 'failed'])
@@ -403,6 +405,54 @@ export const shareLinks = pgTable('share_links', {
   index('share_links_revision_id_idx').on(table.revisionId),
   index('share_links_status_updated_at_idx').on(table.status, table.updatedAt),
   index('share_links_retention_idx').on(table.status, table.disabledAt, table.retainedCleanupAt),
+])
+
+export const leadFormBindings = pgTable('lead_form_bindings', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  shareLinkId: uuid('share_link_id').notNull().references(() => shareLinks.id, { onDelete: 'cascade' }),
+  revisionId: uuid('revision_id').notNull().references(() => revisions.id, { onDelete: 'restrict' }),
+  formNodeId: text('form_node_id').notNull(),
+  pageRoute: text('page_route').notNull(),
+  formTitle: text('form_title').notNull(),
+  formSnapshot: jsonb('form_snapshot').$type<LeadFormProps>().notNull(),
+  status: leadBindingStatus('status').notNull().default('active'),
+  disabledAt: timestamp('disabled_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, table => [
+  unique('lead_form_bindings_share_form_unique').on(table.shareLinkId, table.formNodeId),
+  index('lead_form_bindings_project_idx').on(table.projectId),
+  index('lead_form_bindings_share_idx').on(table.shareLinkId),
+  index('lead_form_bindings_revision_idx').on(table.revisionId),
+])
+
+export const leadSubmissions = pgTable('lead_submissions', {
+  id: uuid('id').primaryKey(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  bindingId: uuid('binding_id').notNull().references(() => leadFormBindings.id, { onDelete: 'cascade' }),
+  shareLinkId: uuid('share_link_id').notNull().references(() => shareLinks.id, { onDelete: 'cascade' }),
+  revisionId: uuid('revision_id').notNull().references(() => revisions.id, { onDelete: 'restrict' }),
+  requestId: uuid('request_id').notNull(),
+  formNodeId: text('form_node_id').notNull(),
+  formTitle: text('form_title').notNull(),
+  status: leadSubmissionStatus('status').notNull().default('new'),
+  version: integer('version').notNull().default(1),
+  ciphertext: text('ciphertext').notNull(),
+  iv: text('iv').notNull(),
+  authTag: text('auth_tag').notNull(),
+  keyVersion: integer('key_version').notNull(),
+  receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  contactedAt: timestamp('contacted_at', { withTimezone: true }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+}, table => [
+  unique('lead_submissions_binding_request_unique').on(table.bindingId, table.requestId),
+  index('lead_submissions_project_status_received_idx').on(table.projectId, table.status, table.receivedAt),
+  index('lead_submissions_project_received_idx').on(table.projectId, table.receivedAt),
+  index('lead_submissions_expiry_idx').on(table.expiresAt),
 ])
 
 export const providerConnections = pgTable('provider_connections', {

@@ -47,7 +47,14 @@ it('keeps management responses redacted and validates the public URL', () => {
     createdAt: '2026-07-22T12:00:00.000Z',
     updatedAt: '2026-07-22T12:00:00.000Z',
   }
-  expect(shareLinkPublicSchema.parse(value)).toEqual(value)
+  expect(shareLinkPublicSchema.parse({
+    ...value,
+    leadFormsLive: false,
+  })).toEqual({
+    ...value,
+    leadFormsLive: false,
+  })
+  expect(shareLinkPublicSchema.safeParse(value).success).toBe(false)
   expect(shareLinkPublicSchema.safeParse({ ...value, workspaceId, projectId: requestId }).success).toBe(false)
   expect(shareLinkPublicSchema.safeParse({ ...value, url: 'javascript:alert(1)' }).success).toBe(false)
 })

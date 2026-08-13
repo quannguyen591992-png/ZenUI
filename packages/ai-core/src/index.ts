@@ -108,12 +108,14 @@ export {
   GUIDED_SPACING_PRESET_IDS,
   GUIDED_TYPOGRAPHY_PRESET_IDS,
   WEBSITE_BRIEF_SECTION_IDS,
+  conversionGoalSchema,
   guidedDesignSystemSchema,
   guidedDesignSystemWarnings,
   normalizeWebsiteBrief,
   prefillWebsiteBrief,
   websiteBriefSchema,
   websiteBriefSectionSchema,
+  type ConversionGoal,
   type GuidedDesignSystem,
   type GuidedDesignSystemWarning,
   type WebsiteBrief,
@@ -188,6 +190,7 @@ export {
   buildProposalRefinementRequest,
   createProposalLineage,
   deriveProposalScope,
+  leadFormAlignmentFromPrompt,
   materializeLayoutProposal,
   materializeMediaProposal,
   materializeSectionCompositionProposal,
@@ -392,10 +395,21 @@ export const aiCopyEditResponseJsonSchema = {
   required: ['summary', 'updates'],
 } as const
 
+function isSerializedContainer(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false
+  try {
+    const parsed: unknown = JSON.parse(trimmed)
+    return typeof parsed === 'object' && parsed !== null
+  } catch {
+    return false
+  }
+}
+
 function validEditValue(property: z.infer<typeof aiEditPropertySchema>, value: string | number): boolean {
   return property === 'level'
     ? typeof value === 'number' && value >= 1 && value <= 6
-    : typeof value === 'string'
+    : typeof value === 'string' && !isSerializedContainer(value)
 }
 
 export function normalizeAiEditResponse(input: unknown, context: PromptContext): AiOperationBatch | null {
