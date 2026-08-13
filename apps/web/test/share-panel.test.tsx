@@ -15,6 +15,7 @@ const link = {
   expiresAt: null,
   createdAt: '2026-07-22T12:00:00.000Z',
   updatedAt: '2026-07-22T12:00:00.000Z',
+  leadFormsLive: false,
 }
 const revisions = [{ id: revisionId, documentVersion: 1, summary: 'Public snapshot', source: 'manual', createdAt: '2026-07-22T12:00:00.000Z' }]
 
@@ -56,6 +57,40 @@ describe('SharePanel', () => {
     expect(screen.queryByText(revisionId)).not.toBeInTheDocument()
     await user.click(screen.getByText('Chi tiết nâng cao'))
     expect(screen.getByText(`Revision ${revisionId}`)).toBeVisible()
+  })
+
+  it('labels only confirmed live Lead Form shares as receiving customers', async () => {
+    const liveLink = {
+      ...link,
+      id: '55555555-5555-4555-8555-555555555555',
+      leadFormsLive: true,
+    }
+    const user = userEvent.setup()
+    render(<SharePanel
+      projectId={projectId}
+      workspaceId={workspaceId}
+      revisions={revisions}
+      presentation="simple"
+      canShare
+      ensureLatestSavedRevision={() => Promise.resolve(revisions[0]!)}
+      api={api({
+        list: vi.fn().mockResolvedValue([liveLink, link]),
+      })}
+    />)
+
+    await user.click(screen.getByRole('button', { name: 'Chia sẻ' }))
+    expect(await screen.findByText(
+      'Chia sẻ website để nhận khách hàng',
+    )).toBeVisible()
+    expect(screen.getByText(
+      'Thông tin khách hàng được lưu tối đa 90 ngày.',
+    )).toBeVisible()
+    expect(screen.getAllByText(
+      'Website nhận khách hàng',
+    )).toHaveLength(1)
+    expect(screen.getAllByText(
+      'Website được chia sẻ',
+    )).toHaveLength(1)
   })
 
   it('blocks new Simple share links until the latest edits are saved', async () => {

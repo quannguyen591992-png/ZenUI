@@ -6,6 +6,9 @@ import {
   isE2eRuntimeEnabled,
   isGuardedIdentityRuntimeEnabled,
   isLocalAuthRuntimeEnabled,
+  readE2eRuntimeCounters,
+  recordE2eDirectionProviderCall,
+  resetE2eRuntimeCounters,
   resolveRuntimeMode,
   verifyE2eSessionToken,
 } from '../lib/server/e2e-runtime'
@@ -34,6 +37,29 @@ describe('guarded E2E runtime', () => {
       ZENUI_E2E_ENABLED: 'true',
       ZENUI_LOCAL_AUTH_ENABLED: 'true',
     })).toThrow('runtime_mode_conflict')
+  })
+
+  it('keeps deterministic provider counters behind the E2E guard', () => {
+    const previous = process.env
+    try {
+      process.env = {
+        ...previous,
+        NODE_ENV: 'test',
+        ZENUI_E2E_ENABLED: 'true',
+        ZENUI_LOCAL_AUTH_ENABLED: 'false',
+      }
+      resetE2eRuntimeCounters()
+      recordE2eDirectionProviderCall()
+      expect(readE2eRuntimeCounters()).toEqual({
+        directionProviderCalls: 1,
+      })
+      resetE2eRuntimeCounters()
+      expect(readE2eRuntimeCounters()).toEqual({
+        directionProviderCalls: 0,
+      })
+    } finally {
+      process.env = previous
+    }
   })
 
   it('signs allowlisted identities and rejects forged or expired tokens', () => {

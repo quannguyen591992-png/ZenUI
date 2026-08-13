@@ -230,6 +230,126 @@ export function createRedisPublicShareAdmissionGate(
   }
 }
 
+const leadAdmissionReserveScript = `
+local ip_publication_count = tonumber(redis.call('HGET', KEYS[1], 'count') or '0')
+local publication_count = tonumber(redis.call('HGET', KEYS[2], 'count') or '0')
+local has_ip_reservation = redis.call('HEXISTS', KEYS[1], ARGV[5])
+local has_publication_reservation = redis.call('HEXISTS', KEYS[2], ARGV[6])
+if has_ip_reservation == 1 and has_publication_reservation == 1 then
+  return {1, 0}
+end
+if has_ip_reservation == 1 or has_publication_reservation == 1 then
+  return {0, math.max(redis.call('TTL', KEYS[1]), redis.call('TTL', KEYS[2]), 1)}
+end
+if ip_publication_count >= tonumber(ARGV[1]) or publication_count >= tonumber(ARGV[3]) then
+  return {0, math.max(redis.call('TTL', KEYS[1]), redis.call('TTL', KEYS[2]), 1)}
+end
+redis.call('HSETNX', KEYS[1], ARGV[5], '1')
+redis.call('HINCRBY', KEYS[1], 'count', 1)
+if ip_publication_count == 0 then
+  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
+end
+redis.call('HSETNX', KEYS[2], ARGV[6], '1')
+redis.call('HINCRBY', KEYS[2], 'count', 1)
+if publication_count == 0 then
+  redis.call('EXPIRE', KEYS[2], tonumber(ARGV[4]))
+end
+return {1, 0}
+`
+
+const leadAdmissionReleaseScript = `
+if redis.call('HDEL', KEYS[1], ARGV[1]) == 1 then
+  local count = redis.call('HINCRBY', KEYS[1], 'count', -1)
+  if count <= 0 then redis.call('DEL', KEYS[1]) end
+end
+if redis.call('HDEL', KEYS[2], ARGV[2]) == 1 then
+  local count = redis.call('HINCRBY', KEYS[2], 'count', -1)
+  if count <= 0 then redis.call('DEL', KEYS[2]) end
+end
+return {1, 1}
+`
+
+interface LeadAdmissionDigestor {
+  digest(
+    purpose: 'ip-publication-admission' | 'publication-admission' | 'potential-duplicate',
+    value: string,
+  ): string
+}
+
+export function createRedisLeadAdmissionGate(
+  redis: RedisEvalClient,
+  limits: {
+    ipPublicationRunsPerWindow: number
+    ipPublicationWindowSeconds: number
+    publicationRunsPerWindow: number
+    publicationWindowSeconds: number
+  },
+  digestor: LeadAdmissionDigestor,
+) {
+  const keys = (input: { publicationId: string; fingerprint: string }) => [
+    `zenui:lead:admission:ip-publication:${digestor.digest(
+      'ip-publication-admission',
+      `${input.fingerprint}\0${input.publicationId}`,
+    )}`,
+    `zenui:lead:admission:publication:${digestor.digest(
+      'publication-admission',
+      input.publicationId,
+    )}`,
+  ] as const
+  const reservationDigests = (input: {
+    publicationId: string
+    fingerprint: string
+    reservationId: string
+  }) => [
+    digestor.digest(
+      'ip-publication-admission',
+      `${input.reservationId}\0${input.fingerprint}\0${input.publicationId}`,
+    ),
+    digestor.digest(
+      'publication-admission',
+      `${input.reservationId}\0${input.publicationId}`,
+    ),
+  ] as const
+  const fallbackRetryAfter = Math.max(1, limits.publicationWindowSeconds)
+
+  return {
+    async acquire(input: { publicationId: string; fingerprint: string; reservationId: string }) {
+      const result = await redis.eval(
+        leadAdmissionReserveScript,
+        2,
+        ...keys(input),
+        String(limits.ipPublicationRunsPerWindow),
+        String(limits.ipPublicationWindowSeconds),
+        String(limits.publicationRunsPerWindow),
+        String(limits.publicationWindowSeconds),
+        ...reservationDigests(input),
+      )
+      if (Array.isArray(result) && Number(result[0]) === 1) return { accepted: true as const }
+      const retryAfter = Number(Array.isArray(result) ? result[1] : fallbackRetryAfter)
+      return {
+        accepted: false as const,
+        retryAfterSeconds: Math.min(
+          fallbackRetryAfter,
+          Math.max(1, Number.isFinite(retryAfter) ? retryAfter : fallbackRetryAfter),
+        ),
+      }
+    },
+
+    async release(input: {
+      publicationId: string
+      fingerprint: string
+      reservationId: string
+    }): Promise<void> {
+      await redis.eval(
+        leadAdmissionReleaseScript,
+        2,
+        ...keys(input),
+        ...reservationDigests(input),
+      )
+    },
+  }
+}
+
 interface ExportQueueLike {
   add(name: string, data: ExportJob, options: Record<string, unknown>): Promise<unknown>
 }

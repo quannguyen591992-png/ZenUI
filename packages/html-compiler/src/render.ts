@@ -7,8 +7,11 @@ import {
   findPageByRoute,
   validateDesignDocument,
   type DesignDocument,
+  type ConversionAction,
   type RemoteImagePolicy,
   type DesignNode,
+  type LeadFormField,
+  type LeadFormProps,
   type NodeStyle,
 } from '@zenui/design-schema'
 
@@ -62,6 +65,7 @@ const semanticBrowserStyles: Partial<Record<DesignNode['type'], BrowserNodeStyle
   icon: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', lineHeight: '1' },
   image: { display: 'block', maxWidth: '100%', height: 'auto', backgroundColor: '#e2e8f0' },
   container: { marginLeft: 'auto', marginRight: 'auto' },
+  'lead-form': { display: 'grid', gap: '16px', width: '100%' },
 }
 
 export const RENDERER_SEMANTIC_CSS = [
@@ -77,6 +81,16 @@ export const RENDERER_SEMANTIC_CSS = [
   '[data-node-type="badge"]{display:inline-flex;align-items:center;justify-content:center;width:max-content;line-height:1.2}',
   '[data-node-type="icon"]{display:inline-flex;align-items:center;justify-content:center;font-size:24px;line-height:1}',
   '[data-node-type="feature-card"]{transition:transform .2s ease,box-shadow .2s ease}[data-node-type="feature-card"]:hover{transform:translateY(-4px)}',
+  '[data-node-type="lead-form"]{display:grid;gap:16px;width:100%}',
+  '[data-lead-form-field]{display:grid;gap:6px}',
+  '[data-node-type="lead-form"] label{font-weight:600}',
+  '[data-node-type="lead-form"] input:not([type="checkbox"]),[data-node-type="lead-form"] textarea,[data-node-type="lead-form"] select{width:100%;min-height:48px;padding:10px 12px;border:1px solid #94a3b8;border-radius:8px;background:transparent;color:inherit;font:inherit}',
+  '[data-node-type="lead-form"] textarea{min-height:112px;resize:vertical}',
+  '[data-node-type="lead-form"] [type="checkbox"]{width:20px;height:20px}',
+  '[data-lead-form-consent]{display:flex;align-items:flex-start;gap:10px}',
+  '[data-node-type="lead-form"] button{min-height:48px;padding:12px 22px;border:0;border-radius:8px;color:#fff;background:#344054;cursor:pointer}',
+  '[data-node-type="lead-form"] input:focus-visible,[data-node-type="lead-form"] textarea:focus-visible,[data-node-type="lead-form"] select:focus-visible,[data-node-type="lead-form"] button:focus-visible{outline:3px solid currentColor;outline-offset:3px}',
+  '[data-lead-form-notice]{margin:0;font-size:14px}',
 ].join('')
 
 const unitless = new Set<keyof NodeStyle>([
@@ -128,6 +142,17 @@ export interface RenderPlan {
   css: string
 }
 
+export interface LiveLeadFormBinding {
+  action: string
+  requestId: string
+  pageRoute: string
+}
+
+export interface LiveLeadFormOptions {
+  origin: string
+  bindings: Readonly<Record<string, LiveLeadFormBinding>>
+}
+
 export interface RenderAssetOptions {
   imagePolicy?: RemoteImagePolicy
   assetOrigin?: string
@@ -135,6 +160,8 @@ export interface RenderAssetOptions {
   pageId?: string
   route?: string
   routePrefix?: string
+  liveLeadForms?: LiveLeadFormOptions
+  currentPageRoute?: string
 }
 
 export type RenderPlanResult =
@@ -224,6 +251,20 @@ function pageHref(document: DesignDocument, pageId: string, fragment: string | u
   return fragment ? `${base}#${fragment}` : base
 }
 
+export function conversionActionHref(
+  document: DesignDocument,
+  action: ConversionAction,
+  routePrefix = '',
+): string | null {
+  switch (action.type) {
+    case 'lead_form': return `#${action.formNodeId}`
+    case 'internal_page': return pageHref(document, action.pageId, action.fragment, routePrefix)
+    case 'external_url': return action.url
+    case 'email': return `mailto:${action.address}`
+    case 'phone': return `tel:${action.number.replaceAll(/\s+/g, '')}`
+  }
+}
+
 function nodeAttributes(document: DesignDocument, node: DesignNode, options: RenderAssetOptions): Record<string, string> {
   const attributes: Record<string, string> = { 'data-node-id': node.id, 'data-node-type': node.type }
   if (node.type === 'image' && 'alt' in node.props) {
@@ -243,6 +284,12 @@ function nodeAttributes(document: DesignDocument, node: DesignNode, options: Ren
     } else if ('pageId' in node.props) {
       const resolved = pageHref(document, node.props.pageId, node.props.fragment, options.routePrefix)
       if (resolved) attributes.href = resolved
+    } else if ('action' in node.props) {
+      const resolved = conversionActionHref(document, node.props.action, options.routePrefix)
+      if (resolved) {
+        attributes.href = resolved
+        if (node.props.action.type === 'external_url') attributes.rel = 'noreferrer noopener'
+      }
     }
   }
   if (node.type === 'icon' && 'label' in node.props && typeof node.props.label === 'string') {
@@ -277,8 +324,125 @@ function nodeText(node: DesignNode): string | null {
   return null
 }
 
+function textPlan(tag: string, text: string, attributes: Record<string, string> = {}): RenderPlanNode {
+  return { tag, attributes, text, children: [] }
+}
+
+function leadFormControl(nodeId: string, field: LeadFormField): RenderPlanNode {
+  const id = `${nodeId}-${field.key}`
+  const required = field.required ? { required: '' } : {}
+  const common = {
+    id,
+    name: field.key,
+    ...required,
+    ...(field.placeholder ? { placeholder: field.placeholder } : {}),
+  }
+  let control: RenderPlanNode
+  if (field.type === 'textarea') {
+    control = { tag: 'textarea', attributes: common, text: null, children: [] }
+  } else if (field.type === 'select') {
+    control = {
+      tag: 'select',
+      attributes: common,
+      text: null,
+      children: field.options.map(option => textPlan('option', option.label, { value: option.value })),
+    }
+  } else {
+    control = { tag: 'input', attributes: { ...common, type: field.type }, text: null, children: [] }
+  }
+  return {
+    tag: 'div',
+    attributes: { 'data-lead-form-field': field.key },
+    text: null,
+    children: [textPlan('label', field.label, { for: id }), control],
+  }
+}
+
+function hiddenLeadInput(name: string, value: string): RenderPlanNode {
+  return {
+    tag: 'input',
+    attributes: { name, type: 'hidden', value },
+    text: null,
+    children: [],
+  }
+}
+
+function leadFormPlan(
+  node: DesignNode & { type: 'lead-form'; props: LeadFormProps },
+  options: RenderAssetOptions,
+): RenderPlanNode {
+  const titleId = `${node.id}-title`
+  const descriptionId = `${node.id}-description`
+  const previewNoticeId = `${node.id}-preview-notice`
+  const exportNoticeId = `${node.id}-export-notice`
+  const privacyNoticeId = `${node.id}-privacy-notice`
+  const binding = options.liveLeadForms?.bindings[node.id]
+  const live = binding?.pageRoute === options.currentPageRoute ? binding : undefined
+  const describedBy = [
+    node.props.description ? descriptionId : null,
+    live ? privacyNoticeId : previewNoticeId,
+    live ? null : exportNoticeId,
+  ].filter(Boolean).join(' ')
+  const children: RenderPlanNode[] = [textPlan('h2', node.props.title, { id: titleId })]
+  if (node.props.description) children.push(textPlan('p', node.props.description, { id: descriptionId }))
+  if (live) {
+    children.push(
+      hiddenLeadInput('__zenui_request_id', live.requestId),
+      hiddenLeadInput('__zenui_form_node_id', node.id),
+      hiddenLeadInput('__zenui_page_route', live.pageRoute),
+    )
+  }
+  children.push(...node.props.fields.map(field => leadFormControl(node.id, field)))
+  if (node.props.consent) {
+    const consentId = `${node.id}-consent`
+    children.push({
+      tag: 'div',
+      attributes: { 'data-lead-form-consent': '' },
+      text: null,
+      children: [
+        {
+          tag: 'input',
+          attributes: { id: consentId, name: 'consent', type: 'checkbox', ...(node.props.consent.required ? { required: '' } : {}) },
+          text: null,
+          children: [],
+        },
+        textPlan('label', node.props.consent.label, { for: consentId }),
+      ],
+    })
+  }
+  children.push(textPlan('button', node.props.submitLabel, { type: 'submit' }))
+  if (live) {
+    children.push(textPlan(
+      'p',
+      'Dữ liệu được ZenUI lưu tối đa 90 ngày để chủ website liên hệ lại.',
+      { id: privacyNoticeId, 'data-lead-form-notice': 'privacy' },
+    ))
+  } else {
+    children.push(textPlan('p', 'Bản xem trước — chưa gửi dữ liệu', { id: previewNoticeId, 'data-lead-form-notice': 'preview' }))
+    children.push(textPlan('p', 'Form ZenUI không hoạt động trong bản tải xuống.', { id: exportNoticeId, 'data-lead-form-notice': 'export' }))
+  }
+  return {
+    tag: 'form',
+    attributes: {
+      'data-node-id': node.id,
+      'data-node-type': node.type,
+      ...(live ? { action: live.action, method: 'post' } : {}),
+      'aria-labelledby': titleId,
+      ...(describedBy ? { 'aria-describedby': describedBy } : {}),
+    },
+    text: null,
+    children,
+  }
+}
+
 function renderPlanNode(document: DesignDocument, nodeId: string, options: RenderAssetOptions): RenderPlanNode {
   const node = document.nodes[nodeId]!
+  if (node.type === 'lead-form' && 'fields' in node.props) {
+    return leadFormPlan(
+      node as DesignNode & { type: 'lead-form'; props: LeadFormProps },
+      options,
+    )
+  }
   const synthetic = brandLogoChild(node, options) ?? iconSvgChild(node)
   return {
     tag: resolveNodeTag(node),

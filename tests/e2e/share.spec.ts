@@ -55,6 +55,115 @@ test('creates an immutable public revision link and disables it', async ({ page,
   expect((await page.request.get(publicUrl!)).status()).toBe(404)
 })
 
+test('collects a managed Share lead and persists contacted status in the project Inbox', async ({ page, browser }) => {
+  const projectId = await createProject(page, 'Customer Leads journey')
+  await page.goto(`/projects/${projectId}`)
+  await openAdvancedEditor(page)
+  await page.getByRole('treeitem', {
+    name: /^Khung chứa: Khung chứa/,
+  }).click()
+  await page.getByRole('tab', { name: 'Thành phần' }).click()
+  await page.getByRole('button', {
+    name: 'Thêm Biểu mẫu khách hàng',
+  }).click()
+
+  const builder = page.getByRole('region', {
+    name: 'Trình tạo biểu mẫu khách hàng',
+  })
+  await builder.getByLabel('Tiêu đề biểu mẫu').fill(
+    'Nhận tư vấn E2E',
+  )
+  await builder.getByLabel('Nhãn nút gửi').fill('Gửi yêu cầu E2E')
+  await builder.getByRole('button', { name: 'Lưu biểu mẫu' }).click()
+  await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
+
+  const revisions = page.getByRole('region', { name: 'Phiên bản' })
+  await revisions.getByLabel('Tên phiên bản').fill(
+    'Customer Leads snapshot',
+  )
+  await revisions.getByRole('button', { name: 'Tạo phiên bản' }).click()
+  await expect(revisions.getByText('Customer Leads snapshot')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Chia sẻ' }).click()
+  await page.getByRole('button', {
+    name: 'Tạo liên kết chia sẻ',
+  }).click()
+  const publicLink = page.getByRole('link', {
+    name: 'Mở Customer Leads snapshot',
+  })
+  const publicUrl = await publicLink.getAttribute('href')
+  expect(publicUrl).toMatch(
+    /^http:\/\/127\.0\.0\.1:3000\/s\/[A-Za-z0-9_-]{32}$/,
+  )
+  const managedLinks = await page.request.get(
+    `/api/v1/projects/${projectId}/share-links?workspaceId=${workspaceId}`,
+  )
+  expect(managedLinks.status()).toBe(200)
+  expect((await managedLinks.json()).data).toEqual([
+    expect.objectContaining({ leadFormsLive: true }),
+  ])
+
+  const visitorContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+  })
+  const visitor = await visitorContext.newPage()
+  await visitor.goto(publicUrl!)
+  const liveForm = visitor.getByRole('form', {
+    name: 'Nhận tư vấn E2E',
+  })
+  await expect(liveForm).toContainText(
+    'Dữ liệu được ZenUI lưu tối đa 90 ngày',
+  )
+  const publicAccessibility = await new AxeBuilder({ page: visitor })
+    .analyze()
+  expect(publicAccessibility.violations.filter(
+    item => ['serious', 'critical'].includes(item.impact ?? ''),
+  )).toEqual([])
+  await liveForm.getByLabel('Họ và tên').fill('Khách E2E')
+  await liveForm.getByLabel('Email').fill('lead-e2e@example.test')
+  await liveForm.getByRole('button', {
+    name: 'Gửi yêu cầu E2E',
+  }).click()
+  await expect(visitor.getByRole('heading', {
+    name: 'Đã nhận thông tin',
+  })).toBeVisible()
+  expect(visitor.url()).not.toContain('lead-e2e')
+  expect(await visitor.content()).not.toContain('lead-e2e@example.test')
+  await visitorContext.close()
+
+  await page.bringToFront()
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  const leadsTab = page.getByRole('tab', { name: /Khách hàng/ })
+  await expect(leadsTab).toContainText('1')
+  await leadsTab.click()
+  const inboxAccessibility = await new AxeBuilder({ page }).analyze()
+  expect(inboxAccessibility.violations.filter(
+    item => ['serious', 'critical'].includes(item.impact ?? ''),
+  )).toEqual([])
+  await page.getByRole('button', { name: /Nhận tư vấn E2E/ }).click()
+  await expect(page.getByText('lead-e2e@example.test')).toBeVisible()
+  await page.getByRole('button', {
+    name: 'Đánh dấu đã liên hệ',
+  }).click()
+  await expect(leadsTab).not.toContainText('1')
+
+  await page.reload()
+  await page.getByRole('tab', { name: /Khách hàng/ }).click()
+  await page.getByRole('button', { name: /Nhận tư vấn E2E/ }).click()
+  await expect(page.getByRole('button', {
+    name: 'Đánh dấu đã liên hệ',
+  })).toHaveCount(0)
+  await expect(page.getByText('Đã liên hệ').first()).toBeVisible()
+
+  const outsider = await browser.newPage()
+  await signIn(outsider, 'outsider')
+  const hidden = await outsider.request.get(
+    `/api/v1/projects/${projectId}/leads?workspaceId=${workspaceId}`,
+  )
+  expect(hidden.status()).toBe(404)
+  await outsider.close()
+})
+
 test('hides share management from outsiders and rejects forged origins', async ({ page }) => {
   const projectId = await createProject(page, 'Private share')
   const response = await page.request.post(`/api/v1/projects/${projectId}/share-links`, {

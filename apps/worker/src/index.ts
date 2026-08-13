@@ -12,6 +12,7 @@ import {
   assistantPlanV2Schema,
   styleEditSpecSchema,
   layoutRecipeSelectionSchema,
+  leadFormAlignmentFromPrompt,
   sectionCompositionSpecSchema,
   mediaCandidateEvaluationSchema,
   visualBriefSchema,
@@ -1583,7 +1584,54 @@ export function createGenerationProcessor(dependencies: {
     const mediaResolver = dependencies.assistantMediaV2Enabled
       ? dependencies.resolveProposalMediaV2
       : dependencies.resolveProposalMedia
-    const result = run.delivery === 'proposal'
+    const leadFormAlignment = run.delivery === 'proposal'
+      && run.proposalIntent === 'style'
+      && run.selectedNodeId
+      && run.document.nodes[run.selectedNodeId]?.type === 'lead-form'
+      ? leadFormAlignmentFromPrompt(run.prompt)
+      : null
+    const deterministicLeadFormStyle = leadFormAlignment && run.selectedNodeId
+      ? materializeStyleProposal({
+          document: run.document,
+          targetNodeId: run.selectedNodeId,
+          spec: {
+            version: 'style-edit-spec-v1',
+            emphasis: 'preserve',
+            spacingDensity: 'preserve',
+            alignment: leadFormAlignment,
+            surface: 'preserve',
+            mobileStack: 'preserve',
+          },
+          runId: run.id,
+          expectedVersion: run.expectedVersion,
+          summary: 'Prepared a bounded Lead Form alignment improvement',
+        })
+      : null
+    const result = deterministicLeadFormStyle
+      ? deterministicLeadFormStyle.accepted
+        ? {
+            accepted: true as const,
+            document: deterministicLeadFormStyle.proposedDocument,
+            commands: deterministicLeadFormStyle.commands,
+            summary: deterministicLeadFormStyle.summary,
+            repairAttempts: 0,
+            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+            provider: 'server-owned-style',
+            model: 'lead-form-alignment-v1',
+            promptVersion: AI_PROMPT_VERSION,
+          }
+        : {
+            accepted: false as const,
+            code: deterministicLeadFormStyle.code === 'stale_document_version'
+              ? 'stale_document_version' as const
+              : 'invalid_model_output' as const,
+            repairAttempts: 0,
+            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+            provider: 'server-owned-style',
+            model: 'lead-form-alignment-v1',
+            promptVersion: AI_PROMPT_VERSION,
+          }
+      : run.delivery === 'proposal'
       && run.proposalIntent === 'composition'
       && run.selectedNodeId
       && dependencies.assistantCompositionV2Enabled
@@ -1657,6 +1705,18 @@ export function createGenerationProcessor(dependencies: {
                 promptVersion: AI_PROMPT_VERSION,
               }
         })()
+      : run.delivery === 'proposal'
+      && run.proposalIntent === 'style'
+      && (!run.selectedNodeId || !dependencies.assistantStyleV2Enabled || !dependencies.resolveStyleProposalV2)
+      ? {
+          accepted: false as const,
+          code: 'invalid_model_output' as const,
+          repairAttempts: 0,
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          provider: 'semantic-style',
+          model: 'style-intelligence-v2',
+          promptVersion: AI_PROMPT_VERSION,
+        }
       : run.delivery === 'proposal'
       && run.proposalIntent === 'style'
       && run.selectedNodeId

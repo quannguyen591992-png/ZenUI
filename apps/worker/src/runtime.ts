@@ -11,6 +11,7 @@ import {
   createDesignDirectionRepository,
   createExportRepository,
   createGenerationRepository,
+  createLeadRepository,
   createQueueRecoveryRepository,
 } from '@zenui/database'
 import * as schema from '@zenui/database/schema'
@@ -28,6 +29,7 @@ import IORedis from 'ioredis'
 import { Pool } from 'pg'
 
 import { createDeploymentReconciler } from './deployment-reconciliation.js'
+import { startLeadRetentionMaintenance } from './lead-retention.js'
 import { createWorkerOperationsServer } from './operations-server.js'
 import { createRecoverySweep } from './recovery.js'
 
@@ -132,6 +134,8 @@ interface WorkerRuntimeConfig {
   recoveryStaleQueuedSeconds: number
   recoveryBatchSize: number
   recoveryMaxAttempts: number
+  leadRetentionIntervalSeconds: number
+  leadRetentionBatchSize: number
   queuePauseAtDepth: number
   queueResumeAtDepth: number
   queuePauseAtOldestAgeSeconds: number
@@ -231,6 +235,7 @@ const workerFailureEventNames = {
   deployment: 'deployment_job_failed',
   reconciliation: 'deployment_reconciliation_failed',
   recovery: 'queue_recovery_failed',
+  leadRetention: 'lead_retention_failed',
 } as const
 
 export function createSafeWorkerFailureEvent(kind: keyof typeof workerFailureEventNames) {
@@ -387,6 +392,18 @@ export function loadWorkerRuntimeConfig(): WorkerRuntimeConfig {
     recoveryStaleQueuedSeconds: integer('WORKER_RECOVERY_STALE_QUEUED_SECONDS', 60, 30, 86_400),
     recoveryBatchSize: integer('WORKER_RECOVERY_BATCH_SIZE', 50, 1, 500),
     recoveryMaxAttempts: integer('WORKER_RECOVERY_MAX_ATTEMPTS', 3, 1, 10),
+    leadRetentionIntervalSeconds: integer(
+      'LEAD_RETENTION_INTERVAL_SECONDS',
+      3_600,
+      60,
+      86_400,
+    ),
+    leadRetentionBatchSize: integer(
+      'LEAD_RETENTION_BATCH_SIZE',
+      100,
+      1,
+      500,
+    ),
     queuePauseAtDepth,
     queueResumeAtDepth,
     queuePauseAtOldestAgeSeconds,
@@ -863,8 +880,21 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
   const runRecovery = (): void => {
     void sweepRecovery().catch(() => console.error(JSON.stringify(createSafeWorkerFailureEvent('recovery'))))
   }
-  const recoveryTimer = setInterval(runRecovery, config.recoveryIntervalSeconds * 1_000)
+  const recoveryTimer = setInterval(
+    runRecovery,
+    config.recoveryIntervalSeconds * 1_000,
+  )
   recoveryTimer.unref()
+  const leadRetention = startLeadRetentionMaintenance({
+    repository: createLeadRepository(database),
+    policy: {
+      intervalSeconds: config.leadRetentionIntervalSeconds,
+      batchSize: config.leadRetentionBatchSize,
+    },
+    onFailure: () => console.error(JSON.stringify(
+      createSafeWorkerFailureEvent('leadRetention'),
+    )),
+  })
   const probes: Partial<Record<'postgres' | 'redis' | 'object_store', () => Promise<boolean>>> = {
     postgres: async () => { await pool.query('SELECT 1'); return true },
     redis: async () => await redis.ping() === 'PONG',
@@ -889,6 +919,8 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
   const operationsReady = operationsServer.start()
   const close = async (): Promise<void> => {
     clearInterval(recoveryTimer)
+    leadRetention.close()
+    await leadRetention.whenIdle()
     await operationsReady
     await operationsServer.close()
     await Promise.all(workers.map(worker => worker.close()))

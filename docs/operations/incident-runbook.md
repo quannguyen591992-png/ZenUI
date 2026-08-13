@@ -47,9 +47,21 @@ Use safe aggregate IDs from the incident system, not user/project/job IDs in sha
 2. Re-encrypt in bounded compare-and-swap batches; verify old count zero before retirement.
 3. Revoke affected provider connections where required. Never expose plaintext/ciphertext in evidence.
 
+## Customer Leads capability incident
+
+Customer Leads is implemented as managed Share intake plus encrypted project Inbox and remains `In review` pending owner local-live acceptance. Editor Canvas, isolated Preview, visual-only Share links and standalone ZIP must still never submit.
+
+1. Disable the affected Share link to stop new intake. If Editor Preview, isolated Preview, ZIP or a link whose management DTO reports `leadFormsLive: false` submits, treat it as a security regression and stop the affected surface.
+2. Verify visual-only output has no `action`/`method` and keeps `form-action 'none'`, `script-src 'none'` and `connect-src 'none'`. For a live managed Share, verify only `form-action` names the exact `SHARE_ORIGIN`; script/connect policies must remain `none`.
+3. Inspect only bounded technical evidence. Never paste visitor values, raw IP, full URL, bearer Share slug, lead/binding/tenant ID, ciphertext, IV, auth tag, key version, database URL or encryption key into logs, metrics, tickets or chat.
+4. For suspected authorization leakage, deny traffic first, then verify owner/editor permissions, viewer denial, project/workspace not-found isolation and authorization-before-decrypt. Do not use plaintext database inspection as product acceptance evidence.
+5. For suspected key exposure, preserve encrypted records, stage a new Lead key version, keep old versions readable during controlled rotation and do not retire a version until bounded verification proves no record depends on it.
+6. For retention failure, keep intake disabled if the disclosed 90-day promise cannot be met. Verify `LEAD_RETENTION_INTERVAL_SECONDS` and `LEAD_RETENTION_BATCH_SIZE`, run the bounded repository purge with count-only evidence and confirm the worker emits only `lead_retention_failed`/`worker_error` on failure.
+7. Reopen only after focused public POST/receipt, authorization/decrypt, Inbox/contacted, retention and visual-only compiler/Preview/ZIP regression tests pass. Email forwarding, ad-hoc plaintext stores and CRM/webhook workarounds are forbidden.
+
 ## Share origin/CSP or image-policy regression
 
 1. Disable affected share links and stop share/deploy admission.
-2. Verify exact share/preview host isolation, CSP `img-src` exact sources, no scheme wildcard and no shared cookie domain.
-3. Confirm the HTTPS image allowlist and compiler/preview policies match. Allowlisted remote hosts still see viewer IP.
-4. Run focused cross-browser share/preview/axe tests before reopening.
+2. Verify exact share/preview host isolation, CSP `img-src` exact sources, no scheme wildcard and no shared cookie domain. Preview and ZIP Lead Forms must stay visual-only with `form-action 'none'`; managed Share may name only exact `SHARE_ORIGIN` when an active immutable binding exists.
+3. Confirm the HTTPS image allowlist and compiler/preview policies match. Allowlisted remote hosts still see viewer IP; `Referrer-Policy: no-referrer` must remain consistent with the visual-only baseline.
+4. Run focused cross-browser share/preview/form/axe tests before reopening.

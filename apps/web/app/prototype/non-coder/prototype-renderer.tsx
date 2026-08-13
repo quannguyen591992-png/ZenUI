@@ -70,7 +70,10 @@ function RenderNode({
     attributes.href = node.props.href
     attributes.onClick = (event: { preventDefault(): void }) => event.preventDefault()
   }
-  if (node.type === 'icon' && 'label' in node.props) attributes['aria-label'] = node.props.label
+  if (node.type === 'icon' && 'label' in node.props) {
+    attributes.role = 'img'
+    attributes['aria-label'] = node.props.label
+  }
   if (node.type === 'spacer') attributes['aria-hidden'] = 'true'
 
   const children = node.children.map(childId => (

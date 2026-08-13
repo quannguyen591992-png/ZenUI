@@ -10,9 +10,9 @@ import {
 } from '../src/index.js'
 
 describe('prototype component registry', () => {
-  it('contains the eighteen Phase 2 component types exactly once', () => {
+  it('contains the nineteen bounded editor component types exactly once', () => {
     expect(Object.keys(componentRegistry).sort()).toEqual([...COMPONENT_TYPES].sort())
-    expect(new Set(COMPONENT_TYPES).size).toBe(18)
+    expect(new Set(COMPONENT_TYPES).size).toBe(19)
   })
 
   it.each(COMPONENT_TYPES)('has valid defaults and a valid fixture for %s', type => {
@@ -64,6 +64,52 @@ describe('prototype component registry', () => {
       type: 'link',
       props: expect.objectContaining({ brandSlot: true }),
     }))
+  })
+
+  it('defines Lead Form as a bounded composite leaf with canonical defaults', () => {
+    const definition = componentRegistry['lead-form']
+
+    expect(definition).toMatchObject({
+      category: 'composite',
+      isContainer: false,
+      allowedChildren: [],
+      renderTag: 'form',
+      template: undefined,
+    })
+    expect(definition.allowedParents).toEqual(expect.arrayContaining([
+      'section', 'container', 'stack', 'column', 'hero', 'feature-card',
+    ]))
+    expect(definition.propSchema.safeParse(definition.defaultProps).success).toBe(true)
+    expect(definition.defaultStyle).toMatchObject({
+      width: 'full',
+      maxWidth: 720,
+      marginLeft: 'auto',
+      marginRight: 'auto',
+    })
+    expect(isAllowedChild('container', 'lead-form')).toBe(true)
+    expect(isAllowedChild('lead-form', 'paragraph')).toBe(false)
+    expect(createRegistryFixture('lead-form').nodes['fixture-lead-form']?.children).toEqual([])
+  })
+
+  it('exposes bounded form and typed action controls without operational authority', () => {
+    expect(componentRegistry['lead-form'].inspector).toEqual([
+      expect.objectContaining({ key: 'fields', control: 'lead-form-builder' }),
+    ])
+    expect(componentRegistry.button.inspector).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'action', control: 'conversion-action' }),
+    ]))
+    expect(componentRegistry.link.inspector).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'action', control: 'conversion-action' }),
+    ]))
+
+    const exposedKeys = [
+      ...componentRegistry['lead-form'].inspector,
+      ...componentRegistry.button.inspector,
+      ...componentRegistry.link.inspector,
+    ].map(field => field.key)
+    expect(exposedKeys).not.toEqual(expect.arrayContaining([
+      'rawJson', 'rawHtml', 'actionUrl', 'recipient', 'endpoint', 'webhook', 'secret',
+    ]))
   })
 
   it('does not expose raw CSS or arbitrary font values', () => {

@@ -1,6 +1,11 @@
 import { validateRegistryRelationships } from '@zenui/component-registry'
 import { applyCommandTransaction } from '@zenui/design-commands'
-import { validateDesignDocument, type DesignDocument, type DesignNode } from '@zenui/design-schema'
+import {
+  leadFormLayoutPatch,
+  validateDesignDocument,
+  type DesignDocument,
+  type DesignNode,
+} from '@zenui/design-schema'
 import { z } from 'zod'
 
 import { remixAllowedChangeSchema, remixConstraintsSchema, validateRemixConstraints } from './site-intelligence'
@@ -38,6 +43,14 @@ export type ProposalScope = z.infer<typeof proposalScopeSchema>
 const mediaReplacementPattern = /(?:\b(?:image|photo|picture|visual)\b|(?:đổi|thay|tạo|làm|chọn|tìm)\s+(?:hình|ảnh)|(?:hình|ảnh)\s+(?:mới|khác|phù hợp|giống))/iu
 const altTextPattern = /(?:\balt(?:ernative)?\s+text\b|mô\s+tả\s+(?:hình|ảnh)|(?:hình|ảnh)\s+thay\s+thế)/iu
 
+export function leadFormAlignmentFromPrompt(prompt: string): 'left' | 'center' | 'right' | null {
+  const alignments = new Set<'left' | 'center' | 'right'>()
+  if (/(?:\bleft\b|(?:canh|căn)\s+trái)/iu.test(prompt)) alignments.add('left')
+  if (/(?:\b(?:center|centre)(?:ed)?\b|(?:canh|căn)\s+giữa)/iu.test(prompt)) alignments.add('center')
+  if (/(?:\bright\b|(?:canh|căn)\s+phải)/iu.test(prompt)) alignments.add('right')
+  return alignments.size === 1 ? [...alignments][0]! : null
+}
+
 function isMediaTarget(node: DesignNode | undefined): boolean {
   return Boolean(
     node?.type === 'image'
@@ -67,6 +80,14 @@ export function routeProposalIntent(input: {
     return isMediaTarget(target) && input.selectedNodeId
       ? { accepted: true, intent: 'replace-media', targetNodeId: input.selectedNodeId }
       : { accepted: false, code: 'invalid_media_target' }
+  }
+  if (
+    input.requestedIntent === 'standard'
+    && target?.type === 'lead-form'
+    && input.selectedNodeId
+    && leadFormAlignmentFromPrompt(input.prompt)
+  ) {
+    return { accepted: true, intent: 'style', targetNodeId: input.selectedNodeId }
   }
   if (input.requestedIntent === 'remix-section' && !input.selectedNodeId) {
     return { accepted: false, code: 'invalid_scope' }
@@ -134,6 +155,7 @@ const elementLabels: Partial<Record<DesignNode['type'], string>> = {
   divider: 'Đường phân cách',
   spacer: 'Khoảng cách',
   container: 'Nhóm nội dung',
+  'lead-form': 'Biểu mẫu',
 }
 
 function sectionLabel(node: DesignNode): string {
@@ -207,7 +229,7 @@ export type MaterializeStyleProposalResult = MaterializeProposalResult
   | { accepted: false; code: 'unsupported_style_target' | 'accessibility_regression' }
 
 const styleTargetTypes = new Set<DesignNode['type']>([
-  'section', 'container', 'stack', 'columns', 'column', 'heading', 'paragraph', 'button', 'link', 'badge', 'navbar', 'hero', 'feature-card',
+  'section', 'container', 'stack', 'columns', 'column', 'heading', 'paragraph', 'button', 'link', 'badge', 'navbar', 'hero', 'feature-card', 'lead-form',
 ])
 
 function colorChannel(value: string): number {
@@ -237,7 +259,10 @@ function stylePatch(document: DesignDocument, node: DesignNode, spec: StyleEditS
   if (spec.emphasis !== 'preserve') {
     desktop.fontWeight = spec.emphasis === 'strong' ? '700' : '500'
   }
-  if (spec.alignment !== 'preserve') desktop.textAlign = spec.alignment
+  if (spec.alignment !== 'preserve') {
+    if (node.type === 'lead-form') Object.assign(desktop, leadFormLayoutPatch(spec.alignment))
+    else desktop.textAlign = spec.alignment
+  }
   if (spec.spacingDensity !== 'preserve') {
     const spacing = { compact: 8, comfortable: 16, spacious: 32 }[spec.spacingDensity]
     if (node.type === 'section' || node.type === 'hero') {

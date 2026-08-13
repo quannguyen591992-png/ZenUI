@@ -296,6 +296,52 @@ Phase 5 implementation boundary:
 - Links are persistent by default. `expiresAt` is nullable for future policy but Phase 5 has no expiry UI.
 - Residual risk remains for remote HTTP(S) images: no-referrer suppresses page URL leakage but cannot hide viewer IP from the image host.
 
+## Data flow: visual-only surfaces and managed Customer Leads
+
+F1 editing behavior remains visual-only, while only an active managed Share receives server-owned submission authority:
+
+```text
+Owner/editor command -> bounded lead-form in Design Document
+             |                         |
+             |                         +-> Editor / Preview / ZIP
+             |                              no action/method
+             |                              form-action 'none'
+             |
+             +-> immutable managed Share binding
+                         |
+       exact origin/slug/route/node + bounded native POST
+                         |
+        validate -> AES-256-GCM encrypt -> database append
+                         |
+       no-PII receipt + owner/editor project Inbox
+```
+
+Customer Leads is implemented as one vertical slice and remains `In review` until normal local-live owner acceptance. Intake-only persistence is not an acceptable completion boundary.
+
+Threats and controls:
+
+| Threat | Impact | Required control | Owner phase |
+|---|---|---|---|
+| Arbitrary fields, password/file/card collection | Phishing, malware or regulated-data expansion | One composite form; strict field allowlist/count/length; forbid password/file/payment/hidden endpoint | F1/F2 |
+| Browser/model supplies action, recipient or endpoint | PII exfiltration | No authority in document/provider output; only exact server-owned immutable Share binding adds POST action | F1/F2 |
+| Preview/visual Share/ZIP sends unexpectedly | Undisclosed collection or exfiltration | No action/method; `form-action 'none'`; `script-src 'none'`; `connect-src 'none'`; managed Share live state is explicit | F1/F2 |
+| Cross-origin transplant, spam or body amplification | Unauthorized intake or resource abuse | Exact Share host and Origin, active slug/route/node binding, streamed body limits, duplicate-key rejection and HMAC-only Redis admission | F2 |
+| Plaintext DB/backup/log/queue exposure | Bulk PII disclosure | Dedicated AES-256-GCM envelope with versioned tenant/publication/lead AAD; redacted DTOs; no PII queue/metric/routine log | F2 |
+| Ciphertext/AAD/key-version swap | Wrong-record decryption or disclosure | Exact-version keyring and AAD bind workspace/project/share/revision/form/lead/key version; fail closed | F2 |
+| Viewer/cross-tenant Inbox access | PII disclosure | Owner/editor permissions, viewer denial, tenant-safe lookup and authorization before decrypt | F2 |
+| Stale status write | Lost owner action | Atomic `new → contacted` with optimistic version and 409 conflict | F2 |
+| Retention failure | Data kept beyond disclosed purpose | Fixed 90-day expiry, bounded non-overlapping worker purge and safe failure event | F2 |
+| Poll/notification failure loses lead | Business-data loss | Database Inbox record first; visible-only badge polling/focus refresh is advisory and cannot be durability authority | F2 |
+
+Security invariants:
+
+- The Preview sandbox still omits `allow-forms`; Customer Leads does not weaken its sandbox or exact `postMessage` bridge.
+- `script-src 'none'` and `connect-src 'none'` remain unchanged. Managed Share changes only `form-action` to the exact Share origin for an active binding; no generated JavaScript is added.
+- Lead values, recipient/integration settings, publication authority and encryption material never become Design Document, command/history, AI context, queue payload, metric labels or routine logs.
+- Receipt URLs and bodies contain no visitor PII. Management list/count DTOs contain no decrypted values or cryptographic metadata.
+- Native commerce, card collection, file upload, arbitrary custom endpoints and generated JavaScript remain forbidden. Booking/checkout MVP uses validated external HTTPS links only.
+- Automated tests use deterministic fixtures. No live email/push/CRM/payment/provider action runs without explicit owner authorization; automated evidence does not imply public rollout or completed owner acceptance.
+
 ## Data flow: Vercel deployment
 
 ```text
@@ -378,7 +424,7 @@ Share deep path   ZIP Export   Vercel static files
 ## MVP policy decisions
 
 - Legacy images may use validated remote HTTPS URLs on the configured hostname allowlist during migration. Stage 4 generated production images use fixed-provider SSRF-safe import, private immutable storage and opaque ZenUI asset IDs; arbitrary URL proxy/upload remains forbidden.
-- Contact Form is visual-only; no submission backend in MVP.
+- D-029 supersedes the backend-only F2 slicing approved by D-026/D-028: the restored F1 baseline keeps Lead Forms visual-only on Editor, Preview, Share and ZIP. Customer Leads must ship public intake and authorized Inbox as one accepted vertical slice.
 - Stage 10B1 Export is one deterministic bounded ZIP containing the complete immutable static-site route manifest; legacy v1 snapshots still compile as a one-route site.
 - Share links are persistent by default, pinned to a revision and disable-able.
 - Fonts come from a controlled allowlist; custom font upload is deferred.
@@ -391,5 +437,7 @@ Share deep path   ZIP Export   Vercel static files
 3. Provider model behavior can change; maintain regression fixtures/evals. Phase 3 deterministic contract tests do not replace an opt-in live Gemini smoke/evaluation with configured credentials.
 4. Redis/BullMQ delivery is at-least-once; durable idempotent claiming and lease recovery must prevent duplicate asset/object side effects as well as existing generation/export/deployment effects.
 5. SSE uses authenticated database polling for durable reconnect semantics; very high concurrent run volume will require measured polling/backpressure tuning.
-6. Separate-origin asset/preview/share deployment configuration can regress; verify exact hosts, cookie absence, CSP and headers in E2E and deployment smoke tests.
+6. Separate-origin asset/preview/share/deployment configuration can regress; verify exact hosts, cookie absence, CSP and headers in E2E and deployment smoke tests.
 7. Static HTML has limited interactions because arbitrary JavaScript is intentionally excluded.
+8. A future anonymous Customer Leads form will remain an abuse surface even with fixed rate limits and honeypot; measure rejection/acceptance using bounded non-PII metrics and require a new decision before adding a third-party challenge processor.
+9. Future Lead encryption will reduce database exposure but will not remove account compromise, authorization, backup, key-rotation, processor and legal-notice obligations.

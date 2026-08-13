@@ -26,6 +26,7 @@
     "@zenui/editor-core": "workspace:*",
     "@zenui/export-core": "workspace:*",
     "@zenui/html-compiler": "workspace:*",
+    "@zenui/lead-core": "workspace:*",
     "@zenui/operations-core": "workspace:*",
     "@zenui/preview-bridge": "workspace:*",
     "@zenui/share-core": "workspace:*",

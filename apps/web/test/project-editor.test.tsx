@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createValidDesignFixture } from '@zenui/design-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -28,6 +28,19 @@ vi.mock('../app/editor/editor-app', () => ({
       <span>Dự án {projectName}</span>
       <span>Phiên bản {initialVersion}</span>
       {brief && <span>Mục tiêu {brief.primaryGoal}</span>}
+    </main>
+  ),
+}))
+
+vi.mock('../app/projects/[projectId]/customer-leads-inbox', () => ({
+  CustomerLeadsInbox: ({ onLeadContacted }: {
+    onLeadContacted: () => void
+  }) => (
+    <main>
+      <h1>Hộp thư khách hàng production</h1>
+      <button type="button" onClick={onLeadContacted}>
+        Đánh dấu mô phỏng
+      </button>
     </main>
   ),
 }))
@@ -64,10 +77,18 @@ function response(data: unknown) {
   }))
 }
 
-function stubProject(creationState: 'onboarding' | 'accepted', role: 'owner' | 'editor' | 'viewer' = 'owner') {
+function stubProject(
+  creationState: 'onboarding' | 'accepted',
+  role: 'owner' | 'editor' | 'viewer' = 'owner',
+  newCounts: number[] = [2],
+) {
+  const remainingCounts = [...newCounts]
   vi.stubGlobal('fetch', vi.fn((input: string | URL | Request) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     if (url === '/api/v1/session') return response({ userId: 'user-1', workspaceId, role })
+    if (url.includes(`/api/v1/projects/${projectId}/leads/count?`)) {
+      return response({ newCount: remainingCounts.shift() ?? newCounts.at(-1) ?? 0 })
+    }
     if (url.includes(`/api/v1/projects/${projectId}?`)) {
       return response({ id: projectId, workspaceId, name: 'NovaFlow website', creationState, version: 1, document })
     }
@@ -79,6 +100,7 @@ function stubProject(creationState: 'onboarding' | 'accepted', role: 'owner' | '
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -112,5 +134,62 @@ describe('production project onboarding integration', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('quyền chỉnh sửa')
     expect(screen.queryByRole('heading', { name: 'Guided Brief production' })).not.toBeInTheDocument()
+  })
+
+  it('shows an owner/editor Leads tab and updates its new-customer badge', async () => {
+    stubProject('accepted')
+    render(<ProjectEditor projectId={projectId} editorOrigin="http://localhost" previewOrigin="http://127.0.0.1:3001" assetOrigin="http://127.0.0.1:3002" remoteImageHostAllowlist="images.example.com" deploymentEnabled={false} />)
+
+    expect(await screen.findByRole('tab', { name: 'Thiết kế' })).toHaveAttribute('aria-selected', 'true')
+    const leadsTab = await screen.findByRole('tab', { name: /Khách hàng/ })
+    expect(leadsTab).toHaveTextContent('2')
+    await userEvent.setup().click(leadsTab)
+    expect(await screen.findByRole('heading', { name: 'Hộp thư khách hàng production' })).toBeVisible()
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Đánh dấu mô phỏng' }))
+    expect(leadsTab).toHaveTextContent('1')
+  })
+
+  it('hides the Leads surface from viewers', async () => {
+    stubProject('accepted', 'viewer')
+    render(<ProjectEditor projectId={projectId} editorOrigin="http://localhost" previewOrigin="http://127.0.0.1:3001" assetOrigin="http://127.0.0.1:3002" remoteImageHostAllowlist="images.example.com" deploymentEnabled={false} />)
+
+    expect(await screen.findByRole('heading', { name: 'Trình chỉnh sửa production' })).toBeVisible()
+    expect(screen.queryByRole('tab', { name: /Khách hàng/ })).not.toBeInTheDocument()
+  })
+
+  it('polls count only while visible and refreshes immediately on focus', async () => {
+    let intervalCallback: (() => void) | undefined
+    const nativeSetInterval = window.setInterval.bind(window)
+    vi.spyOn(window, 'setInterval').mockImplementation((callback, milliseconds) => {
+      if (milliseconds === 30_000) {
+        intervalCallback = callback
+        return 1 as unknown as ReturnType<typeof window.setInterval>
+      }
+      return nativeSetInterval(
+        callback,
+        milliseconds,
+      ) as unknown as ReturnType<typeof window.setInterval>
+    })
+    let visible = true
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => visible ? 'visible' : 'hidden',
+    })
+    stubProject('accepted', 'owner', [1, 2, 3])
+    render(<ProjectEditor projectId={projectId} editorOrigin="http://localhost" previewOrigin="http://127.0.0.1:3001" assetOrigin="http://127.0.0.1:3002" remoteImageHostAllowlist="images.example.com" deploymentEnabled={false} />)
+
+    const tab = await screen.findByRole('tab', { name: /Khách hàng/ })
+    await waitFor(() => expect(tab).toHaveTextContent('1'))
+    act(() => { intervalCallback?.() })
+    await waitFor(() => expect(tab).toHaveTextContent('2'))
+
+    visible = false
+    act(() => { intervalCallback?.() })
+    expect(tab).toHaveTextContent('2')
+
+    visible = true
+    act(() => { window.dispatchEvent(new Event('focus')) })
+    await waitFor(() => expect(tab).toHaveTextContent('3'))
   })
 })

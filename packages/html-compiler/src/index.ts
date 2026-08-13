@@ -5,6 +5,7 @@ import { DESIGN_LIMITS } from '@zenui/design-schema'
 import {
   buildRenderPlan,
   escapeHtml,
+  type LiveLeadFormOptions,
   type RenderPlanNode,
 } from './render'
 
@@ -12,6 +13,7 @@ import type { RemoteImagePolicy } from '@zenui/design-schema'
 
 export {
   buildRenderPlan,
+  conversionActionHref,
   escapeHtml,
   isNodeHidden,
   nodeStyleToBrowserStyle,
@@ -21,18 +23,24 @@ export {
   resolveNodeStyle,
   resolveNodeTag,
   type BrowserNodeStyle,
+  type LiveLeadFormBinding,
+  type LiveLeadFormOptions,
   type RenderPlan,
   type RenderPlanNode,
   type RenderPlanResult,
   type RenderViewport,
 } from './render'
 
-const voidTags = new Set(['img', 'hr'])
+const voidTags = new Set(['img', 'hr', 'input'])
 export const DEFAULT_MAX_ARTIFACT_BYTES = 2 * 1024 * 1024
 
 export type CompileResult =
   | { success: true; html: string; bytes: number; checksum: string; csp: string }
-  | { success: false; code: 'invalid_document' | 'invalid_relationship' | 'route_not_found' | 'artifact_too_large'; message: string }
+  | {
+      success: false
+      code: 'invalid_document' | 'invalid_relationship' | 'route_not_found' | 'artifact_too_large' | 'invalid_live_form_config'
+      message: string
+    }
 
 export interface StaticSiteFile {
   path: string
@@ -45,7 +53,11 @@ export interface StaticSiteFile {
 
 export type CompileStaticSiteResult =
   | { success: true; files: StaticSiteFile[]; routeCount: number; bytes: number; checksum: string }
-  | { success: false; code: 'invalid_document' | 'invalid_relationship' | 'route_not_found' | 'artifact_too_large'; message: string }
+  | {
+      success: false
+      code: 'invalid_document' | 'invalid_relationship' | 'route_not_found' | 'artifact_too_large' | 'invalid_live_form_config'
+      message: string
+    }
 
 function serializeAttributes(attributes: Record<string, string>): string {
   return Object.entries(attributes)
@@ -67,6 +79,57 @@ function styleHash(css: string): string {
   return createHash('sha256').update(css, 'utf8').digest('base64')
 }
 
+function validatedLiveLeadForms(input: LiveLeadFormOptions | undefined): {
+  success: true
+  options?: LiveLeadFormOptions
+} | {
+  success: false
+  code: 'invalid_live_form_config'
+  message: string
+} {
+  if (!input) return { success: true }
+  let origin: URL
+  try {
+    origin = new URL(input.origin)
+  } catch {
+    return { success: false, code: 'invalid_live_form_config', message: 'Live Lead Form origin is invalid' }
+  }
+  const isSecureOrigin = origin.protocol === 'https:'
+  const isLoopbackOrigin = origin.protocol === 'http:' && (
+    origin.hostname === '127.0.0.1'
+    || origin.hostname === '[::1]'
+  )
+  if (
+    origin.origin !== input.origin
+    || (!isSecureOrigin && !isLoopbackOrigin)
+    || origin.username
+    || origin.password
+  ) {
+    return { success: false, code: 'invalid_live_form_config', message: 'Live Lead Form origin must be an exact HTTPS or HTTP loopback origin' }
+  }
+  for (const [formNodeId, binding] of Object.entries(input.bindings)) {
+    let action: URL
+    try {
+      action = new URL(binding.action)
+    } catch {
+      return { success: false, code: 'invalid_live_form_config', message: 'Live Lead Form action is invalid' }
+    }
+    if (
+      !/^[A-Za-z][A-Za-z0-9_-]{0,99}$/.test(formNodeId)
+      || action.origin !== origin.origin
+      || binding.action !== action.href
+      || !/^\/s\/[A-Za-z0-9_-]{32}$/.test(action.pathname)
+      || action.search
+      || action.hash
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(binding.requestId)
+      || !/^\/(?:[a-z0-9]+(?:-[a-z0-9]+)*(?:\/[a-z0-9]+(?:-[a-z0-9]+)*)*)?$/.test(binding.pageRoute)
+    ) {
+      return { success: false, code: 'invalid_live_form_config', message: 'Live Lead Form binding is invalid' }
+    }
+  }
+  return { success: true, options: input }
+}
+
 export function compileStandaloneHtml(
   input: unknown,
   options: {
@@ -79,8 +142,11 @@ export function compileStandaloneHtml(
     pageId?: string
     route?: string
     routePrefix?: string
+    liveLeadForms?: LiveLeadFormOptions
   } = {},
 ): CompileResult {
+  const liveLeadForms = validatedLiveLeadForms(options.liveLeadForms)
+  if (!liveLeadForms.success) return liveLeadForms
   const plan = buildRenderPlan(input, {
     ...(options.imagePolicy ? { imagePolicy: options.imagePolicy } : {}),
     ...(options.assetOrigin ? { assetOrigin: options.assetOrigin } : {}),
@@ -88,11 +154,13 @@ export function compileStandaloneHtml(
     ...(options.pageId ? { pageId: options.pageId } : {}),
     ...(options.route ? { route: options.route } : {}),
     ...(options.routePrefix ? { routePrefix: options.routePrefix } : {}),
+    ...(liveLeadForms.options ? { liveLeadForms: liveLeadForms.options } : {}),
+    currentPageRoute: options.route ?? '/',
   })
   if (!plan.success) return plan
   const policy = [
     "default-src 'none'", "base-uri 'none'", "object-src 'none'", "frame-ancestors 'none'",
-    "form-action 'none'", "script-src 'none'", `style-src 'sha256-${styleHash(plan.css)}'`,
+    `form-action ${liveLeadForms.options ? liveLeadForms.options.origin : "'none'"}`, "script-src 'none'", `style-src 'sha256-${styleHash(plan.css)}'`,
     `img-src ${[
       ...(options.portableAssetPaths ? ["'self'"] : options.assetOrigin ? [new URL(options.assetOrigin).origin] : []),
       ...(options.imagePolicy?.sources ?? []),
@@ -101,7 +169,10 @@ export function compileStandaloneHtml(
   const body = serializeNode(plan.root)
   const title = escapeHtml(options.title ?? 'ZenUI Export')
   const robots = options.robots ? `\n<meta name="robots" content="${options.robots}">` : ''
-  const html = `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<meta name="referrer" content="no-referrer">${robots}\n<meta http-equiv="Content-Security-Policy" content="${policy}">\n<title>${title}</title>\n<style>${plan.css}</style>\n</head>\n<body>${body}</body>\n</html>\n`
+  const referrerPolicy = liveLeadForms.options
+    ? 'same-origin'
+    : 'no-referrer'
+  const html = `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<meta name="referrer" content="${referrerPolicy}">${robots}\n<meta http-equiv="Content-Security-Policy" content="${policy}">\n<title>${title}</title>\n<style>${plan.css}</style>\n</head>\n<body>${body}</body>\n</html>\n`
   const bytes = Buffer.byteLength(html, 'utf8')
   if (bytes > (options.maxArtifactBytes ?? DEFAULT_MAX_ARTIFACT_BYTES)) {
     return { success: false, code: 'artifact_too_large', message: 'Compiled artifact exceeds the size limit' }

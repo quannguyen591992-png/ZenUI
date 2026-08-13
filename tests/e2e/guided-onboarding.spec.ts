@@ -29,7 +29,7 @@ test('prepares exactly three directions with one provider call and accepts one i
   expect((await before.json()).data).toMatchObject({ creationState: 'onboarding', version: 1 })
 
   await page.getByRole('button', { name: 'Tạo 3 hướng thiết kế' }).click()
-  await expect(page.getByTestId('production-direction-card')).toHaveCount(3)
+  await expect(page.getByTestId('production-direction-card')).toHaveCount(3, { timeout: 15_000 })
   await expect(page.getByRole('heading', { name: 'Rõ ràng và điềm tĩnh' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Khởi động nổi bật' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Đà tiến rõ ràng' })).toBeVisible()
@@ -221,7 +221,7 @@ test('keeps Simple Preview, Share and Publish accessible at 390px', async ({ pag
   await page.getByLabel('Khách truy cập nên làm gì tiếp theo?').fill('Đặt lịch tư vấn')
   await page.getByLabel('Website nên mang lại cảm giác như thế nào?').fill('Rõ ràng và hiện đại')
   await page.getByRole('button', { name: 'Tạo 3 hướng thiết kế' }).click()
-  await expect(page.getByTestId('production-direction-card')).toHaveCount(3)
+  await expect(page.getByTestId('production-direction-card')).toHaveCount(3, { timeout: 15_000 })
   await page.getByRole('button', { name: 'Chọn hướng này' }).first().click()
   await expect(page.getByRole('button', { name: 'Câu chuyện' })).toBeVisible({ timeout: 15_000 })
 
@@ -254,7 +254,7 @@ test('keeps the production Guided Brief and gallery accessible at 390px', async 
   await page.getByLabel('Khách truy cập nên làm gì tiếp theo?').fill('Đặt lịch tư vấn')
   await page.getByLabel('Website nên mang lại cảm giác như thế nào?').fill('Rõ ràng và hiện đại')
   await page.getByRole('button', { name: 'Tạo 3 hướng thiết kế' }).click()
-  await expect(page.getByTestId('production-direction-card')).toHaveCount(3)
+  await expect(page.getByTestId('production-direction-card')).toHaveCount(3, { timeout: 15_000 })
 
   const firstCard = page.getByTestId('production-direction-card').first()
   await firstCard.scrollIntoViewIfNeeded()

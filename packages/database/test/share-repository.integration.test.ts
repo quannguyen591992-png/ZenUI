@@ -76,8 +76,13 @@ describe('workspace-scoped share repository', () => {
 
     const view = await repository.findPublicBySlug(created.link.slug, new Date('2026-07-22T12:00:00.000Z'))
     expect(view?.document.nodes['heading-1']?.props).toMatchObject({ text: 'Build your next product' })
-    expect(view).not.toHaveProperty('workspaceId')
-    expect(view).not.toHaveProperty('projectId')
+    expect(view).toMatchObject({
+      workspaceId: owner.workspaceId,
+      projectId: project.id,
+      shareLinkId: created.link.id,
+      revisionId: revision.id,
+      bindings: [],
+    })
   })
 
   it('requires the revision to belong to the project and enforces unique slugs', async () => {

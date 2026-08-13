@@ -1258,6 +1258,120 @@ describe('AI worker boundary', () => {
     }))
   })
 
+  it('materializes exact Lead Form alignment without an available structured style provider', async () => {
+    const document = createValidDesignFixture()
+    document.nodes['lead-form-1'] = {
+      id: 'lead-form-1',
+      type: 'lead-form',
+      parentId: 'container-1',
+      children: [],
+      props: {
+        title: 'Request a consultation',
+        description: 'Tell us how we can help.',
+        submitLabel: 'Send request',
+        successCopy: 'Thank you. We will be in touch.',
+        fields: [{
+          key: 'email',
+          type: 'email',
+          label: 'Email',
+          required: true,
+          placeholder: 'you@example.com',
+        }],
+      },
+      style: {
+        width: 'full',
+        maxWidth: 720,
+        marginLeft: 0,
+        marginRight: 'auto',
+      },
+      responsive: {},
+    }
+    document.nodes['container-1']!.children.push('lead-form-1')
+    const originalProps = structuredClone(document.nodes['lead-form-1'].props)
+    const styleRun = {
+      ...job, id: job.generationRunId, status: 'queued', mode: 'edit-selection' as const,
+      delivery: 'proposal' as const, proposalIntent: 'style' as const, proposalStatus: 'preparing' as const,
+      selectedNodeId: 'lead-form-1', prompt: 'Căn giữa biểu mẫu', document,
+    }
+    const repository = {
+      getWorkerInput: vi.fn().mockResolvedValue(styleRun),
+      claim: vi.fn().mockResolvedValue({ id: job.generationRunId, status: 'running' }),
+      markRepairing: vi.fn().mockResolvedValue(undefined), complete: vi.fn(),
+      completeProposal: vi.fn().mockResolvedValue({
+        accepted: true, run: { id: job.generationRunId, status: 'completed', proposalStatus: 'ready' },
+      }),
+      fail: vi.fn(),
+    }
+    const provider = createMockWorkerProvider([])
+    const textOperations = vi.spyOn(provider, 'generateOperations')
+
+    await expect(createGenerationProcessor({ provider, repository })({ data: {
+      generationRunId: job.generationRunId, projectId: job.projectId,
+      workspaceId: job.workspaceId, userId: job.userId,
+    } })).resolves.toMatchObject({ proposalStatus: 'ready' })
+
+    expect(textOperations).not.toHaveBeenCalled()
+    expect(repository.fail).not.toHaveBeenCalled()
+    expect(repository.completeProposal).toHaveBeenCalledWith(context, job.generationRunId, expect.objectContaining({
+      commands: [expect.objectContaining({
+        type: 'UPDATE_STYLE',
+        nodeId: 'lead-form-1',
+        patch: {
+          width: 'full',
+          maxWidth: 720,
+          marginLeft: 'auto',
+          marginRight: 'auto',
+        },
+      })],
+      proposedDocument: expect.objectContaining({
+        nodes: expect.objectContaining({
+          'lead-form-1': expect.objectContaining({ props: originalProps }),
+        }),
+      }),
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    }))
+  })
+
+  it('fails style proposals closed when the structured style lane is unavailable', async () => {
+    const document = createValidDesignFixture()
+    const styleRun = {
+      ...job, id: job.generationRunId, status: 'queued', mode: 'edit-selection' as const,
+      delivery: 'proposal' as const, proposalIntent: 'style' as const, proposalStatus: 'preparing' as const,
+      selectedNodeId: 'heading-1', prompt: 'Căn giữa tiêu đề', document,
+    }
+    const makeRepository = () => ({
+      getWorkerInput: vi.fn().mockResolvedValue(styleRun),
+      claim: vi.fn().mockResolvedValue({ id: job.generationRunId, status: 'running' }),
+      markRepairing: vi.fn().mockResolvedValue(undefined), complete: vi.fn(), completeProposal: vi.fn(),
+      fail: vi.fn().mockResolvedValue({
+        id: job.generationRunId, status: 'failed', proposalStatus: 'failed',
+      }),
+    })
+
+    for (const dependencies of [
+      { assistantStyleV2Enabled: false, resolveStyleProposalV2: vi.fn() },
+      { assistantStyleV2Enabled: true },
+    ]) {
+      const repository = makeRepository()
+      const provider = createMockWorkerProvider([])
+      const textOperations = vi.spyOn(provider, 'generateOperations')
+      await expect(createGenerationProcessor({
+        provider, repository, ...dependencies,
+      })({ data: {
+        generationRunId: job.generationRunId, projectId: job.projectId,
+        workspaceId: job.workspaceId, userId: job.userId,
+      } })).resolves.toMatchObject({ status: 'failed' })
+      expect(textOperations).not.toHaveBeenCalled()
+      if (dependencies.resolveStyleProposalV2) {
+        expect(dependencies.resolveStyleProposalV2).not.toHaveBeenCalled()
+      }
+      expect(repository.completeProposal).not.toHaveBeenCalled()
+      expect(repository.fail).toHaveBeenCalledWith(context, job.generationRunId, expect.objectContaining({
+        errorCode: 'invalid_model_output',
+      }))
+    }
+  })
+
   it('uses the v2 media resolver only when explicitly enabled and preserves fail-soft semantics', async () => {
     const document = createValidDesignFixture()
     document.nodes['image-1']!.props = {

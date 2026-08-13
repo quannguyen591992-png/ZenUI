@@ -8,6 +8,7 @@ import {
   createRedisExportAdmissionGate,
   createRedisExportQueue,
   createRedisGenerationQueue,
+  createRedisLeadAdmissionGate,
   createRedisPublicShareAdmissionGate,
   createRedisShareAdmissionGate,
 } from '../lib/server/ai-infrastructure'
@@ -119,6 +120,65 @@ describe('AI Redis infrastructure', () => {
     await expect(publicGate.acquire({ slug: 'A'.repeat(32), fingerprint: '203.0.113.1' })).resolves.toEqual({
       accepted: false, retryAfterSeconds: 17,
     })
+  })
+
+  it('atomically reserves and compensates lead intake limits with HMAC-only keys', async () => {
+    const redis = new FakeRedis()
+    const gate = createRedisLeadAdmissionGate(redis, {
+      ipPublicationRunsPerWindow: 5,
+      ipPublicationWindowSeconds: 600,
+      publicationRunsPerWindow: 300,
+      publicationWindowSeconds: 3_600,
+    }, {
+      digest(purpose, value) {
+        return `digest-${purpose}-${value.length}`
+      },
+    })
+    const input = {
+      publicationId: '55555555-5555-4555-8555-555555555555',
+      fingerprint: '203.0.113.19',
+      reservationId: '66666666-6666-4666-8666-666666666666',
+    }
+
+    await expect(gate.acquire(input)).resolves.toEqual({ accepted: true })
+    expect(redis.calls).toHaveLength(1)
+    expect(redis.calls[0]?.keys).toEqual([
+      'zenui:lead:admission:ip-publication:digest-ip-publication-admission-49',
+      'zenui:lead:admission:publication:digest-publication-admission-36',
+    ])
+    expect(redis.calls[0]?.keys.join(':')).not.toContain(input.publicationId)
+    expect(redis.calls[0]?.keys.join(':')).not.toContain(input.fingerprint)
+    expect(redis.calls[0]?.args).toEqual([
+      '5',
+      '600',
+      '300',
+      '3600',
+      'digest-ip-publication-admission-86',
+      'digest-publication-admission-73',
+    ])
+    expect(redis.calls[0]?.script).toContain("redis.call('HSETNX', KEYS[1], ARGV[5], '1')")
+    expect(redis.calls[0]?.script).toContain("redis.call('EXPIRE', KEYS[2], tonumber(ARGV[4]))")
+    expect(redis.calls[0]?.script).not.toContain('KEYS *')
+
+    redis.result = [0, 417]
+    await expect(gate.acquire(input)).resolves.toEqual({ accepted: false, retryAfterSeconds: 417 })
+    redis.result = [0, -4]
+    await expect(gate.acquire(input)).resolves.toEqual({ accepted: false, retryAfterSeconds: 1 })
+    redis.result = [0, Number.POSITIVE_INFINITY]
+    await expect(gate.acquire(input)).resolves.toEqual({ accepted: false, retryAfterSeconds: 3_600 })
+    redis.result = 'malformed'
+    await expect(gate.acquire(input)).resolves.toEqual({ accepted: false, retryAfterSeconds: 3_600 })
+
+    redis.result = [1, 1]
+    await expect(gate.release(input)).resolves.toBeUndefined()
+    expect(redis.calls.at(-1)?.keys).toEqual(redis.calls[0]?.keys)
+    expect(redis.calls.at(-1)?.args).toEqual([
+      'digest-ip-publication-admission-86',
+      'digest-publication-admission-73',
+    ])
+    expect(redis.calls.at(-1)?.script).toContain("redis.call('HDEL', KEYS[1], ARGV[1])")
+    expect(redis.calls.at(-1)?.script).toContain("redis.call('HDEL', KEYS[2], ARGV[2])")
+    expect(redis.calls.at(-1)?.script).toContain("redis.call('HINCRBY', KEYS[1], 'count', -1)")
   })
 
   it('uses scoped deploy admission, metadata-only queue jobs and one-time hashed OAuth states', async () => {

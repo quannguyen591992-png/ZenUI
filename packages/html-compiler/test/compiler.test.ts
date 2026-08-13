@@ -1,4 +1,10 @@
-import { createRemoteImagePolicy, createValidDesignFixture, migrateDesignDocumentV1ToV2, type DesignDocumentV2 } from '@zenui/design-schema'
+import {
+  createRemoteImagePolicy,
+  createValidDesignFixture,
+  migrateDesignDocumentV1ToV2,
+  type DesignDocument,
+  type DesignDocumentV2,
+} from '@zenui/design-schema'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -12,6 +18,38 @@ import {
   resolveNodeStyle,
   resolveNodeTag,
 } from '../src/index.js'
+
+function withLeadForm(): DesignDocument {
+  const document = createValidDesignFixture()
+  document.nodes['lead-form-1'] = {
+    id: 'lead-form-1',
+    type: 'lead-form',
+    parentId: 'container-1',
+    children: [],
+    props: {
+      title: 'Request a consultation',
+      description: 'Tell us how we can help.',
+      submitLabel: 'Send request',
+      successCopy: 'Thank you. We will be in touch.',
+      fields: [
+        { key: 'name', type: 'text', label: 'Name', required: true, placeholder: 'Your name' },
+        { key: 'email', type: 'email', label: 'Email', required: true, placeholder: 'you@example.com' },
+        {
+          key: 'need', type: 'select', label: 'What do you need?', required: false,
+          options: [{ label: 'Consultation', value: 'consultation' }],
+        },
+        { key: 'details', type: 'textarea', label: 'Details', required: false },
+      ],
+      consent: { label: 'I agree to be contacted', required: true },
+    },
+    style: {
+      width: 'full', maxWidth: 720, marginLeft: 'auto', marginRight: 'auto',
+    },
+    responsive: {},
+  }
+  document.nodes['container-1']!.children.push('lead-form-1')
+  return document
+}
 
 describe('standalone HTML compiler', () => {
   it('resolves semantic tags and stable allowlisted styles', () => {
@@ -151,6 +189,167 @@ describe('standalone HTML compiler', () => {
     expect(compiled.html).not.toMatch(/\sstyle="/i)
   })
 
+  it('renders a deterministic semantic visual-only Lead Form without submission authority', () => {
+    const first = buildRenderPlan(withLeadForm())
+    const second = buildRenderPlan(withLeadForm())
+    const compiled = compileStandaloneHtml(withLeadForm())
+
+    expect(first).toEqual(second)
+    expect(first).toMatchObject({ success: true })
+    expect(compiled).toMatchObject({ success: true })
+    if (!first.success || !compiled.success) return
+
+    const form = first.root.children[0]?.children[0]?.children.find(child => child.tag === 'form')
+    expect(form).toMatchObject({
+      tag: 'form',
+      attributes: {
+        'data-node-id': 'lead-form-1',
+        'data-node-type': 'lead-form',
+        'aria-labelledby': 'lead-form-1-title',
+        'aria-describedby': 'lead-form-1-description lead-form-1-preview-notice lead-form-1-export-notice',
+      },
+    })
+    expect(form?.attributes).not.toHaveProperty('action')
+    expect(form?.attributes).not.toHaveProperty('method')
+    expect(nodeToBrowserStyle(withLeadForm().nodes['lead-form-1']!)).toMatchObject({
+      width: '100%',
+      maxWidth: '720px',
+      marginLeft: 'auto',
+      marginRight: 'auto',
+    })
+    expect(first.css).toContain(
+      '[data-node-id="lead-form-1"]{width:100%;max-width:720px;margin-right:auto;margin-left:auto}',
+    )
+    expect(compiled.html).toContain('id="lead-form-1-name" name="name"')
+    expect(compiled.html).toMatch(/id="lead-form-1-email" name="email"[^>]*type="email"/)
+    expect(compiled.html).toContain('<select id="lead-form-1-need" name="need"')
+    expect(compiled.html).toContain('<textarea id="lead-form-1-details" name="details"')
+    expect(compiled.html).toContain('name="consent" type="checkbox"')
+    expect(compiled.html).toContain('Bản xem trước — chưa gửi dữ liệu')
+    expect(compiled.html).toContain('Form ZenUI không hoạt động trong bản tải xuống.')
+    expect(compiled.html).not.toMatch(/<form[^>]+(?:action|method)=/i)
+    expect(compiled.html).not.toMatch(/<script|\son\w+=|custom_endpoint|webhook|recipient/i)
+    expect(compiled.csp).toContain("form-action 'none'")
+    expect(compiled.csp).toContain("script-src 'none'")
+    expect(compiled.csp).toContain("connect-src 'none'")
+  })
+
+  it('keeps standalone static-site and unmapped forms visual-only', () => {
+    const standalone = compileStandaloneHtml(withLeadForm())
+    const site = compileStaticSite(withLeadForm())
+    expect(standalone).toMatchObject({ success: true })
+    expect(site).toMatchObject({ success: true })
+    if (!standalone.success || !site.success) return
+    expect(standalone.html).not.toMatch(/<form[^>]+(?:action|method)=/i)
+    expect(site.files[0]?.html).not.toMatch(/<form[^>]+(?:action|method)=/i)
+    expect(standalone.csp).toContain("form-action 'none'")
+    expect(site.files[0]?.csp).toContain("form-action 'none'")
+  })
+
+  it('activates only an exact server-owned Lead Form binding on managed Share', () => {
+    const document = withLeadForm()
+    const compiled = compileStandaloneHtml(document, {
+      liveLeadForms: {
+        origin: 'https://share.example.test',
+        bindings: {
+          'lead-form-1': {
+            action: 'https://share.example.test/s/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+            requestId: '11111111-1111-4111-8111-111111111111',
+            pageRoute: '/',
+          },
+        },
+      },
+    })
+
+    expect(compiled).toMatchObject({ success: true })
+    if (!compiled.success) return
+    expect(compiled.html).toContain(
+      '<form data-node-id="lead-form-1" data-node-type="lead-form" action="https://share.example.test/s/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" method="post"',
+    )
+    expect(compiled.html).toContain('name="__zenui_request_id" type="hidden" value="11111111-1111-4111-8111-111111111111"')
+    expect(compiled.html).toContain('name="__zenui_form_node_id" type="hidden" value="lead-form-1"')
+    expect(compiled.html).toContain('name="__zenui_page_route" type="hidden" value="/"')
+    expect(compiled.html).toContain('Dữ liệu được ZenUI lưu tối đa 90 ngày để chủ website liên hệ lại.')
+    expect(compiled.html).toContain(
+      '[data-node-type="lead-form"] button{min-height:48px;padding:12px 22px;border:0;border-radius:8px;color:#fff;background:#344054;cursor:pointer}',
+    )
+    expect(compiled.html).not.toContain('Bản xem trước — chưa gửi dữ liệu')
+    expect(compiled.html).not.toContain('Form ZenUI không hoạt động trong bản tải xuống.')
+    expect(compiled.html).not.toMatch(/<script|\son\w+=/i)
+    expect(compiled.html).toContain(
+      '<meta name="referrer" content="same-origin">',
+    )
+    expect(compiled.csp).toContain('form-action https://share.example.test')
+    expect(compiled.csp).toContain("script-src 'none'")
+    expect(compiled.csp).toContain("connect-src 'none'")
+  })
+
+  it('rejects malformed or cross-origin managed Lead Form authority', () => {
+    const loopback = compileStandaloneHtml(withLeadForm(), {
+      liveLeadForms: {
+        origin: 'http://127.0.0.1:3000',
+        bindings: {
+          'lead-form-1': {
+            action: 'http://127.0.0.1:3000/s/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+            requestId: '11111111-1111-4111-8111-111111111111',
+            pageRoute: '/',
+          },
+        },
+      },
+    })
+    const insecureRemote = compileStandaloneHtml(withLeadForm(), {
+      liveLeadForms: {
+        origin: 'http://share.example.test',
+        bindings: {},
+      },
+    })
+    const malformed = compileStandaloneHtml(withLeadForm(), {
+      liveLeadForms: {
+        origin: 'https://share.example.test/path',
+        bindings: {},
+      },
+    })
+    const crossOrigin = compileStandaloneHtml(withLeadForm(), {
+      liveLeadForms: {
+        origin: 'https://share.example.test',
+        bindings: {
+          'lead-form-1': {
+            action: 'https://other.example.test/s/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+            requestId: '11111111-1111-4111-8111-111111111111',
+            pageRoute: '/',
+          },
+        },
+      },
+    })
+
+    expect(loopback).toMatchObject({ success: true })
+    expect(insecureRemote).toMatchObject({ success: false, code: 'invalid_live_form_config' })
+    expect(malformed).toMatchObject({ success: false, code: 'invalid_live_form_config' })
+    expect(crossOrigin).toMatchObject({ success: false, code: 'invalid_live_form_config' })
+  })
+
+  it('resolves canonical typed actions while preserving legacy navigation', () => {
+    const document = migrateDesignDocumentV1ToV2(withLeadForm())
+    document.nodes['about-root'] = { id: 'about-root', type: 'page', parentId: null, children: [], props: {}, style: {}, responsive: {} }
+    document.pages.push({ id: 'about', name: 'About', slug: '/about', rootNodeId: 'about-root' })
+    document.nodes['button-1']!.props = {
+      text: 'Request a consultation',
+      action: { type: 'lead_form', formNodeId: 'lead-form-1' },
+    }
+    document.nodes['link-1'] = {
+      id: 'link-1', type: 'link', parentId: 'container-1', children: [],
+      props: { text: 'About', action: { type: 'internal_page', pageId: 'about' } },
+      style: {}, responsive: {},
+    }
+    document.nodes['container-1']!.children.push('link-1')
+
+    const compiled = compileStandaloneHtml(document)
+    expect(compiled).toMatchObject({ success: true })
+    if (!compiled.success) return
+    expect(compiled.html).toContain('href="#lead-form-1"')
+    expect(compiled.html).toContain('href="/about"')
+  })
+
   it('emits strict CSP, correct void elements and privacy-safe external assets', () => {
     const document = createValidDesignFixture()
     document.nodes['container-1']!.children.push('divider-1')
@@ -165,6 +364,7 @@ describe('standalone HTML compiler', () => {
     expect(result.html).toMatch(/http-equiv="Content-Security-Policy"/)
     expect(result.html).toContain("script-src 'none'")
     expect(result.html).toContain("style-src 'sha256-")
+    expect(result.html).toContain('<meta name="referrer" content="no-referrer">')
     expect(result.html).toContain('referrerpolicy="no-referrer"')
     expect(result.html).toContain('loading="lazy"')
     expect(result.html).toContain('[data-node-type="button"],[data-node-type="link"]{color:inherit;text-decoration:none}')

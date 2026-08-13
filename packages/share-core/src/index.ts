@@ -28,6 +28,7 @@ export const shareLinkPublicSchema = z.object({
   expiresAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
+  leadFormsLive: z.boolean(),
 }).strict()
 export type ShareLinkPublic = z.infer<typeof shareLinkPublicSchema>
 

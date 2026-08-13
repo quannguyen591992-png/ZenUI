@@ -347,6 +347,45 @@ describe('proposal API', () => {
     }), { params: Promise.resolve({ projectId }) })).status).toBe(422)
   })
 
+  it('routes Lead Form alignment language to the structured style lane', async () => {
+    const leadFormDocument = structuredClone(document)
+    leadFormDocument.nodes['lead-form-1'] = {
+      id: 'lead-form-1', type: 'lead-form', parentId: 'container-1', children: [],
+      props: {
+        title: 'Request a consultation', description: 'Tell us how we can help.',
+        submitLabel: 'Send request', successCopy: 'Thank you. We will be in touch.',
+        fields: [{ key: 'email', type: 'email', label: 'Email', required: true }],
+      },
+      style: { width: 'full', maxWidth: 720, marginLeft: 0, marginRight: 'auto' },
+      responsive: {},
+    }
+    leadFormDocument.nodes['container-1']!.children.push('lead-form-1')
+    const createProposal = vi.fn().mockResolvedValue({
+      ...run,
+      intent: 'style' as const,
+      scope: deriveProposalScope(leadFormDocument, 'lead-form-1')!,
+    })
+    const handlers = createProposalCollectionHandlers(dependencies({
+      findProject: () => Promise.resolve({
+        id: projectId, workspaceId, name: 'Project', status: 'active', version: 1,
+        document: leadFormDocument,
+      }),
+      proposals: { ...dependencies().proposals, createProposal },
+    }))
+
+    const response = await handlers.POST(request({
+      ...body,
+      prompt: 'Căn giữa biểu mẫu',
+      selectedNodeId: 'lead-form-1',
+    }), { params: Promise.resolve({ projectId }) })
+
+    expect(response.status).toBe(202)
+    expect(createProposal).toHaveBeenCalledWith(expect.anything(), projectId, expect.objectContaining({
+      intent: 'style', selectedNodeId: 'lead-form-1',
+      scope: expect.objectContaining({ kind: 'element', rootNodeId: 'lead-form-1' }),
+    }))
+  })
+
   it('accepts only server-captured section Remix intent and forwards bounded allowed changes', async () => {
     const createProposal = vi.fn().mockResolvedValue({ ...run, intent: 'remix-section' as const })
     const handlers = createProposalCollectionHandlers(dependencies({

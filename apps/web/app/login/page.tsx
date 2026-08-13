@@ -2,13 +2,14 @@ import Link from 'next/link'
 
 import { safeAuthCallbackPath } from '../../lib/server/auth-navigation'
 import { createConfiguredAuth } from '../../lib/server/configured-auth'
-import { isLocalAuthRuntimeEnabled } from '../../lib/server/e2e-runtime'
+import { isGitHubAuthConfigured, isLocalAuthRuntimeEnabled } from '../../lib/server/e2e-runtime'
 
 export default async function LoginPage({ searchParams }: {
   searchParams: Promise<{ callbackUrl?: string | string[] }>
 }) {
   const callbackUrl = safeAuthCallbackPath((await searchParams).callbackUrl)
   const local = isLocalAuthRuntimeEnabled()
+  const github = !local && isGitHubAuthConfigured()
 
   return (
     <main className="auth-page-pro">
@@ -42,7 +43,7 @@ export default async function LoginPage({ searchParams }: {
                   Tiếp tục với tài khoản local
                 </button>
               </form>
-            ) : (
+            ) : github ? (
               <form action={async () => {
                 'use server'
                 await createConfiguredAuth().signIn('github', { redirectTo: callbackUrl })
@@ -52,6 +53,10 @@ export default async function LoginPage({ searchParams }: {
                   Tiếp tục với GitHub
                 </button>
               </form>
+            ) : (
+              <p className="auth-note-pro" role="status">
+                Đăng nhập GitHub chưa được kích hoạt. Hãy liên hệ quản trị viên để được hỗ trợ.
+              </p>
             )}
           </div>
 

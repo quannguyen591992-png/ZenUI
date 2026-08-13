@@ -132,10 +132,17 @@ export function SharePanel({
       <button ref={opener} type="button" aria-expanded={open} onClick={() => setOpen(value => !value)}>Chia sẻ</button>
       {open && (
         <div className="share-popover" role="dialog" aria-modal="false" aria-label="Chia sẻ website">
-          <h2>{presentation === 'simple' ? 'Chia sẻ website' : 'Chia sẻ phiên bản'}</h2>
+          <h2>{presentation === 'simple'
+            ? links.some(link => link.leadFormsLive)
+              ? 'Chia sẻ website để nhận khách hàng'
+              : 'Chia sẻ website'
+            : 'Chia sẻ phiên bản'}</h2>
           {presentation === 'simple' ? (
             <>
               <p>Ai có liên kết đều có thể xem website đã lưu mới nhất.</p>
+              {links.some(link => link.leadFormsLive) && (
+                <p>Thông tin khách hàng được lưu tối đa 90 ngày.</p>
+              )}
               <p>Công cụ tìm kiếm được yêu cầu không lập chỉ mục liên kết này.</p>
               {!canShare && <p role="status">Hãy đợi website lưu xong trước khi tạo liên kết mới.</p>}
             </>
@@ -156,7 +163,11 @@ export function SharePanel({
                 const name = revisionName(link.revisionId)
                 return (
                   <li key={link.id}>
-                    <span>{presentation === 'simple' ? 'Website được chia sẻ' : name}</span>
+                    <span>{presentation === 'simple'
+                      ? link.leadFormsLive
+                        ? 'Website nhận khách hàng'
+                        : 'Website được chia sẻ'
+                      : name}</span>
                     <strong>{statusLabel(link.status)}</strong>
                     {link.status === 'active' && <a href={link.url} target="_blank" rel="noreferrer" aria-label={presentation === 'simple' ? 'Mở website được chia sẻ' : `Mở ${name}`}>Mở</a>}
                     <button type="button" disabled={busy} aria-label={presentation === 'simple' ? 'Sao chép liên kết chia sẻ' : `Sao chép liên kết ${name}`} onClick={() => void copy(link)}>Sao chép</button>

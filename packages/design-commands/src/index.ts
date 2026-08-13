@@ -195,7 +195,7 @@ function applyOne(document: DesignDocument, command: DesignCommand): { inverse: 
       const parent = document.nodes[command.targetParentId]
       if (!node) return { code: 'node_not_found', path: 'nodeId', message: 'Node does not exist' }
       if (!parent) return { code: 'parent_not_found', path: 'targetParentId', message: 'Parent does not exist' }
-      if (node.children.length > 0) return { code: 'invalid_command', path: 'nodeId', message: 'Phase 0 contract duplicates leaf nodes only' }
+      if (node.children.length > 0) return { code: 'invalid_command', path: 'nodeId', message: 'Only leaf nodes can be duplicated with DUPLICATE_NODE' }
       if (document.nodes[command.newNodeId]) return { code: 'invalid_command', path: 'newNodeId', message: 'New node ID already exists' }
       if (!isAllowedChild(parent.type, node.type)) return { code: 'invalid_parent_child', path: 'targetParentId', message: 'Node cannot be duplicated into this parent' }
       const duplicate = { ...structuredClone(node), id: command.newNodeId, parentId: parent.id }
@@ -327,9 +327,13 @@ function applyOne(document: DesignDocument, command: DesignCommand): { inverse: 
       const page = v2.pages[index]!
       if (page.slug === '/') return { code: 'root_operation_forbidden', path: 'pageId', message: 'Home page cannot be removed' }
       if (v2.navigation.items.some(item => item.pageId === page.id)) return { code: 'document_invalid', path: 'pageId', message: 'Remove the page from navigation first' }
-      const linked = Object.values(v2.nodes).some(node => (
-        (node.type === 'button' || node.type === 'link') && 'pageId' in node.props && node.props.pageId === page.id
-      ))
+      const linked = Object.values(v2.nodes).some(node => {
+        if (node.type !== 'button' && node.type !== 'link') return false
+        if ('pageId' in node.props) return node.props.pageId === page.id
+        return 'action' in node.props
+          && node.props.action.type === 'internal_page'
+          && node.props.action.pageId === page.id
+      })
       if (linked) return { code: 'document_invalid', path: 'pageId', message: 'Remove internal links to the page first' }
       const nodes = pageSubtreeNodes(v2, page.rootNodeId)
       v2.pages.splice(index, 1)

@@ -43,8 +43,13 @@ test('prevents tenant enumeration and preserves stale-tab local work', async ({ 
   await Promise.all([openAdvancedEditor(pageA), openAdvancedEditor(pageB)])
 
   await pageA.getByRole('treeitem', { name: /^Tiêu đề: Biến ý tưởng thành website của riêng bạn/ }).click()
-  await pageA.getByLabel('Màu chữ', { exact: true }).fill('#112233')
-  await expect(pageA.getByText('Đã lưu')).toBeVisible()
+  await pageA.getByLabel('Tùy chỉnh màu chữ').fill('#112233')
+  await expect.poll(async () => {
+    const response = await pageA.request.get(
+      `/api/v1/projects/${projectId}/document?workspaceId=${workspaceId}`,
+    )
+    return (await response.json()).data.document.nodes['heading-1'].style.color as string
+  }).toBe('#112233')
 
   await pageB.getByRole('treeitem', { name: /^Tiêu đề: Biến ý tưởng thành website của riêng bạn/ }).click()
   await pageB.getByRole('textbox', { name: 'Nội dung', exact: true }).fill('Stale local heading')

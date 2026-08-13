@@ -14,8 +14,38 @@ const revisionId = '33333333-3333-4333-8333-333333333333'
 const userId = '44444444-4444-4444-8444-444444444444'
 const shareLinkId = '55555555-5555-4555-8555-555555555555'
 const requestId = '66666666-6666-4666-8666-666666666666'
+const bindingId = '77777777-7777-4777-8777-777777777777'
+const leadId = '88888888-8888-4888-8888-888888888888'
 const slug = 'A'.repeat(32)
 const now = new Date('2026-07-22T12:00:00.000Z')
+
+function withLeadForm() {
+  const document = createValidDesignFixture()
+  document.nodes['lead-form-1'] = {
+    id: 'lead-form-1',
+    type: 'lead-form',
+    parentId: 'container-1',
+    children: [],
+    props: {
+      title: 'Nhận tư vấn',
+      description: 'Để lại email để được liên hệ.',
+      submitLabel: 'Gửi thông tin',
+      successCopy: 'Cảm ơn bạn. Chúng tôi sẽ liên hệ lại.',
+      fields: [
+        {
+          key: 'email',
+          type: 'email',
+          label: 'Email',
+          required: true,
+        },
+      ],
+    },
+    style: {},
+    responsive: {},
+  }
+  document.nodes['container-1']!.children.push('lead-form-1')
+  return document
+}
 
 function record(status: 'active' | 'disabled' | 'expired' = 'active') {
   return {
@@ -32,6 +62,10 @@ function managementDependencies(overrides: Record<string, unknown> = {}) {
     findById: vi.fn().mockResolvedValue(record()),
     disable: vi.fn().mockResolvedValue(record('disabled')),
   }
+  const leads = {
+    provisionBindings: vi.fn().mockResolvedValue({ bindings: [] }),
+    listBindings: vi.fn().mockResolvedValue([]),
+  }
   return {
     trustedOrigin: 'http://localhost:3000',
     shareOrigin: 'http://127.0.0.1:3000',
@@ -41,6 +75,7 @@ function managementDependencies(overrides: Record<string, unknown> = {}) {
     admission: { acquire: () => Promise.resolve({ accepted: true as const }) },
     createSlug: vi.fn(() => slug),
     links,
+    leads,
     ...overrides,
   }
 }
@@ -66,6 +101,52 @@ describe('share management API', () => {
     await expect(response.json()).resolves.toEqual({ data: expect.objectContaining({
       id: shareLinkId, revisionId, url: `http://127.0.0.1:3000/s/${slug}`, status: 'active',
     }) })
+  })
+
+  it('provisions immutable Lead Form bindings before exposing the managed Share', async () => {
+    const deps = managementDependencies({
+      leads: {
+        listBindings: vi.fn().mockResolvedValue([]),
+        provisionBindings: vi.fn().mockResolvedValue({
+          bindings: [{
+            id: bindingId,
+            shareLinkId,
+            revisionId,
+            formNodeId: 'lead-form-1',
+            pageRoute: '/',
+            formTitle: 'Nhận tư vấn',
+            status: 'active' as const,
+          }],
+        }),
+      },
+    })
+    const response = await createShareHandlers(deps).POST(
+      createRequest(),
+      { params: Promise.resolve({ projectId }) },
+    )
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      data: { leadFormsLive: true },
+    })
+    expect(deps.leads.provisionBindings).toHaveBeenCalledWith(
+      { userId, workspaceId },
+      projectId,
+      shareLinkId,
+    )
+
+    const failed = await createShareHandlers(managementDependencies({
+      leads: {
+        provisionBindings: vi.fn().mockRejectedValue(
+          new Error('binding_unavailable'),
+        ),
+        listBindings: vi.fn().mockResolvedValue([]),
+      },
+    })).POST(createRequest(), { params: Promise.resolve({ projectId }) })
+    expect(failed.status).toBe(503)
+    await expect(failed.json()).resolves.toMatchObject({
+      error: { code: 'share_form_unavailable' },
+    })
   })
 
   it('lists and disables links without exposing tenant or project metadata', async () => {
@@ -130,15 +211,108 @@ describe('share management API', () => {
 })
 
 describe('public share route', () => {
+  function publicView(
+    document = createValidDesignFixture(),
+    bindings: Array<{
+      id: string
+      shareLinkId: string
+      revisionId: string
+      formNodeId: string
+      pageRoute: string
+      formTitle: string
+      status: 'active' | 'disabled'
+    }> = [],
+  ) {
+    return {
+      workspaceId,
+      projectId,
+      shareLinkId,
+      revisionId,
+      document,
+      bindings,
+    }
+  }
+
+  function liveBinding() {
+    return {
+      bindingId,
+      workspaceId,
+      projectId,
+      shareLinkId,
+      revisionId,
+      formNodeId: 'lead-form-1',
+      pageRoute: '/',
+      form: withLeadForm().nodes['lead-form-1']!.props,
+    }
+  }
+
   function dependencies(overrides: Record<string, unknown> = {}) {
+    const leads = {
+      resolvePublicBinding: vi.fn().mockResolvedValue(liveBinding()),
+      appendEncrypted: vi.fn().mockResolvedValue({
+        created: true,
+        lead: {
+          id: leadId,
+          status: 'new' as const,
+          version: 1,
+          formTitle: 'Nhận tư vấn',
+          receivedAt: now,
+          expiresAt: new Date('2026-10-20T12:00:00.000Z'),
+          contactedAt: null,
+        },
+      }),
+    }
+    const leadAdmission = {
+      acquire: vi.fn().mockResolvedValue({ accepted: true as const }),
+      release: vi.fn().mockResolvedValue(undefined),
+    }
+    const leadKeyring = {
+      encrypt: vi.fn().mockReturnValue({
+        ciphertext: 'encrypted',
+        iv: 'initialization-vector',
+        authTag: 'authentication-tag',
+        keyVersion: 1,
+      }),
+      decrypt: vi.fn(),
+      activeKeyVersion: 1,
+    }
     return {
       shareOrigin: 'http://127.0.0.1:3000',
       assetOrigin: 'https://assets.example.com',
       remoteImageHostAllowlist: 'images.example.com',
+      createRequestId: () => requestId,
+      createLeadId: () => leadId,
+      now: () => now,
       admission: { acquire: () => Promise.resolve({ accepted: true as const }) },
-      links: { findPublicBySlug: vi.fn().mockResolvedValue({ document: createValidDesignFixture() }) },
+      leadAdmission,
+      leadKeyring,
+      leads,
+      links: { findPublicBySlug: vi.fn().mockResolvedValue(publicView()) },
       ...overrides,
     }
+  }
+
+  function submissionRequest(input: {
+    origin?: string
+    body?: URLSearchParams
+    contentType?: string
+  } = {}) {
+    const body = input.body ?? new URLSearchParams({
+      __zenui_request_id: requestId,
+      __zenui_form_node_id: 'lead-form-1',
+      __zenui_page_route: '/',
+      email: 'visitor@example.test',
+    })
+    return new Request(`http://127.0.0.1:3000/s/${slug}`, {
+      method: 'POST',
+      headers: {
+        origin: input.origin ?? 'http://127.0.0.1:3000',
+        'content-type': input.contentType
+          ?? 'application/x-www-form-urlencoded',
+        'x-forwarded-for': '203.0.113.10',
+      },
+      body,
+    })
   }
 
   it('renders safe immutable HTML only on the share host', async () => {
@@ -156,6 +330,195 @@ describe('public share route', () => {
     expect(html).not.toMatch(/<script|\son\w+=/i)
   })
 
+  it('activates only provisioned immutable Lead Forms on managed Share', async () => {
+    const document = withLeadForm()
+    const live = await createPublicShareHandler(dependencies({
+      links: {
+        findPublicBySlug: () => Promise.resolve(publicView(
+          document,
+          [{
+            id: bindingId,
+            shareLinkId,
+            revisionId,
+            formNodeId: 'lead-form-1',
+            pageRoute: '/',
+            formTitle: 'Nhận tư vấn',
+            status: 'active',
+          }],
+        )),
+      },
+    }))(
+      new Request(`http://127.0.0.1:3000/s/${slug}`),
+      { params: Promise.resolve({ slug }) },
+    )
+
+    expect(live.status).toBe(200)
+    expect(live.headers.get('referrer-policy')).toBe('same-origin')
+    expect(live.headers.get('content-security-policy')).toContain(
+      'form-action http://127.0.0.1:3000',
+    )
+    const liveHtml = await live.text()
+    expect(liveHtml).toContain(
+      `action="http://127.0.0.1:3000/s/${slug}" method="post"`,
+    )
+    expect(liveHtml).toContain(
+      `name="__zenui_request_id" type="hidden" value="${requestId}"`,
+    )
+    expect(liveHtml).not.toContain(projectId)
+    expect(liveHtml).not.toContain(workspaceId)
+    expect(liveHtml).not.toContain(bindingId)
+
+    const visualOnly = await createPublicShareHandler(dependencies({
+      links: {
+        findPublicBySlug: () => Promise.resolve(publicView(document)),
+      },
+    }))(
+      new Request(`http://127.0.0.1:3000/s/${slug}`),
+      { params: Promise.resolve({ slug }) },
+    )
+    expect(visualOnly.status).toBe(200)
+    expect(await visualOnly.text()).not.toMatch(
+      /<form[^>]+(?:action|method)=/i,
+    )
+  })
+
+  it('commits an encrypted validated submission before returning a safe receipt redirect', async () => {
+    const deps = dependencies()
+    const handlers = createPublicShareHandler(deps)
+    const response = await handlers.POST(
+      submissionRequest(),
+      { params: Promise.resolve({ slug }) },
+    )
+
+    expect(response.status).toBe(303)
+    expect(response.headers.get('location')).toBe(
+      `/s/${slug}/__zenui/receipt`,
+    )
+    expect(response.headers.get('cache-control')).toBe(
+      'no-store, max-age=0',
+    )
+    expect(deps.leadAdmission.acquire).toHaveBeenCalledWith({
+      publicationId: bindingId,
+      fingerprint: '203.0.113.10',
+      reservationId: requestId,
+    })
+    expect(deps.leadKeyring.encrypt).toHaveBeenCalledWith(
+      {
+        formTitle: 'Nhận tư vấn',
+        fields: [{
+          key: 'email',
+          type: 'email',
+          label: 'Email',
+          value: 'visitor@example.test',
+        }],
+      },
+      {
+        workspaceId,
+        projectId,
+        shareLinkId,
+        revisionId,
+        formNodeId: 'lead-form-1',
+        leadId,
+      },
+    )
+    expect(deps.leads.appendEncrypted).toHaveBeenCalledWith({
+      bindingId,
+      leadId,
+      requestId,
+      envelope: {
+        ciphertext: 'encrypted',
+        iv: 'initialization-vector',
+        authTag: 'authentication-tag',
+        keyVersion: 1,
+      },
+      receivedAt: now,
+    })
+    expect(deps.leadAdmission.release).not.toHaveBeenCalled()
+    expect(await response.text()).toBe('')
+  })
+
+  it('releases admission when persistence fails and never returns a receipt early', async () => {
+    const appendEncrypted = vi.fn().mockRejectedValue(
+      new Error('database unavailable'),
+    )
+    const deps = dependencies({
+      leads: {
+        resolvePublicBinding: vi.fn().mockResolvedValue(liveBinding()),
+        appendEncrypted,
+      },
+    })
+    const response = await createPublicShareHandler(deps).POST(
+      submissionRequest(),
+      { params: Promise.resolve({ slug }) },
+    )
+
+    expect(response.status).toBe(503)
+    expect(response.headers.get('location')).toBeNull()
+    expect(deps.leadAdmission.release).toHaveBeenCalledWith({
+      publicationId: bindingId,
+      fingerprint: '203.0.113.10',
+      reservationId: requestId,
+    })
+    const body = await response.text()
+    expect(body).not.toContain('visitor@example.test')
+    expect(body).not.toContain('database unavailable')
+  })
+
+  it('rejects wrong origin, content type and immutable field mismatch before persistence', async () => {
+    const deps = dependencies()
+    const handlers = createPublicShareHandler(deps)
+    const route = { params: Promise.resolve({ slug }) }
+
+    const wrongOrigin = await handlers.POST(
+      submissionRequest({ origin: 'https://evil.example.test' }),
+      route,
+    )
+    const wrongContentType = await handlers.POST(
+      submissionRequest({ contentType: 'text/plain' }),
+      route,
+    )
+    const mismatched = await handlers.POST(
+      submissionRequest({
+        body: new URLSearchParams({
+          __zenui_request_id: requestId,
+          __zenui_form_node_id: 'lead-form-1',
+          __zenui_page_route: '/',
+          unexpected: 'do-not-store',
+        }),
+      }),
+      route,
+    )
+
+    expect(wrongOrigin.status).toBe(403)
+    expect(wrongContentType.status).toBe(415)
+    expect(mismatched.status).toBe(422)
+    expect(deps.leadKeyring.encrypt).not.toHaveBeenCalled()
+    expect(deps.leads.appendEncrypted).not.toHaveBeenCalled()
+  })
+
+  it('serves a no-script receipt without echoing visitor PII', async () => {
+    const response = await createPublicShareHandler(dependencies()).GET(
+      new Request(
+        `http://127.0.0.1:3000/s/${slug}/__zenui/receipt`,
+      ),
+      {
+        params: Promise.resolve({
+          slug,
+          path: ['__zenui', 'receipt'],
+        }),
+      },
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-security-policy')).toContain(
+      "script-src 'none'",
+    )
+    const html = await response.text()
+    expect(html).toContain('Đã nhận thông tin')
+    expect(html).not.toContain('visitor@example.test')
+    expect(html).not.toMatch(/<script|\son\w+=/i)
+  })
+
   it('serves validated immutable deep routes and prefixes internal links', async () => {
     const document = migrateDesignDocumentV1ToV2(createValidDesignFixture())
     document.nodes['about-root'] = { id: 'about-root', type: 'page', parentId: null, children: ['about-section'], props: {}, style: {}, responsive: {} }
@@ -163,7 +526,7 @@ describe('public share route', () => {
     document.nodes['about-heading'] = { id: 'about-heading', type: 'heading', parentId: 'about-section', children: [], props: { text: 'About ZenUI', level: 1 }, style: {}, responsive: {} }
     document.pages.push({ id: 'about', name: 'About', slug: '/about', rootNodeId: 'about-root' })
     document.nodes['button-1']!.props = { text: 'About', pageId: 'about' }
-    const handler = createPublicShareHandler(dependencies({ links: { findPublicBySlug: () => Promise.resolve({ document }) } }))
+    const handler = createPublicShareHandler(dependencies({ links: { findPublicBySlug: () => Promise.resolve(publicView(document)) } }))
 
     const home = await handler(new Request(`http://127.0.0.1:3000/s/${slug}`), { params: Promise.resolve({ slug, path: [] }) })
     const about = await handler(new Request(`http://127.0.0.1:3000/s/${slug}/about`), { params: Promise.resolve({ slug, path: ['about'] }) })
@@ -182,7 +545,7 @@ describe('public share route', () => {
       assetId: '77777777-7777-4777-8777-777777777777', alt: 'Product dashboard', decorative: false,
     }
     const response = await createPublicShareHandler(dependencies({
-      links: { findPublicBySlug: () => Promise.resolve({ document }) },
+      links: { findPublicBySlug: () => Promise.resolve(publicView(document)) },
     }))(new Request(`http://127.0.0.1:3000/s/${slug}`), { params: Promise.resolve({ slug }) })
 
     expect(response.status).toBe(200)
@@ -213,14 +576,14 @@ describe('public share route', () => {
     const denied = createValidDesignFixture()
     denied.nodes['image-1']!.props = { src: 'https://evil.example.test/hero.png', alt: 'Denied' }
     const deniedResponse = await createPublicShareHandler(dependencies({
-      links: { findPublicBySlug: () => Promise.resolve({ document: denied }) },
+      links: { findPublicBySlug: () => Promise.resolve(publicView(denied)) },
     }))(new Request(`http://127.0.0.1:3000/s/${slug}`), { params: Promise.resolve({ slug }) })
     expect(deniedResponse.status).toBe(500)
 
     const invalid = createValidDesignFixture()
     invalid.nodes['image-1']!.props = { src: 'javascript:alert(1)', alt: 'Unsafe' }
     const invalidResponse = await createPublicShareHandler(dependencies({
-      links: { findPublicBySlug: () => Promise.resolve({ document: invalid }) },
+      links: { findPublicBySlug: () => Promise.resolve(publicView(invalid)) },
     }))(new Request(`http://127.0.0.1:3000/s/${slug}`), { params: Promise.resolve({ slug }) })
     expect(invalidResponse.status).toBe(500)
     expect(await invalidResponse.text()).toBe('Không thể hiển thị trang')

@@ -11,6 +11,7 @@ import {
   designDirectionRunStatusSchema,
   guidedDesignSystemWarnings,
   materializeDesignDirections,
+  normalizeWebsiteBrief,
   prefillWebsiteBrief,
   resolveDesignDirectionPresetIds,
   runDesignDirectionGeneration,
@@ -176,12 +177,34 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     expect(result.offer).toContain('NovaFlow')
     expect(result.primaryGoal).toContain('nhận lịch tư vấn')
     expect(result.cta).toBe('Đặt lịch tư vấn')
+    expect(result.conversionGoal).toEqual({ type: 'lead_form' })
     expect(result.mustHaveSections).toContain('introduction')
     expect(result.mustHaveSections).toContain('contact')
     expect({ ...result, offer: 'Nội dung người dùng sửa trực tiếp' }).toMatchObject({ offer: 'Nội dung người dùng sửa trực tiếp' })
   })
 
-  it('keeps provider content schema bounded and free of visual or document-tree control', () => {
+  it('normalizes optional conversion intent without breaking legacy briefs', () => {
+    expect(normalizeWebsiteBrief(vietnameseBrief)).toMatchObject({
+      conversionGoal: { type: 'lead_form' },
+      designSystem: { mode: 'zenui' },
+    })
+    expect(websiteBriefSchema.safeParse({
+      ...vietnameseBrief,
+      conversionGoal: { type: 'internal_page' },
+    }).success).toBe(true)
+    for (const forbidden of [
+      { type: 'lead_form', recipient: 'sales@example.com' },
+      { type: 'lead_form', endpoint: 'https://example.com/leads' },
+      { type: 'lead_form', publicationId: crypto.randomUUID() },
+      { type: 'lead_form', secret: 'provider-owned-secret' },
+      { type: 'lead_form', formNodeId: 'provider-form-id' },
+      { type: 'lead_form', fields: [{ key: 'unsafe' }] },
+    ]) {
+      expect(websiteBriefSchema.safeParse({ ...vietnameseBrief, conversionGoal: forbidden }).success).toBe(false)
+    }
+  })
+
+  it('keeps provider content schema bounded and free of visual, operational or document-tree control', () => {
     const schema = JSON.stringify(designDirectionContentBlueprintJsonSchema)
 
     expect(designDirectionContentBlueprintSchema.safeParse(content('vi')).success).toBe(true)
@@ -204,7 +227,7 @@ describe('Stage 5 guided brief and design direction contracts', () => {
         slot: 'feature-4', query: 'extra unbounded image', alt: 'Ảnh vượt giới hạn',
       }],
     }).success).toBe(false)
-    expect(schema).not.toMatch(/themePreset|mood|density|navbarVariant|heroVariant|featuresVariant|nodeId|parentId|nodes|rawCss|javascript|providerResultId|assetId/i)
+    expect(schema).not.toMatch(/themePreset|mood|density|navbarVariant|heroVariant|featuresVariant|nodeId|parentId|nodes|rawCss|javascript|providerResultId|assetId|recipient|endpoint|publication|secret/i)
     expect(schema.length).toBeLessThan(21_000)
   })
 
@@ -288,6 +311,62 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     }
     const serialized = JSON.stringify(result.directions)
     expect(serialized).toContain(language === 'vi' ? 'Lập kế hoạch' : 'Build a course')
+  })
+
+  it('preserves one server-owned Lead Form conversion across all three design directions', () => {
+    const brief: WebsiteBrief = {
+      ...vietnameseBrief,
+      conversionGoal: { type: 'lead_form' },
+    }
+    const first = materializeDesignDirections({
+      brief,
+      blueprint: content('vi'),
+      plannedPresetIds,
+      current: createValidDesignFixture(),
+      round: 0,
+    })
+    const repeated = materializeDesignDirections({
+      brief,
+      blueprint: content('vi'),
+      plannedPresetIds,
+      current: createValidDesignFixture(),
+      round: 0,
+    })
+
+    expect(first).toEqual(repeated)
+    expect(first.accepted).toBe(true)
+    if (!first.accepted) return
+    for (const direction of first.directions) {
+      const forms = Object.values(direction.document.nodes).filter(node => node.type === 'lead-form')
+      expect(forms).toHaveLength(1)
+      expect(forms[0]).toMatchObject({ id: 'lead-form-1', type: 'lead-form', children: [] })
+      for (const ctaId of ['navbar-cta', 'hero-primary-cta', 'final-primary-cta']) {
+        expect(direction.document.nodes[ctaId]?.props).toMatchObject({
+          text: brief.cta,
+          action: { type: 'lead_form', formNodeId: 'lead-form-1' },
+        })
+      }
+    }
+  })
+
+  it('keeps bounded conversion intent in the provider request without operational authority', async () => {
+    const generateContentBlueprint = vi.fn().mockResolvedValue({
+      output: generationPlan('vi'),
+      usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+    })
+    const result = await runDesignDirectionGeneration({
+      provider: { name: 'mock', model: 'mock-v1', generateContentBlueprint },
+      brief: { ...vietnameseBrief, conversionGoal: { type: 'lead_form' } },
+      current: createValidDesignFixture(),
+      round: 0,
+    })
+
+    expect(result.accepted).toBe(true)
+    expect(generateContentBlueprint).toHaveBeenCalledWith(expect.objectContaining({
+      brief: expect.objectContaining({ conversionGoal: { type: 'lead_form' } }),
+    }))
+    const providerBrief = generateContentBlueprint.mock.calls[0]?.[0].brief
+    expect(JSON.stringify(providerBrief)).not.toMatch(/recipient|endpoint|publication|secret|nodeId|formNodeId|fields/i)
   })
 
   it('deterministically repairs recent or overly similar plans into three diverse catalog presets', () => {

@@ -5,18 +5,20 @@ import LoginPage from '../app/login/page'
 import HomePage from '../app/page'
 import ProviderCallbackErrorPage from '../app/provider-callback-error/page'
 import { safeAuthCallbackPath } from '../lib/server/auth-navigation'
-import { isLocalAuthRuntimeEnabled } from '../lib/server/e2e-runtime'
+import { isGitHubAuthConfigured, isLocalAuthRuntimeEnabled } from '../lib/server/e2e-runtime'
 
 vi.mock('../lib/server/configured-auth', () => ({
   createConfiguredAuth: vi.fn(() => ({ signIn: vi.fn() })),
 }))
 
 vi.mock('../lib/server/e2e-runtime', () => ({
+  isGitHubAuthConfigured: vi.fn(),
   isLocalAuthRuntimeEnabled: vi.fn(),
 }))
 
 afterEach(() => {
   cleanup()
+  vi.mocked(isGitHubAuthConfigured).mockReset()
   vi.mocked(isLocalAuthRuntimeEnabled).mockReset()
 })
 
@@ -45,8 +47,9 @@ describe('public access surfaces', () => {
     expect(document.body).not.toHaveTextContent('icfg_test')
   })
 
-  it('renders private-beta GitHub login outside guarded local mode', async () => {
+  it('renders private-beta GitHub login only when the provider is configured', async () => {
     vi.mocked(isLocalAuthRuntimeEnabled).mockReturnValue(false)
+    vi.mocked(isGitHubAuthConfigured).mockReturnValue(true)
 
     render(await LoginPage({ searchParams: Promise.resolve({ callbackUrl: '/dashboard' }) }))
 
@@ -56,8 +59,20 @@ describe('public access surfaces', () => {
     expect(screen.getByRole('link', { name: 'Yêu cầu quyền truy cập beta' })).toHaveAttribute('href', '/beta')
   })
 
+  it('keeps GitHub locked when the provider is not configured', async () => {
+    vi.mocked(isLocalAuthRuntimeEnabled).mockReturnValue(false)
+    vi.mocked(isGitHubAuthConfigured).mockReturnValue(false)
+
+    render(await LoginPage({ searchParams: Promise.resolve({ callbackUrl: '/dashboard' }) }))
+
+    expect(screen.queryByRole('button', { name: 'Tiếp tục với GitHub' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Tiếp tục với tài khoản local' })).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Đăng nhập GitHub chưa được kích hoạt')
+  })
+
   it('renders one-click local login only in guarded local mode', async () => {
     vi.mocked(isLocalAuthRuntimeEnabled).mockReturnValue(true)
+    vi.mocked(isGitHubAuthConfigured).mockReturnValue(false)
 
     render(await LoginPage({ searchParams: Promise.resolve({ callbackUrl: '/projects/55555555-5555-4555-8555-555555555555' }) }))
 

@@ -57,7 +57,10 @@ interface GuidedOnboardingProps {
   }) => void
 }
 
-type GuidedBrief = WebsiteBrief & { designSystem: NonNullable<WebsiteBrief['designSystem']> }
+type GuidedBrief = WebsiteBrief & {
+  conversionGoal: NonNullable<WebsiteBrief['conversionGoal']>
+  designSystem: NonNullable<WebsiteBrief['designSystem']>
+}
 
 const emptyBrief: GuidedBrief = {
   description: '',
@@ -67,6 +70,7 @@ const emptyBrief: GuidedBrief = {
   cta: '',
   tone: '',
   brandDetails: '',
+  conversionGoal: { type: 'lead_form' },
   designSystem: { mode: 'zenui' },
   mustHaveSections: ['introduction', 'benefits', 'contact'],
 }
@@ -84,7 +88,7 @@ const customDesignSystem: CustomDesignSystem = {
   radius: 'balanced',
 }
 
-const fieldLabels: Record<Exclude<keyof WebsiteBrief, 'description' | 'mustHaveSections' | 'designSystem'>, string> = {
+const fieldLabels: Record<Exclude<keyof WebsiteBrief, 'description' | 'mustHaveSections' | 'conversionGoal' | 'designSystem'>, string> = {
   offer: 'Bạn cung cấp sản phẩm hoặc dịch vụ gì?',
   audience: 'Website này dành cho ai?',
   primaryGoal: 'Website này cần đạt được điều gì?',
@@ -246,7 +250,7 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [preview])
 
-  const update = <Field extends Exclude<keyof WebsiteBrief, 'designSystem' | 'mustHaveSections'>>(field: Field, value: WebsiteBrief[Field]) => {
+  const update = <Field extends Exclude<keyof WebsiteBrief, 'conversionGoal' | 'designSystem' | 'mustHaveSections'>>(field: Field, value: WebsiteBrief[Field]) => {
     setBrief(current => ({ ...current, [field]: value }))
     setErrors(current => ({ ...current, [field]: undefined }))
   }
@@ -293,7 +297,12 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
   }
   const useDescription = () => {
     const values = prefillWebsiteBrief(brief.description)
-    setBrief(current => ({ ...current, ...values, designSystem: current.designSystem }))
+    setBrief(current => ({
+      ...current,
+      ...values,
+      conversionGoal: current.conversionGoal,
+      designSystem: current.designSystem,
+    }))
     setErrors({})
   }
 
@@ -381,12 +390,13 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
           <div className="ai-input-wrapper">
             <label htmlFor="ai-desc">Mô tả doanh nghiệp hoặc ý tưởng</label>
             <div className="textarea-container">
-              <textarea id="ai-desc" aria-label="Mô tả doanh nghiệp hoặc ý tưởng" placeholder="Ví dụ: Một trang web bán cà phê rang xay tự nhiên, có phong cách vintage..." value={brief.description} maxLength={2000} rows={4} onChange={event => update('description', event.target.value)} />
+              <textarea id="ai-desc" aria-label="Mô tả doanh nghiệp hoặc ý tưởng" aria-invalid={Boolean(errors.description)} aria-describedby={errors.description ? 'description-error' : undefined} placeholder="Ví dụ: Một trang web bán cà phê rang xay tự nhiên, có phong cách vintage..." value={brief.description} maxLength={2000} rows={4} onChange={event => update('description', event.target.value)} />
               <button className="btn-ai-generate" type="button" onClick={useDescription} disabled={!brief.description.trim()}>
                 <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l2.4 5.6L20 10l-5.6 2.4L12 18l-2.4-5.6L4 10l5.6-2.4L12 2z"/></svg>
                 Tạo tự động
               </button>
             </div>
+            {errors.description && <span id="description-error" className="guided-field-error">{errors.description}</span>}
           </div>
         </section>
         <form className="guided-brief-card pro-card" onSubmit={(event: FormEvent) => { event.preventDefault(); void start(0, false) }}>
@@ -407,6 +417,28 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
               </label>
             ))}
           </div>
+          <fieldset className="guided-conversion-choice">
+            <legend>Hành động chuyển đổi chính</legend>
+            <p>Chọn cách khách truy cập hoàn thành mục tiêu chính của website.</p>
+            <label>
+              <input
+                type="radio"
+                name="conversion-goal"
+                checked={brief.conversionGoal.type === 'lead_form'}
+                onChange={() => setBrief(current => ({ ...current, conversionGoal: { type: 'lead_form' } }))}
+              />
+              Thu thập nhu cầu bằng biểu mẫu
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="conversion-goal"
+                checked={brief.conversionGoal.type === 'internal_page'}
+                onChange={() => setBrief(current => ({ ...current, conversionGoal: { type: 'internal_page' } }))}
+              />
+              Điều hướng tới nội dung trong website
+            </label>
+          </fieldset>
           <fieldset className="guided-design-system-choice">
             <legend>Thiết kế website</legend>
             <p>Chọn để ZenUI đề xuất giao diện hoặc dùng quy chuẩn thương hiệu của bạn ngay từ khi tạo website.</p>

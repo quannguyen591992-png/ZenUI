@@ -3,6 +3,17 @@ import { randomBytes } from 'node:crypto'
 import { createRemoteImagePolicy, normalizePageSlug } from '@zenui/design-schema'
 import { compileStandaloneHtml } from '@zenui/html-compiler'
 import {
+  LEAD_LIMITS,
+  validateLeadSubmission,
+  type LeadFormProps,
+  type LeadPayload,
+} from '@zenui/lead-core'
+import {
+  renderLeadReceiptHtml,
+  type EncryptedLeadPayload,
+  type LeadEncryptionContext,
+} from '@zenui/lead-core/server'
+import {
   SHARE_ROBOTS_POLICY,
   SHARE_SLUG_BYTES,
   shareCreateRequestSchema,
@@ -16,7 +27,11 @@ import { ApiError, errorResponse, parseJsonBody, successResponse } from './api'
 import { hasWorkspacePermission, type WorkspaceMembership } from './authorization'
 
 import type { ProjectApiRecord } from './project-api'
-import type { AuthContext, ShareLinkRecord } from '@zenui/database'
+import type {
+  AuthContext,
+  LeadBindingRecord,
+  ShareLinkRecord,
+} from '@zenui/database'
 import type { DesignDocument } from '@zenui/design-schema'
 
 interface ManagementAdmission {
@@ -39,6 +54,18 @@ export interface ShareApiDependencies {
   findProject(context: AuthContext, projectId: string): Promise<ProjectApiRecord | null>
   admission: ManagementAdmission
   createSlug(): string
+  leads: {
+    provisionBindings(
+      context: AuthContext,
+      projectId: string,
+      shareLinkId: string,
+    ): Promise<{ bindings: LeadBindingRecord[] }>
+    listBindings(
+      context: AuthContext,
+      projectId: string,
+      shareLinkId: string,
+    ): Promise<LeadBindingRecord[]>
+  }
   links: {
     create(context: AuthContext, projectId: string, input: {
       requestId: string
@@ -52,12 +79,77 @@ export interface ShareApiDependencies {
   }
 }
 
+interface PublicShareView {
+  workspaceId: string
+  projectId: string
+  shareLinkId: string
+  revisionId: string
+  document: DesignDocument
+  bindings: LeadBindingRecord[]
+}
+
+interface PublicLeadBinding {
+  bindingId: string
+  workspaceId: string
+  projectId: string
+  shareLinkId: string
+  revisionId: string
+  formNodeId: string
+  pageRoute: string
+  form: LeadFormProps
+}
+
+interface LeadAdmission {
+  acquire(input: {
+    publicationId: string
+    fingerprint: string
+    reservationId: string
+  }): Promise<
+    { accepted: true }
+    | { accepted: false; retryAfterSeconds: number }
+  >
+  release(input: {
+    publicationId: string
+    fingerprint: string
+    reservationId: string
+  }): Promise<void>
+}
+
+interface LeadKeyring {
+  activeKeyVersion: number
+  encrypt(
+    payload: LeadPayload,
+    context: LeadEncryptionContext,
+  ): EncryptedLeadPayload
+}
+
 export interface PublicShareDependencies {
   shareOrigin: string
   assetOrigin: string
   remoteImageHostAllowlist: string
+  createRequestId(): string
+  createLeadId(): string
+  now(): Date
   admission: PublicAdmission
-  links: { findPublicBySlug(slug: string): Promise<{ document: DesignDocument } | null> }
+  leadAdmission: LeadAdmission
+  leadKeyring: LeadKeyring
+  leads: {
+    resolvePublicBinding(
+      slug: string,
+      pageRoute: string,
+      formNodeId: string,
+    ): Promise<PublicLeadBinding | null>
+    appendEncrypted(input: {
+      bindingId: string
+      leadId: string
+      requestId: string
+      envelope: EncryptedLeadPayload
+      receivedAt: Date
+    }): Promise<unknown>
+  }
+  links: {
+    findPublicBySlug(slug: string): Promise<PublicShareView | null>
+  }
 }
 
 export function createRandomShareSlug(): string {
@@ -106,7 +198,11 @@ function workspaceFrom(request: Request): string {
   return parsed.data
 }
 
-function publicLink(link: ShareLinkRecord, shareOrigin: string) {
+function publicLink(
+  link: ShareLinkRecord,
+  shareOrigin: string,
+  leadFormsLive: boolean,
+) {
   return shareLinkPublicSchema.parse({
     id: link.id,
     revisionId: link.revisionId,
@@ -115,6 +211,7 @@ function publicLink(link: ShareLinkRecord, shareOrigin: string) {
     expiresAt: link.expiresAt?.toISOString() ?? null,
     createdAt: link.createdAt.toISOString(),
     updatedAt: link.updatedAt.toISOString(),
+    leadFormsLive,
   })
 }
 
@@ -149,7 +246,19 @@ export function createShareHandlers(deps: ShareApiDependencies) {
         const { projectId } = await route.params
         if (!await deps.findProject(context, projectId)) throw new ApiError('not_found', 'Resource not found', 404)
         const links = await deps.links.list(context, projectId)
-        return successResponse(links.map(link => publicLink(link, deps.shareOrigin)))
+        const publicLinks = await Promise.all(links.map(async link => {
+          const bindings = await deps.leads.listBindings(
+            context,
+            projectId,
+            link.id,
+          )
+          return publicLink(
+            link,
+            deps.shareOrigin,
+            bindings.some(binding => binding.status === 'active'),
+          )
+        }))
+        return successResponse(publicLinks)
       } catch (error) { return errorResponse(error) }
     },
 
@@ -167,8 +276,31 @@ export function createShareHandlers(deps: ShareApiDependencies) {
             headers: { 'Retry-After': String(admission.retryAfterSeconds) },
           })
         }
-        const created = await createWithCollisionRetry(deps, context, projectId, parsed.data)
-        const result = publicLink(created.link, deps.shareOrigin)
+        const created = await createWithCollisionRetry(
+          deps,
+          context,
+          projectId,
+          parsed.data,
+        )
+        let bindings: LeadBindingRecord[]
+        try {
+          ({ bindings } = await deps.leads.provisionBindings(
+            context,
+            projectId,
+            created.link.id,
+          ))
+        } catch {
+          throw new ApiError(
+            'share_form_unavailable',
+            'The Share link could not activate its Lead Forms',
+            503,
+          )
+        }
+        const result = publicLink(
+          created.link,
+          deps.shareOrigin,
+          bindings.some(binding => binding.status === 'active'),
+        )
         return successResponse(result, {
           status: 201,
           headers: { Location: `/api/v1/projects/${projectId}/share-links/${created.link.id}` },
@@ -192,7 +324,7 @@ export function createShareHandlers(deps: ShareApiDependencies) {
         if (!await deps.findProject(context, projectId)) throw new ApiError('not_found', 'Resource not found', 404)
         const disabled = await deps.links.disable(context, projectId, shareLinkId)
         if (!disabled) throw new ApiError('not_found', 'Resource not found', 404)
-        return successResponse(publicLink(disabled, deps.shareOrigin))
+        return successResponse(publicLink(disabled, deps.shareOrigin, false))
       } catch (error) { return errorResponse(error) }
     },
   }
@@ -224,46 +356,217 @@ function clientFingerprint(request: Request): string {
     ?? 'unknown'
 }
 
-export function createPublicShareHandler(deps: PublicShareDependencies) {
-  const imagePolicy = createRemoteImagePolicy(deps.remoteImageHostAllowlist)
-  return async function GET(
-    request: Request,
-    route: { params: Promise<{ slug: string; path?: string[] }> },
-  ): Promise<Response> {
-    let expectedOrigin: string
-    try { expectedOrigin = new URL(deps.shareOrigin).origin } catch { return plainPublicResponse('Không tìm thấy', 404) }
+type PublicShareRoute = {
+  params: Promise<{ slug: string; path?: string[] }>
+}
+
+function exactPublicOrigin(
+  request: Request,
+  configuredOrigin: string,
+): string | null {
+  try {
+    const expected = new URL(configuredOrigin).origin
     const requestUrl = new URL(request.url)
     const host = request.headers.get('host')
-    const requestOrigin = host ? new URL(`${requestUrl.protocol}//${host}`).origin : requestUrl.origin
-    if (requestOrigin !== expectedOrigin) return plainPublicResponse('Không tìm thấy', 404)
-    const params = await route.params
-    const parsedSlug = shareSlugSchema.safeParse(params.slug)
-    if (!parsedSlug.success) return plainPublicResponse('Không tìm thấy', 404)
-    const rawPath = params.path ?? []
-    if (rawPath.some(segment => (
-      !segment
-      || segment === '.'
-      || segment === '..'
-      || /[%\\?#]/.test(segment)
-      || [...segment].some(character => character.charCodeAt(0) <= 0x1f)
-    ))) {
+    const actual = host
+      ? new URL(`${requestUrl.protocol}//${host}`).origin
+      : requestUrl.origin
+    return actual === expected ? expected : null
+  } catch {
+    return null
+  }
+}
+
+function pathIsSafe(path: string[]): boolean {
+  return !path.some(segment => (
+    !segment
+    || segment === '.'
+    || segment === '..'
+    || /[%\\?#]/.test(segment)
+    || [...segment].some(
+      character => character.charCodeAt(0) <= 0x1f,
+    )
+  ))
+}
+
+async function boundedFormBody(request: Request): Promise<string | null> {
+  const declaredLength = request.headers.get('content-length')
+  if (
+    declaredLength
+    && (
+      !/^\d+$/.test(declaredLength)
+      || Number(declaredLength) > LEAD_LIMITS.maxPayloadBytes
+    )
+  ) return null
+  if (!request.body) return ''
+
+  const reader = request.body.getReader()
+  const decoder = new TextDecoder()
+  let bytes = 0
+  let body = ''
+  while (true) {
+    const chunk = await reader.read()
+    if (chunk.done) break
+    bytes += chunk.value.byteLength
+    if (bytes > LEAD_LIMITS.maxPayloadBytes) {
+      await reader.cancel()
+      return null
+    }
+    body += decoder.decode(chunk.value, { stream: true })
+  }
+  return body + decoder.decode()
+}
+
+function submissionFromBody(body: string): {
+  requestId: string
+  formNodeId: string
+  pageRoute: string
+  fields: Record<string, string>
+  consent?: boolean
+} | null {
+  const parameters = new URLSearchParams(body)
+  const values = new Map<string, string>()
+  for (const [key, value] of parameters) {
+    if (values.has(key)) return null
+    values.set(key, value)
+  }
+  const requestId = values.get('__zenui_request_id')
+  const formNodeId = values.get('__zenui_form_node_id')
+  const pageRoute = values.get('__zenui_page_route')
+  if (!requestId || !formNodeId || !pageRoute) return null
+
+  const fields: Record<string, string> = {}
+  for (const [key, value] of values) {
+    if (key.startsWith('__zenui_') || key === 'consent') continue
+    fields[key] = value
+  }
+  return {
+    requestId,
+    formNodeId,
+    pageRoute,
+    fields,
+    ...(values.has('consent') ? { consent: true } : {}),
+  }
+}
+
+const receiptCsp = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'none'",
+  "script-src 'none'",
+  "style-src 'none'",
+  "img-src 'none'",
+  "font-src 'none'",
+  "connect-src 'none'",
+].join('; ')
+
+export function createPublicShareHandler(deps: PublicShareDependencies) {
+  const imagePolicy = createRemoteImagePolicy(
+    deps.remoteImageHostAllowlist,
+  )
+
+  const GET = async (
+    request: Request,
+    route: PublicShareRoute,
+  ): Promise<Response> => {
+    const expectedOrigin = exactPublicOrigin(
+      request,
+      deps.shareOrigin,
+    )
+    if (!expectedOrigin) {
       return plainPublicResponse('Không tìm thấy', 404)
     }
-    const routePath = rawPath.length === 0 ? '/' : `/${rawPath.join('/')}`
-    const normalizedRoute = normalizePageSlug(routePath)
-    if (!normalizedRoute.success || normalizedRoute.slug !== routePath) return plainPublicResponse('Không tìm thấy', 404)
-    const admission = await deps.admission.acquire({ slug: parsedSlug.data, fingerprint: clientFingerprint(request) })
-    if (!admission.accepted) return plainPublicResponse('Quá nhiều yêu cầu', 429, admission.retryAfterSeconds)
+    const params = await route.params
+    const parsedSlug = shareSlugSchema.safeParse(params.slug)
+    if (!parsedSlug.success) {
+      return plainPublicResponse('Không tìm thấy', 404)
+    }
+    const rawPath = params.path ?? []
+    if (!pathIsSafe(rawPath)) {
+      return plainPublicResponse('Không tìm thấy', 404)
+    }
+    const isReceipt = rawPath.length === 2
+      && rawPath[0] === '__zenui'
+      && rawPath[1] === 'receipt'
+    const routePath = rawPath.length === 0
+      ? '/'
+      : `/${rawPath.join('/')}`
+    const normalizedRoute = isReceipt
+      ? null
+      : normalizePageSlug(routePath)
+    if (
+      !isReceipt
+      && (
+        !normalizedRoute?.success
+        || normalizedRoute.slug !== routePath
+      )
+    ) return plainPublicResponse('Không tìm thấy', 404)
+
+    const fingerprint = clientFingerprint(request)
+    const admission = await deps.admission.acquire({
+      slug: parsedSlug.data,
+      fingerprint,
+    })
+    if (!admission.accepted) {
+      return plainPublicResponse(
+        'Quá nhiều yêu cầu',
+        429,
+        admission.retryAfterSeconds,
+      )
+    }
     try {
       const view = await deps.links.findPublicBySlug(parsedSlug.data)
       if (!view) return plainPublicResponse('Không tìm thấy', 404)
+      if (isReceipt) {
+        const html = renderLeadReceiptHtml({
+          successCopy: 'Thông tin của bạn đã được gửi thành công.',
+          returnPath: `/s/${parsedSlug.data}`,
+        })
+        return new Response(html, {
+          headers: {
+            ...publicHeaders,
+            'content-type': 'text/html; charset=utf-8',
+            'content-security-policy': receiptCsp,
+            'content-length': String(
+              Buffer.byteLength(html, 'utf8'),
+            ),
+          },
+        })
+      }
+
+      if (!normalizedRoute?.success) {
+        return plainPublicResponse('Không tìm thấy', 404)
+      }
+      const canonicalRoute = normalizedRoute.slug
+      const bindings = Object.fromEntries(
+        view.bindings
+          .filter(binding => (
+            binding.status === 'active'
+            && binding.pageRoute === canonicalRoute
+          ))
+          .map(binding => [binding.formNodeId, {
+            action: `${expectedOrigin}/s/${parsedSlug.data}`,
+            requestId: deps.createRequestId(),
+            pageRoute: binding.pageRoute,
+          }]),
+      )
       const compiled = compileStandaloneHtml(view.document, {
         title: 'Trang được chia sẻ từ ZenUI',
         robots: SHARE_ROBOTS_POLICY,
         imagePolicy,
         assetOrigin: deps.assetOrigin,
-        route: normalizedRoute.slug,
+        route: canonicalRoute,
         routePrefix: `/s/${parsedSlug.data}`,
+        ...(Object.keys(bindings).length > 0
+          ? {
+              liveLeadForms: {
+                origin: expectedOrigin,
+                bindings,
+              },
+            }
+          : {}),
       })
       if (!compiled.success) {
         return compiled.code === 'route_not_found'
@@ -273,6 +576,9 @@ export function createPublicShareHandler(deps: PublicShareDependencies) {
       return new Response(compiled.html, {
         headers: {
           ...publicHeaders,
+          ...(Object.keys(bindings).length > 0
+            ? { 'referrer-policy': 'same-origin' }
+            : {}),
           'content-type': 'text/html; charset=utf-8',
           'content-security-policy': compiled.csp,
           'content-length': String(compiled.bytes),
@@ -283,4 +589,121 @@ export function createPublicShareHandler(deps: PublicShareDependencies) {
       return plainPublicResponse('Không thể hiển thị trang', 500)
     }
   }
+
+  const POST = async (
+    request: Request,
+    route: PublicShareRoute,
+  ): Promise<Response> => {
+    const expectedOrigin = exactPublicOrigin(
+      request,
+      deps.shareOrigin,
+    )
+    if (!expectedOrigin) {
+      return plainPublicResponse('Không tìm thấy', 404)
+    }
+    const origin = request.headers.get('origin')
+    if (origin !== expectedOrigin) {
+      return plainPublicResponse('Yêu cầu không được phép', 403)
+    }
+    const rawContentType = request.headers.get('content-type')
+    const contentType = rawContentType
+      ? (rawContentType.split(';', 1)[0] ?? '')
+        .trim()
+        .toLowerCase()
+      : ''
+    if (contentType !== 'application/x-www-form-urlencoded') {
+      return plainPublicResponse('Loại nội dung không được hỗ trợ', 415)
+    }
+    const params = await route.params
+    const parsedSlug = shareSlugSchema.safeParse(params.slug)
+    if (!parsedSlug.success || (params.path?.length ?? 0) > 0) {
+      return plainPublicResponse('Không tìm thấy', 404)
+    }
+
+    let body: string | null
+    try {
+      body = await boundedFormBody(request)
+    } catch {
+      return plainPublicResponse('Yêu cầu không hợp lệ', 422)
+    }
+    if (body === null) {
+      return plainPublicResponse('Yêu cầu quá lớn', 413)
+    }
+    const submission = submissionFromBody(body)
+    if (!submission) {
+      return plainPublicResponse('Yêu cầu không hợp lệ', 422)
+    }
+
+    const binding = await deps.leads.resolvePublicBinding(
+      parsedSlug.data,
+      submission.pageRoute,
+      submission.formNodeId,
+    )
+    if (!binding) return plainPublicResponse('Không tìm thấy', 404)
+    const validation = validateLeadSubmission(
+      submission,
+      binding.form,
+    )
+    if (!validation.success) {
+      return plainPublicResponse('Thông tin không hợp lệ', 422)
+    }
+
+    const fingerprint = clientFingerprint(request)
+    const reservation = {
+      publicationId: binding.bindingId,
+      fingerprint,
+      reservationId: submission.requestId,
+    }
+    const admission = await deps.leadAdmission.acquire(reservation)
+    if (!admission.accepted) {
+      return plainPublicResponse(
+        'Quá nhiều yêu cầu',
+        429,
+        admission.retryAfterSeconds,
+      )
+    }
+
+    const leadId = deps.createLeadId()
+    const encryptionContext: LeadEncryptionContext = {
+      workspaceId: binding.workspaceId,
+      projectId: binding.projectId,
+      shareLinkId: binding.shareLinkId,
+      revisionId: binding.revisionId,
+      formNodeId: binding.formNodeId,
+      leadId,
+    }
+    try {
+      const envelope = deps.leadKeyring.encrypt(
+        validation.data,
+        encryptionContext,
+      )
+      await deps.leads.appendEncrypted({
+        bindingId: binding.bindingId,
+        leadId,
+        requestId: submission.requestId,
+        envelope,
+        receivedAt: deps.now(),
+      })
+    } catch {
+      try {
+        await deps.leadAdmission.release(reservation)
+      } catch {
+        // Persistence failure remains authoritative; release is best-effort.
+      }
+      return plainPublicResponse(
+        'Không thể gửi thông tin lúc này',
+        503,
+      )
+    }
+
+    return new Response(null, {
+      status: 303,
+      headers: {
+        ...publicHeaders,
+        location: `/s/${parsedSlug.data}/__zenui/receipt`,
+      },
+    })
+  }
+
+  return Object.assign(GET, { GET, POST })
 }

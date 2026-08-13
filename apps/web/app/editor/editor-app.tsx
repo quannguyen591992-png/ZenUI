@@ -41,7 +41,7 @@ import {
   type AutosaveState,
   type EditorState,
 } from '@zenui/editor-core'
-import { nodeToBrowserStyle, resolveNodeStyle, resolveNodeTag } from '@zenui/html-compiler'
+import { conversionActionHref, nodeToBrowserStyle, resolveNodeStyle, resolveNodeTag } from '@zenui/html-compiler'
 import {
   createElement,
   useEffect,
@@ -71,6 +71,8 @@ import {
 import { BrandKitPanel, createBrowserBrandKitApi } from './brand-kit-panel'
 import { DeployPanel } from './deploy-panel'
 import { ExportPanel } from './export-panel'
+import { LeadFormCanvas } from './lead-form-canvas'
+import { ConversionActionInspector, LeadFormInspector } from './lead-form-inspector'
 import { PageManagerPanel } from './page-manager-panel'
 import { PublishPanel } from './publish-panel'
 import { SecurePreview } from './secure-preview'
@@ -79,7 +81,7 @@ import { SiteIntelligencePanel, browserSiteIntelligenceApi } from './site-intell
 
 import type { WebsiteBrief } from '@zenui/ai-core'
 import type { DesignCommand } from '@zenui/design-commands'
-import type { ComponentType, DesignDocument, DesignNode } from '@zenui/design-schema'
+import type { ComponentType, DesignDocument, DesignNode, LeadFormProps } from '@zenui/design-schema'
 
 interface EditorAction {
   type: 'set'
@@ -335,9 +337,22 @@ function CanvasNode({
     children = null
   } else if (node.type === 'divider') {
     children = null
-  } else if ((node.type === 'button' || node.type === 'link') && 'href' in node.props && 'text' in node.props) {
-    visualProps.href = node.props.href
-    if (/^https?:/i.test(node.props.href)) visualProps.rel = 'noreferrer noopener'
+  } else if (node.type === 'lead-form') {
+    children = null
+  } else if ((node.type === 'button' || node.type === 'link') && 'text' in node.props) {
+    const href = 'href' in node.props
+      ? node.props.href
+      : 'pageId' in node.props
+        ? (() => {
+            const pageId = node.props.pageId
+            const page = document.pages.find(candidate => candidate.id === pageId)
+            return page ? `${page.slug}${node.props.fragment ? `#${node.props.fragment}` : ''}` : null
+          })()
+        : 'action' in node.props
+          ? conversionActionHref(document, node.props.action)
+          : null
+    if (href) visualProps.href = href
+    if (href && /^https?:/i.test(href)) visualProps.rel = 'noreferrer noopener'
     children = node.type === 'link' && 'logoAssetId' in node.props && node.props.logoAssetId && node.props.logoAlt
       ? createElement('img', {
           src: `${new URL(assetOrigin).origin}/a/${node.props.logoAssetId}`,
@@ -447,12 +462,14 @@ function CanvasNode({
           fontFamily: `${document.theme.fonts.body}, sans-serif`,
         } : undefined}
         onClick={event => {
-          event.preventDefault()
+          if ((event.target as HTMLElement).closest('a')) event.preventDefault()
           event.stopPropagation()
           onSelect(node.id)
         }}
       >
-        {createElement(tag, visualProps, children)}
+        {node.type === 'lead-form'
+          ? <LeadFormCanvas node={node} viewport={viewport} />
+          : createElement(tag, visualProps, children)}
       </div>
     </div>
   )
@@ -680,6 +697,20 @@ function Inspector({ state, viewport, execute }: InspectorProps) {
             }}
           />
         </div>
+      )}
+
+      {node.type === 'lead-form' && 'fields' in node.props && (
+        <LeadFormInspector
+          nodeId={node.id}
+          documentVersion={state.document.version}
+          props={node.props as LeadFormProps}
+          viewport={viewport}
+          execute={execute}
+        />
+      )}
+
+      {(node.type === 'button' || node.type === 'link') && (
+        <ConversionActionInspector node={node} document={state.document} execute={execute} />
       )}
 
       <div className="inspector-field-group">

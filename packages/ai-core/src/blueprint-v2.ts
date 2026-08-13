@@ -10,6 +10,7 @@ import {
 } from '@zenui/design-schema'
 import { z } from 'zod'
 
+import { conversionGoalSchema, type ConversionGoal, type GuidedDesignSystem } from './guided-brief'
 import {
   DENSITY_PRESET_IDS,
   MOOD_PRESET_IDS,
@@ -20,8 +21,6 @@ import {
   navbarPresetSchema,
   type BlueprintV2Section,
 } from './section-presets'
-
-import type { GuidedDesignSystem } from './guided-brief'
 
 const themeInputSchema = z.object({
   preset: z.enum(THEME_PRESET_IDS),
@@ -35,6 +34,7 @@ export const landingPageBlueprintV2Schema = z.object({
   version: z.literal(2),
   pagePreset: z.enum(PAGE_PRESET_IDS),
   brand: z.string().trim().min(1).max(100),
+  conversionGoal: conversionGoalSchema.optional(),
   theme: themeInputSchema,
   navbar: navbarPresetSchema,
   hero: heroPresetSchema,
@@ -228,6 +228,17 @@ class DocumentBuilder {
 const pagePadding = { paddingLeft: 32, paddingRight: 32 }
 const mobilePadding = { paddingLeft: 20, paddingRight: 20 }
 
+function primaryCtaProps(
+  cta: { text: string; href: string },
+  conversionGoal: ConversionGoal | undefined,
+): Record<string, unknown> {
+  if (!conversionGoal) return cta
+  const action = conversionGoal.type === 'lead_form'
+    ? { type: 'lead_form' as const, formNodeId: 'lead-form-1' }
+    : { type: 'internal_page' as const, pageId: 'home' }
+  return { text: cta.text, action }
+}
+
 function addContainer(builder: DocumentBuilder, parentId: string, key: string): DesignNode {
   return builder.create('container', key, parentId, {}, { ...pagePadding, maxWidth: 1200 }, { mobile: mobilePadding })
 }
@@ -282,7 +293,7 @@ function renderNavbar(builder: DocumentBuilder, blueprint: LandingPageBlueprintV
   blueprint.navbar.links.forEach((link, index) => builder.create('link', `navbar-link-${index + 1}`, actions.id, link, {
     fontSize: 15, fontWeight: '600', color: theme.muted,
   }, { mobile: { display: 'none' } }))
-  builder.create('button', 'navbar-cta', actions.id, blueprint.navbar.cta, {
+  builder.create('button', 'navbar-cta', actions.id, primaryCtaProps(blueprint.navbar.cta, blueprint.conversionGoal), {
     backgroundColor: theme.primary, color: theme.onPrimary, borderRadius: 200, shadow: 'sm', fontSize: 15,
   }, { mobile: { fontSize: 14 } })
 }
@@ -388,7 +399,7 @@ function renderHero(
   const actions = builder.create('stack', 'hero-actions', copy.id, {}, {
     display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: centered ? 'center' : 'start', gap: 14, marginTop: 6,
   }, { mobile: { width: 'full', flexDirection: 'column', alignItems: 'stretch' } })
-  builder.create('button', 'hero-primary-cta', actions.id, blueprint.hero.primaryCta, {
+  builder.create('button', 'hero-primary-cta', actions.id, primaryCtaProps(blueprint.hero.primaryCta, blueprint.conversionGoal), {
     backgroundColor: theme.primary, color: theme.onPrimary, borderRadius: 200, shadow: 'md', fontSize: 16,
   }, { mobile: { width: 'full' } })
   if (blueprint.hero.secondaryCta) builder.create('button', 'hero-secondary-cta', actions.id, blueprint.hero.secondaryCta, {
@@ -648,7 +659,12 @@ function renderFaq(builder: DocumentBuilder, section: Extract<BlueprintV2Section
   })
 }
 
-function renderFinalCta(builder: DocumentBuilder, section: Extract<BlueprintV2Section, { type: 'final-cta' }>, theme: ResolvedTheme): void {
+function renderFinalCta(
+  builder: DocumentBuilder,
+  section: Extract<BlueprintV2Section, { type: 'final-cta' }>,
+  theme: ResolvedTheme,
+  conversionGoal: ConversionGoal | undefined,
+): void {
   const banner = section.variant === 'banner'
   const shell = builder.create('section', 'final-cta-section', 'page-root', { label: 'Call to action' }, {
     width: 'full', backgroundColor: banner ? theme.primary : theme.background,
@@ -676,7 +692,7 @@ function renderFinalCta(builder: DocumentBuilder, section: Extract<BlueprintV2Se
   const actions = builder.create('stack', 'final-cta-actions', panel.id, {}, {
     display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 14,
   }, { mobile: { width: 'full', flexDirection: 'column', alignItems: 'stretch' } })
-  builder.create('button', 'final-primary-cta', actions.id, section.primaryCta, {
+  builder.create('button', 'final-primary-cta', actions.id, primaryCtaProps(section.primaryCta, conversionGoal), {
     backgroundColor: theme.onPrimary, color: theme.primaryDark, borderRadius: 200, shadow: 'md', fontSize: 16,
   }, { mobile: { width: 'full' } })
   if (section.secondaryCta) builder.create('button', 'final-secondary-cta', actions.id, section.secondaryCta, {
@@ -727,7 +743,7 @@ function renderSection(
     case 'testimonials': renderTestimonials(builder, section, theme, index); break
     case 'pricing': renderPricing(builder, section, theme, index); break
     case 'faq': renderFaq(builder, section, theme, index); break
-    case 'final-cta': renderFinalCta(builder, section, theme); break
+    case 'final-cta': renderFinalCta(builder, section, theme, blueprint.conversionGoal); break
     case 'footer': renderFooter(builder, section, blueprint, theme); break
   }
 }
@@ -770,6 +786,20 @@ export function materializeLandingPageBlueprintV2(input: {
   blueprint.sections.forEach((section, index) => renderSection(
     builder, section, blueprint, theme, input.imagePolicy, index, ownedMedia,
   ))
+  if (blueprint.conversionGoal?.type === 'lead_form') {
+    const finalSection = builder.nodes['final-cta-section']
+    const formParentId = finalSection ? finalSection.id : 'page-root'
+    builder.create('lead-form', 'lead-form-1', formParentId, undefined, {
+      width: 'full', maxWidth: 720, marginTop: 32, marginBottom: 32,
+      paddingTop: 32, paddingRight: 32, paddingBottom: 32, paddingLeft: 32,
+      backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1,
+      borderRadius: theme.radius.md, shadow: theme.cardShadow,
+    }, {
+      mobile: {
+        paddingTop: 24, paddingRight: 20, paddingBottom: 24, paddingLeft: 20,
+      },
+    })
+  }
 
   const document: DesignDocument = {
     schemaVersion: 1,

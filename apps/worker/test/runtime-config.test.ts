@@ -47,6 +47,8 @@ describe('worker runtime configuration', () => {
     expect(config.deployment?.credentialActiveKeyVersion).toBe(2)
     expect(config.recoveryIntervalSeconds).toBe(30)
     expect(config.recoveryMaxAttempts).toBe(3)
+    expect(config.leadRetentionIntervalSeconds).toBe(3_600)
+    expect(config.leadRetentionBatchSize).toBe(100)
     expect(config.databasePoolMax).toBe(8)
     expect(config.remoteImageHostAllowlist).toBe('images.example.com')
     expect(config.assetOrigin).toBe('https://assets.example.com')
@@ -60,9 +62,27 @@ describe('worker runtime configuration', () => {
     expect(config.queueResumeAtOldestAgeSeconds).toBe(60)
   })
 
-  it('rejects invalid pool and backpressure thresholds', () => {
+  it('rejects invalid pool, retention and backpressure thresholds', () => {
     process.env = { ...previous, ...environment, DATABASE_POOL_MAX: '0' }
     expect(() => loadWorkerRuntimeConfig()).toThrow('DATABASE_POOL_MAX is invalid')
+
+    process.env = {
+      ...previous,
+      ...environment,
+      LEAD_RETENTION_INTERVAL_SECONDS: '59',
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow(
+      'LEAD_RETENTION_INTERVAL_SECONDS is invalid',
+    )
+
+    process.env = {
+      ...previous,
+      ...environment,
+      LEAD_RETENTION_BATCH_SIZE: '501',
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow(
+      'LEAD_RETENTION_BATCH_SIZE is invalid',
+    )
 
     process.env = {
       ...previous,

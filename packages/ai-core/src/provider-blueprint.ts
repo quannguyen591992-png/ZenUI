@@ -31,6 +31,7 @@ export const landingPageProviderBlueprintSchema = z.object({
   announcement: shortTextSchema,
   navLabels: z.array(shortTextSchema).min(2).max(5),
   navbarCta: shortTextSchema,
+  conversionIntent: z.enum(['lead_form', 'internal_page']).optional(),
   heroBadge: shortTextSchema,
   heroHeading: z.string().trim().min(1).max(220),
   heroParagraph: z.string().trim().min(1).max(1200),
@@ -143,6 +144,7 @@ export function normalizeLandingPageProviderBlueprint(input: unknown): LandingPa
     version: 2,
     pagePreset: blueprint.pagePreset,
     brand: blueprint.brand,
+    ...(blueprint.conversionIntent ? { conversionGoal: { type: blueprint.conversionIntent } } : {}),
     theme: {
       preset: blueprint.themePreset,
       mood: blueprint.mood,

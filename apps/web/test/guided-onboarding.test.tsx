@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -158,6 +158,7 @@ describe('production Guided Brief and Design Direction Gallery', () => {
     await user.click(screen.getByRole('button', { name: 'Tạo 3 hướng thiết kế' }))
 
     await waitFor(() => expect(saveBrief).toHaveBeenCalledWith(expect.objectContaining({
+      conversionGoal: { type: 'lead_form' },
       designSystem: {
         mode: 'custom',
         colors: { primary: '#24eb94', background: '#ffffff', text: '#2c56ba' },
@@ -166,6 +167,113 @@ describe('production Guided Brief and Design Direction Gallery', () => {
       },
     })))
     expect(createRun).toHaveBeenCalledOnce()
+  })
+
+  it('loads the default bounded brief when no saved brief exists', async () => {
+    render(<GuidedOnboarding projectId={projectId} workspaceId={workspaceId} expectedVersion={1} assetOrigin="http://127.0.0.1:3002" api={api()} onAccepted={vi.fn()} />)
+
+    await screen.findByRole('heading', { name: 'Hãy cho chúng tôi biết website bạn muốn tạo' })
+    expect(screen.getByRole('radio', { name: 'Thu thập nhu cầu bằng biểu mẫu' })).toBeChecked()
+    expect(screen.getByRole('radio', { name: 'Để ZenUI đề xuất thiết kế' })).toBeChecked()
+  })
+
+  it('authors only a bounded internal-page conversion intent', async () => {
+    const saveBrief = vi.fn((input: WebsiteBrief) => Promise.resolve(input))
+    const createRun = vi.fn(() => Promise.resolve({
+      id: runId, status: 'queued' as const, round: 0, errorCode: null, directions: null,
+    }))
+    render(<GuidedOnboarding projectId={projectId} workspaceId={workspaceId} expectedVersion={1} assetOrigin="http://127.0.0.1:3002" api={api({ saveBrief, createRun })} onAccepted={vi.fn()} />)
+    const user = userEvent.setup()
+    await screen.findByRole('heading', { name: 'Hãy cho chúng tôi biết website bạn muốn tạo' })
+
+    expect(screen.getByRole('radio', { name: 'Thu thập nhu cầu bằng biểu mẫu' })).toBeChecked()
+    await user.click(screen.getByRole('radio', { name: 'Điều hướng tới nội dung trong website' }))
+    await fillRequiredBrief(user)
+    await user.click(screen.getByRole('button', { name: 'Tạo 3 hướng thiết kế' }))
+
+    await waitFor(() => expect(saveBrief).toHaveBeenCalledWith(expect.objectContaining({
+      conversionGoal: { type: 'internal_page' },
+    })))
+    expect(createRun).toHaveBeenCalledOnce()
+    expect(screen.queryByLabelText(/recipient|endpoint|publication|form node/i)).not.toBeInTheDocument()
+  })
+
+  it('preserves a loaded conversion intent during deterministic prefill', async () => {
+    const saveBrief = vi.fn((input: WebsiteBrief) => Promise.resolve(input))
+    render(<GuidedOnboarding projectId={projectId} workspaceId={workspaceId} expectedVersion={1} assetOrigin="http://127.0.0.1:3002" api={api({
+      loadBrief: () => Promise.resolve({
+        description: '', offer: 'NovaFlow', audience: 'Nhóm sản phẩm nhỏ', primaryGoal: 'Nhận lịch tư vấn',
+        cta: 'Đặt lịch tư vấn', tone: 'Rõ ràng và hiện đại', brandDetails: '',
+        mustHaveSections: ['introduction', 'benefits', 'contact'],
+        conversionGoal: { type: 'internal_page' },
+      }),
+      saveBrief,
+    })} onAccepted={vi.fn()} />)
+    const user = userEvent.setup()
+    await screen.findByDisplayValue('NovaFlow')
+
+    expect(screen.getByRole('radio', { name: 'Điều hướng tới nội dung trong website' })).toBeChecked()
+    await user.type(screen.getByLabelText('Mô tả doanh nghiệp hoặc ý tưởng'), 'NovaFlow giúp nhóm sản phẩm lên kế hoạch rõ ràng.')
+    await user.click(screen.getByRole('button', { name: 'Tạo tự động' }))
+    expect(screen.getByRole('radio', { name: 'Điều hướng tới nội dung trong website' })).toBeChecked()
+    await user.click(screen.getByRole('button', { name: 'Tạo 3 hướng thiết kế' }))
+
+    await waitFor(() => expect(saveBrief).toHaveBeenCalledWith(expect.objectContaining({
+      conversionGoal: { type: 'internal_page' },
+    })))
+  })
+
+  it('previews every bounded custom typography, spacing and radius branch', async () => {
+    render(<GuidedOnboarding projectId={projectId} workspaceId={workspaceId} expectedVersion={1} assetOrigin="http://127.0.0.1:3002" api={api()} onAccepted={vi.fn()} />)
+    const user = userEvent.setup()
+    await screen.findByRole('heading', { name: 'Hãy cho chúng tôi biết website bạn muốn tạo' })
+    await user.click(screen.getByRole('radio', { name: 'Dùng thiết kế riêng' }))
+
+    const preview = screen.getByLabelText('Xem trước hệ thống thiết kế')
+    await user.selectOptions(screen.getByLabelText('Cỡ chữ'), 'compact')
+    await user.selectOptions(screen.getByLabelText('Mật độ bố cục'), 'compact')
+    await user.selectOptions(screen.getByLabelText('Bo góc thành phần'), 'sharp')
+    expect(preview).toHaveStyle({ borderRadius: '8px', padding: '16px', gap: '8px' })
+    expect(within(preview).getByRole('heading')).toHaveStyle({ fontSize: '18px' })
+
+    await user.selectOptions(screen.getByLabelText('Cỡ chữ'), 'balanced')
+    await user.selectOptions(screen.getByLabelText('Mật độ bố cục'), 'balanced')
+    await user.selectOptions(screen.getByLabelText('Bo góc thành phần'), 'balanced')
+    expect(preview).toHaveStyle({ borderRadius: '12px', padding: '24px', gap: '12px' })
+    expect(within(preview).getByRole('heading')).toHaveStyle({ fontSize: '22px' })
+
+    const contact = screen.getByRole('button', { name: 'Liên hệ và hành động chính' })
+    expect(contact).toHaveAttribute('aria-pressed', 'true')
+    await user.click(contact)
+    expect(contact).toHaveAttribute('aria-pressed', 'false')
+    await user.click(contact)
+    expect(contact).toHaveAttribute('aria-pressed', 'true')
+
+    await user.click(screen.getByRole('radio', { name: 'Để ZenUI đề xuất thiết kế' }))
+    expect(screen.queryByLabelText('Xem trước hệ thống thiết kế')).not.toBeInTheDocument()
+  })
+
+  it('maps every bounded Guided validation path without erasing draft values', async () => {
+    const saveBrief = vi.fn((input: WebsiteBrief) => Promise.resolve(input))
+    render(<GuidedOnboarding projectId={projectId} workspaceId={workspaceId} expectedVersion={1} assetOrigin="http://127.0.0.1:3002" api={api({ saveBrief })} onAccepted={vi.fn()} />)
+    const user = userEvent.setup()
+    await screen.findByRole('heading', { name: 'Hãy cho chúng tôi biết website bạn muốn tạo' })
+    await user.click(screen.getByRole('radio', { name: 'Dùng thiết kế riêng' }))
+    await fillRequiredBrief(user)
+
+    fireEvent.change(screen.getByLabelText('Mô tả doanh nghiệp hoặc ý tưởng'), { target: { value: 'd'.repeat(2001) } })
+    fireEvent.change(screen.getByLabelText('Bạn đã có chi tiết thương hiệu nào?'), { target: { value: 'b'.repeat(501) } })
+    fireEvent.change(screen.getByLabelText('Mã màu chính'), { target: { value: '#bad' } })
+    fireEvent.change(screen.getByLabelText('Mã màu nền'), { target: { value: '#bad' } })
+    fireEvent.change(screen.getByLabelText('Mã màu chữ'), { target: { value: '#bad' } })
+    fireEvent.change(screen.getByLabelText('Cỡ chữ'), { target: { value: 'unsupported' } })
+    await user.click(screen.getByRole('button', { name: 'Tạo 3 hướng thiết kế' }))
+
+    expect(screen.getByText('Mô tả không được vượt quá 2000 ký tự')).toBeVisible()
+    expect(screen.getByText('Chi tiết thương hiệu không được vượt quá 500 ký tự')).toBeVisible()
+    expect(screen.getAllByText('Hãy nhập mã màu HEX gồm 6 ký tự')).toHaveLength(3)
+    expect(screen.getByText('Hệ thống thiết kế có lựa chọn không hợp lệ')).toBeVisible()
+    expect(saveBrief).not.toHaveBeenCalled()
   })
 
   it('blocks malformed custom colors with a field error, then succeeds after correction', async () => {
@@ -265,6 +373,8 @@ describe('production Guided Brief and Design Direction Gallery', () => {
     }))
     const chooseDirection = vi.fn()
       .mockRejectedValueOnce(Object.assign(new Error('request_failed'), { code: 'internal_error', status: 500 }))
+      .mockRejectedValueOnce(null)
+      .mockRejectedValueOnce(Object.assign(new Error('request_failed'), { code: 500, status: 500 }))
       .mockImplementation((_runId: string, directionId: string) => Promise.resolve({
         version: 2,
         directionId,
@@ -297,8 +407,12 @@ describe('production Guided Brief and Design Direction Gallery', () => {
     expect(onAccepted).not.toHaveBeenCalled()
 
     await user.click(screen.getAllByRole('button', { name: 'Chọn hướng này' })[1]!)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Không thể áp dụng hướng đã chọn')
+    await user.click(screen.getAllByRole('button', { name: 'Chọn hướng này' })[1]!)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Không thể áp dụng hướng đã chọn')
+    await user.click(screen.getAllByRole('button', { name: 'Chọn hướng này' })[1]!)
     await waitFor(() => expect(onAccepted).toHaveBeenCalledOnce())
-    expect(chooseDirection).toHaveBeenCalledTimes(2)
+    expect(chooseDirection).toHaveBeenCalledTimes(4)
     expect(saveBrief).toHaveBeenCalledOnce()
     expect(createRun).toHaveBeenCalledOnce()
   })

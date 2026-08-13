@@ -69,5 +69,5 @@ export async function probeDatabase(): Promise<boolean> {
 export async function resetE2eDatabase(): Promise<void> {
   if (!isE2eRuntimeEnabled()) throw new Error('e2e_runtime_disabled')
   await waitForDatabase()
-  await e2eClient!.exec('TRUNCATE usage_records, deployments, provider_connections, share_links, export_runs, revisions, generation_runs, brand_kits, assets, design_documents, projects RESTART IDENTITY CASCADE;')
+  await e2eClient!.exec('TRUNCATE usage_records, deployments, provider_connections, lead_submissions, lead_form_bindings, share_links, export_runs, revisions, generation_runs, brand_kits, assets, design_documents, projects RESTART IDENTITY CASCADE;')
 }

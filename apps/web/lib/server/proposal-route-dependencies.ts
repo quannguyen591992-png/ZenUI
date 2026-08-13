@@ -1,4 +1,4 @@
-import { createMockLlmProvider, runGeneration } from '@zenui/ai-core'
+import { createMockLlmProvider, materializeStyleProposal, runGeneration } from '@zenui/ai-core'
 import { createGenerationRepository, createProjectRepository, workspaceMembers } from '@zenui/database'
 import { Queue } from 'bullmq'
 import { and, eq } from 'drizzle-orm'
@@ -79,32 +79,65 @@ export function createProposalRouteDependencies(): ProposalApiDependencies {
             provider: 'mock', model: 'mock-proposal-v1', promptVersion: 'v2',
           })
           if (!claimed) return
-          const result = await runGeneration({
-            provider: createMockLlmProvider([{ output: deterministicOperations(input.prompt, input.document, input.selectedNodeId) }]),
-            job: {
-              ...job,
-              mode: input.mode,
-              prompt: input.prompt,
-              expectedVersion: input.expectedVersion,
-              ...(input.selectedNodeId ? { selectedNodeId: input.selectedNodeId } : {}),
-            },
-            document: input.document,
-            maxRepairAttempts: 0,
-            maxTransientRetries: 0,
-          })
+          const result = input.proposalIntent === 'style' && input.selectedNodeId
+            ? (() => {
+                const materialized = materializeStyleProposal({
+                  document: input.document,
+                  targetNodeId: input.selectedNodeId,
+                  spec: {
+                    version: 'style-edit-spec-v1',
+                    emphasis: 'preserve',
+                    spacingDensity: 'preserve',
+                    alignment: 'center',
+                    surface: 'preserve',
+                    mobileStack: 'preserve',
+                  },
+                  runId: input.id,
+                  expectedVersion: input.expectedVersion,
+                  summary: 'AI centered the selected element',
+                })
+                return materialized.accepted
+                  ? {
+                      accepted: true as const,
+                      commands: materialized.commands,
+                      document: materialized.proposedDocument,
+                      summary: materialized.summary,
+                      repairAttempts: 0,
+                      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+                    }
+                  : {
+                      ...materialized,
+                      repairAttempts: 0,
+                      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+                    }
+              })()
+            : await runGeneration({
+                provider: createMockLlmProvider([{ output: deterministicOperations(input.prompt, input.document, input.selectedNodeId) }]),
+                job: {
+                  ...job,
+                  mode: input.mode,
+                  prompt: input.prompt,
+                  expectedVersion: input.expectedVersion,
+                  ...(input.selectedNodeId ? { selectedNodeId: input.selectedNodeId } : {}),
+                },
+                document: input.document,
+                maxRepairAttempts: 0,
+                maxTransientRetries: 0,
+              })
           if (!result.accepted) {
             await proposals.fail(context, input.id, {
               errorCode: result.code, usage: result.usage, repairCount: result.repairAttempts,
             })
             return
           }
-          await proposals.completeProposal(context, input.id, {
+          const completed = await proposals.completeProposal(context, input.id, {
             commands: result.commands,
             proposedDocument: result.document,
             summary: result.summary,
             usage: result.usage,
             repairCount: result.repairAttempts,
           })
+          if (!completed.accepted) throw new Error(`e2e_proposal_completion_${completed.code}`)
         },
       },
       pollIntervalMs: 10,

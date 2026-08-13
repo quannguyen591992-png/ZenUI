@@ -85,6 +85,32 @@ describe('Gemini-compatible Blueprint v2 provider DTO', () => {
     expect(text.length).toBeLessThan(20_000)
   })
 
+  it('accepts only bounded conversion intent and keeps operational authority server-owned', () => {
+    const withLeadIntent = {
+      ...providerBlueprint,
+      conversionIntent: 'lead_form' as const,
+    }
+    const normalized = normalizeLandingPageProviderBlueprint(withLeadIntent)
+
+    expect(landingPageProviderBlueprintSchema.safeParse(withLeadIntent).success).toBe(true)
+    expect(normalized?.conversionGoal).toEqual({ type: 'lead_form' })
+    for (const forbidden of [
+      { recipient: 'sales@example.com' },
+      { endpoint: 'https://example.com/leads' },
+      { publicationId: crypto.randomUUID() },
+      { secret: 'provider-owned-secret' },
+      { formNodeId: 'provider-form-id' },
+      { nodeId: 'provider-node-id' },
+      { fields: [{ key: 'unsafe' }] },
+    ]) {
+      expect(landingPageProviderBlueprintSchema.safeParse({ ...withLeadIntent, ...forbidden }).success).toBe(false)
+    }
+
+    const schema = JSON.stringify(landingPageProviderBlueprintJsonSchema)
+    expect(schema).toContain('conversionIntent')
+    expect(schema).not.toMatch(/recipient|endpoint|publication|secret|formNodeId|nodeId|fields/i)
+  })
+
   it('normalizes provider content into strict Blueprint v2 and materializes it', () => {
     const normalized = normalizeLandingPageProviderBlueprint(providerBlueprint)
 
