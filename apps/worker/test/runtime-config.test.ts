@@ -15,6 +15,7 @@ const environment = {
   GOOGLE_IMAGE_MODEL: 'imagen-test',
   REMOTE_IMAGE_HOST_ALLOWLIST: 'images.example.com',
   ASSET_ORIGIN: 'https://assets.example.com',
+  SHARE_ORIGIN: 'https://share.example.com',
   DEPLOY_PROJECT_NAME_SECRET: 'project-secret',
   PROVIDER_CREDENTIAL_KEYS: JSON.stringify({
     1: Buffer.alloc(32, 1).toString('base64'),
@@ -45,6 +46,9 @@ describe('worker runtime configuration', () => {
     const config = loadWorkerRuntimeConfig()
     expect(config.deployment?.credentialKeys).toEqual(environment.PROVIDER_CREDENTIAL_KEYS)
     expect(config.deployment?.credentialActiveKeyVersion).toBe(2)
+    expect(config.deployment?.leadIntakeOrigin).toBe(
+      'https://share.example.com',
+    )
     expect(config.recoveryIntervalSeconds).toBe(30)
     expect(config.recoveryMaxAttempts).toBe(3)
     expect(config.leadRetentionIntervalSeconds).toBe(3_600)
@@ -151,6 +155,26 @@ describe('worker runtime configuration', () => {
       GEMINI_MODEL: 'replace-with-supported-gemini-model',
     }
     expect(() => loadWorkerRuntimeConfig()).toThrow('GEMINI_MODEL is not configured')
+  })
+
+  it('requires an isolated HTTPS Lead intake origin for deployment compilation', () => {
+    process.env = {
+      ...previous,
+      ...environment,
+      SHARE_ORIGIN: '',
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow(
+      'SHARE_ORIGIN is required',
+    )
+
+    process.env = {
+      ...previous,
+      ...environment,
+      SHARE_ORIGIN: 'http://share.example.com',
+    }
+    expect(() => loadWorkerRuntimeConfig()).toThrow(
+      'SHARE_ORIGIN must use HTTPS',
+    )
   })
 
   it('loads generation, asset and export services without Vercel configuration', () => {

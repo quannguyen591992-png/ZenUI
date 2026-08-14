@@ -2495,7 +2495,7 @@ export interface LeadBindingRecord {
   formNodeId: string
   pageRoute: string
   formTitle: string
-  status: 'active' | 'disabled'
+  status: 'pending' | 'active' | 'disabled'
 }
 
 export interface LeadSummaryRecord {
@@ -2524,6 +2524,7 @@ const appendEncryptedLeadSchema = z.object({
 function mapLeadBinding(
   row: typeof leadFormBindings.$inferSelect,
 ): LeadBindingRecord {
+  if (!row.shareLinkId) throw new Error('invalid_share_lead_binding')
   return {
     id: row.id,
     shareLinkId: row.shareLinkId,
@@ -2619,6 +2620,7 @@ export function createLeadRepository(
             workspaceId: context.workspaceId,
             projectId,
             shareLinkId,
+            publicBindingId: randomUUID().replaceAll('-', ''),
             revisionId: row.link.revisionId,
             formNodeId: form.formNodeId,
             pageRoute: form.pageRoute,
@@ -2681,6 +2683,7 @@ export function createLeadRepository(
         .limit(1)
       if (
         !row
+        || !row.binding.shareLinkId
         || resolveShareStatus(
           row.link.status,
           row.link.expiresAt,
@@ -2699,6 +2702,74 @@ export function createLeadRepository(
       }
     },
 
+    async resolveDeploymentBinding(
+      publicBindingId: string,
+      pageRoute: string,
+      formNodeId: string,
+    ) {
+      if (!/^[A-Za-z0-9_-]{32}$/.test(publicBindingId)) return null
+      const [row] = await db.select({
+        binding: leadFormBindings,
+        deployment: deployments,
+      }).from(leadFormBindings)
+        .innerJoin(
+          deployments,
+          eq(deployments.id, leadFormBindings.deploymentId),
+        )
+        .where(and(
+          eq(leadFormBindings.publicBindingId, publicBindingId),
+          eq(leadFormBindings.status, 'active'),
+          eq(leadFormBindings.pageRoute, pageRoute),
+          eq(leadFormBindings.formNodeId, formNodeId),
+          eq(deployments.status, 'ready'),
+        ))
+        .limit(1)
+      const deploymentOrigin = safeDeploymentUrl(row?.deployment.url ?? null)
+      if (!row || !row.binding.deploymentId || !deploymentOrigin) return null
+      return {
+        bindingId: row.binding.id,
+        workspaceId: row.binding.workspaceId,
+        projectId: row.binding.projectId,
+        deploymentId: row.binding.deploymentId,
+        revisionId: row.binding.revisionId,
+        deploymentOrigin,
+        formNodeId: row.binding.formNodeId,
+        pageRoute: row.binding.pageRoute,
+        form: structuredClone(row.binding.formSnapshot),
+      }
+    },
+
+    async resolveDeploymentReceipt(publicBindingId: string) {
+      if (!/^[A-Za-z0-9_-]{32}$/.test(publicBindingId)) return null
+      const [row] = await db.select({
+        binding: leadFormBindings,
+        deployment: deployments,
+      }).from(leadFormBindings)
+        .innerJoin(
+          deployments,
+          eq(deployments.id, leadFormBindings.deploymentId),
+        )
+        .where(and(
+          eq(leadFormBindings.publicBindingId, publicBindingId),
+          eq(leadFormBindings.status, 'active'),
+          eq(deployments.status, 'ready'),
+        ))
+        .limit(1)
+      const deploymentOrigin = safeDeploymentUrl(row?.deployment.url ?? null)
+      if (!row || !row.binding.deploymentId || !deploymentOrigin) return null
+      return {
+        bindingId: row.binding.id,
+        workspaceId: row.binding.workspaceId,
+        projectId: row.binding.projectId,
+        deploymentId: row.binding.deploymentId,
+        revisionId: row.binding.revisionId,
+        deploymentOrigin,
+        formNodeId: row.binding.formNodeId,
+        pageRoute: row.binding.pageRoute,
+        form: structuredClone(row.binding.formSnapshot),
+      }
+    },
+
     async appendEncrypted(
       input: z.input<typeof appendEncryptedLeadSchema>,
     ) {
@@ -2707,17 +2778,33 @@ export function createLeadRepository(
       return db.transaction(async transaction => {
         const [binding] = await transaction.select()
           .from(leadFormBindings)
-          .innerJoin(
-            shareLinks,
-            eq(shareLinks.id, leadFormBindings.shareLinkId),
-          )
           .where(and(
             eq(leadFormBindings.id, parsed.data.bindingId),
             eq(leadFormBindings.status, 'active'),
-            eq(shareLinks.status, 'active'),
           ))
           .limit(1)
         if (!binding) throw new Error('not_found')
+        if (binding.shareLinkId) {
+          const [link] = await transaction.select({ id: shareLinks.id })
+            .from(shareLinks)
+            .where(and(
+              eq(shareLinks.id, binding.shareLinkId),
+              eq(shareLinks.status, 'active'),
+            ))
+            .limit(1)
+          if (!link) throw new Error('not_found')
+        } else if (binding.deploymentId) {
+          const [deployment] = await transaction.select({ id: deployments.id })
+            .from(deployments)
+            .where(and(
+              eq(deployments.id, binding.deploymentId),
+              eq(deployments.status, 'ready'),
+            ))
+            .limit(1)
+          if (!deployment) throw new Error('not_found')
+        } else {
+          throw new Error('not_found')
+        }
         const [existing] = await transaction.select()
           .from(leadSubmissions)
           .where(and(
@@ -2735,14 +2822,15 @@ export function createLeadRepository(
         const [created] = await transaction.insert(leadSubmissions)
           .values({
             id: parsed.data.leadId,
-            workspaceId: binding.lead_form_bindings.workspaceId,
-            projectId: binding.lead_form_bindings.projectId,
-            bindingId: binding.lead_form_bindings.id,
-            shareLinkId: binding.lead_form_bindings.shareLinkId,
-            revisionId: binding.lead_form_bindings.revisionId,
+            workspaceId: binding.workspaceId,
+            projectId: binding.projectId,
+            bindingId: binding.id,
+            shareLinkId: binding.shareLinkId,
+            deploymentId: binding.deploymentId,
+            revisionId: binding.revisionId,
             requestId: parsed.data.requestId,
-            formNodeId: binding.lead_form_bindings.formNodeId,
-            formTitle: binding.lead_form_bindings.formTitle,
+            formNodeId: binding.formNodeId,
+            formTitle: binding.formTitle,
             ciphertext: parsed.data.envelope.ciphertext,
             iv: parsed.data.envelope.iv,
             authTag: parsed.data.envelope.authTag,
@@ -2807,21 +2895,38 @@ export function createLeadRepository(
         ))
         .limit(1)
       if (!row) return null
+      const envelope = {
+        ciphertext: row.ciphertext,
+        iv: row.iv,
+        authTag: row.authTag,
+        keyVersion: row.keyVersion,
+      }
+      const baseContext = {
+        workspaceId: row.workspaceId,
+        projectId: row.projectId,
+        revisionId: row.revisionId,
+        formNodeId: row.formNodeId,
+        leadId: row.id,
+      }
+      if (row.deploymentId) {
+        return {
+          summary: mapLeadSummary(row),
+          envelope,
+          context: {
+            ...baseContext,
+            publication: 'deployment' as const,
+            deploymentId: row.deploymentId,
+          },
+        }
+      }
+      if (!row.shareLinkId) return null
       return {
         summary: mapLeadSummary(row),
-        envelope: {
-          ciphertext: row.ciphertext,
-          iv: row.iv,
-          authTag: row.authTag,
-          keyVersion: row.keyVersion,
-        },
+        envelope,
         context: {
-          workspaceId: row.workspaceId,
-          projectId: row.projectId,
+          ...baseContext,
+          publication: 'share' as const,
           shareLinkId: row.shareLinkId,
-          revisionId: row.revisionId,
-          formNodeId: row.formNodeId,
-          leadId: row.id,
         },
       }
     },
@@ -3143,12 +3248,20 @@ export interface DeploymentRecord {
   status: DeploymentStatus
   url: string | null
   errorCode: DeploymentErrorCode | null
+  leadFormsLive: boolean
   createdAt: Date
   updatedAt: Date
 }
 
+export interface DeploymentLeadFormBinding {
+  publicBindingId: string
+  formNodeId: string
+  pageRoute: string
+}
+
 export interface DeploymentWorkerInput extends DeploymentRecord {
   document: DesignDocument
+  leadFormBindings: DeploymentLeadFormBinding[]
   connection: ProviderConnectionInternalRecord & { encryptedCredential: EncryptedProviderCredential }
 }
 
@@ -3163,7 +3276,10 @@ function safeDeploymentUrl(value: string | null): string | null {
   }
 }
 
-function mapDeployment(row: typeof deployments.$inferSelect): DeploymentRecord {
+function mapDeployment(
+  row: typeof deployments.$inferSelect,
+  leadFormsLive = false,
+): DeploymentRecord {
   return {
     id: row.id,
     projectId: row.projectId,
@@ -3174,6 +3290,7 @@ function mapDeployment(row: typeof deployments.$inferSelect): DeploymentRecord {
     status: row.status,
     url: safeDeploymentUrl(row.url),
     errorCode: row.errorCode,
+    leadFormsLive,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }
@@ -3196,6 +3313,25 @@ const deploymentArtifactSchema = z.object({
 }).strict()
 
 export function createDeploymentRepository(db: PgDatabase<PgQueryResultHKT, typeof schema>) {
+  const leadFormsLive = async (
+    deploymentId: string,
+    database: PgDatabase<PgQueryResultHKT, typeof schema> = db,
+  ): Promise<boolean> => {
+    const [binding] = await database.select({ id: leadFormBindings.id })
+      .from(leadFormBindings)
+      .where(and(
+        eq(leadFormBindings.deploymentId, deploymentId),
+        eq(leadFormBindings.status, 'active'),
+      ))
+      .limit(1)
+    return Boolean(binding)
+  }
+
+  const mappedDeployment = async (
+    row: typeof deployments.$inferSelect,
+    database: PgDatabase<PgQueryResultHKT, typeof schema> = db,
+  ) => mapDeployment(row, await leadFormsLive(row.id, database))
+
   const selectAuthorized = async (context: AuthContext, deploymentId: string) => {
     const [row] = await db.select({ deployment: deployments }).from(deployments)
       .innerJoin(workspaceMembers, and(
@@ -3214,33 +3350,54 @@ export function createDeploymentRepository(db: PgDatabase<PgQueryResultHKT, type
       const parsed = deploymentCreateSchema.safeParse(input)
       if (!parsed.success) throw new Error('invalid_deployment_input')
       if (!await createProjectRepository(db).findById(context, projectId)) throw new Error('not_found')
-      const [existing] = await db.select().from(deployments).where(and(
-        eq(deployments.projectId, projectId), eq(deployments.requestId, parsed.data.requestId),
-      )).limit(1)
-      if (existing) return { created: false, deployment: mapDeployment(existing) }
-      const [revision] = await db.select({ id: revisions.id }).from(revisions).where(and(
-        eq(revisions.id, parsed.data.revisionId), eq(revisions.projectId, projectId),
-      )).limit(1)
-      if (!revision) throw new Error('not_found')
-      const [connection] = await db.select().from(providerConnections).where(and(
-        eq(providerConnections.id, parsed.data.connectionId),
-        eq(providerConnections.workspaceId, context.workspaceId),
-        eq(providerConnections.provider, 'vercel'),
-        eq(providerConnections.status, 'connected'),
-      )).limit(1)
-      if (!connection || !encryptedCredential(connection)) throw new Error('connection_missing')
-      const [created] = await db.insert(deployments).values({
-        workspaceId: context.workspaceId,
-        projectId,
-        revisionId: revision.id,
-        connectionId: connection.id,
-        createdBy: context.userId,
-        requestId: parsed.data.requestId,
-        provider: 'vercel',
-        target: parsed.data.target,
-      }).returning()
-      if (!created) throw new Error('deployment_create_failed')
-      return { created: true, deployment: mapDeployment(created) }
+      return db.transaction(async transaction => {
+        const [existing] = await transaction.select().from(deployments).where(and(
+          eq(deployments.projectId, projectId), eq(deployments.requestId, parsed.data.requestId),
+        )).limit(1)
+        if (existing) return { created: false, deployment: await mappedDeployment(existing, transaction) }
+        const [revision] = await transaction.select({
+          id: revisions.id,
+          document: revisions.documentSnapshot,
+        }).from(revisions).where(and(
+          eq(revisions.id, parsed.data.revisionId), eq(revisions.projectId, projectId),
+        )).limit(1)
+        if (!revision) throw new Error('not_found')
+        const document = validateDesignDocument(revision.document)
+        if (!document.success) throw new Error('invalid_revision')
+        const [connection] = await transaction.select().from(providerConnections).where(and(
+          eq(providerConnections.id, parsed.data.connectionId),
+          eq(providerConnections.workspaceId, context.workspaceId),
+          eq(providerConnections.provider, 'vercel'),
+          eq(providerConnections.status, 'connected'),
+        )).limit(1)
+        if (!connection || !encryptedCredential(connection)) throw new Error('connection_missing')
+        const [created] = await transaction.insert(deployments).values({
+          workspaceId: context.workspaceId,
+          projectId,
+          revisionId: revision.id,
+          connectionId: connection.id,
+          createdBy: context.userId,
+          requestId: parsed.data.requestId,
+          provider: 'vercel',
+          target: parsed.data.target,
+        }).returning()
+        if (!created) throw new Error('deployment_create_failed')
+        for (const form of leadFormsByPage(document.data)) {
+          await transaction.insert(leadFormBindings).values({
+            workspaceId: context.workspaceId,
+            projectId,
+            deploymentId: created.id,
+            publicBindingId: randomUUID().replaceAll('-', ''),
+            revisionId: revision.id,
+            formNodeId: form.formNodeId,
+            pageRoute: form.pageRoute,
+            formTitle: form.form.title,
+            formSnapshot: structuredClone(form.form),
+            status: 'pending',
+          })
+        }
+        return { created: true, deployment: await mappedDeployment(created, transaction) }
+      })
     },
 
     async findRevision(context: AuthContext, projectId: string, revisionId: string): Promise<{ id: string; projectId: string } | null> {
@@ -3256,12 +3413,12 @@ export function createDeploymentRepository(db: PgDatabase<PgQueryResultHKT, type
       const rows = await db.select().from(deployments).where(and(
         eq(deployments.workspaceId, context.workspaceId), eq(deployments.projectId, projectId),
       )).orderBy(desc(deployments.createdAt))
-      return rows.map(mapDeployment)
+      return Promise.all(rows.map(row => mappedDeployment(row)))
     },
 
     async findById(context: AuthContext, deploymentId: string): Promise<DeploymentRecord | null> {
       const row = await selectAuthorized(context, deploymentId)
-      return row ? mapDeployment(row) : null
+      return row ? mappedDeployment(row) : null
     },
 
     async getWorkerInput(context: AuthContext, deploymentId: string): Promise<DeploymentWorkerInput | null> {
@@ -3285,9 +3442,18 @@ export function createDeploymentRepository(db: PgDatabase<PgQueryResultHKT, type
       const validation = validateDesignDocument(row.document)
       const credential = encryptedCredential(row.connection)
       if (!validation.success || !credential || row.connection.status !== 'connected') return null
+      const bindings = await db.select({
+        publicBindingId: leadFormBindings.publicBindingId,
+        formNodeId: leadFormBindings.formNodeId,
+        pageRoute: leadFormBindings.pageRoute,
+      }).from(leadFormBindings).where(and(
+        eq(leadFormBindings.deploymentId, deploymentId),
+        inArray(leadFormBindings.status, ['pending', 'active']),
+      )).orderBy(asc(leadFormBindings.createdAt))
       return {
-        ...mapDeployment(row.deployment),
+        ...await mappedDeployment(row.deployment),
         document: validation.data,
+        leadFormBindings: bindings,
         connection: { ...mapProviderConnectionInternal(row.connection), encryptedCredential: credential },
       }
     },
@@ -3403,31 +3569,95 @@ export function createDeploymentRepository(db: PgDatabase<PgQueryResultHKT, type
     async completeReady(context: AuthContext, deploymentId: string, urlInput: string): Promise<DeploymentRecord | null> {
       const url = safeDeploymentUrl(urlInput)
       if (!url) return null
-      const [updated] = await db.update(deployments).set({
-        status: 'ready', url, completedAt: new Date(),
-        leaseExpiresAt: null, lastHeartbeatAt: null, updatedAt: new Date(),
-      }).where(and(
-        eq(deployments.id, deploymentId),
-        eq(deployments.workspaceId, context.workspaceId),
-        eq(deployments.createdBy, context.userId),
-        eq(deployments.status, 'building'),
-      )).returning()
-      return updated ? mapDeployment(updated) : null
+      return db.transaction(async transaction => {
+        const [updated] = await transaction.update(deployments).set({
+          status: 'ready', url, completedAt: new Date(),
+          leaseExpiresAt: null, lastHeartbeatAt: null, updatedAt: new Date(),
+        }).where(and(
+          eq(deployments.id, deploymentId),
+          eq(deployments.workspaceId, context.workspaceId),
+          eq(deployments.createdBy, context.userId),
+          eq(deployments.status, 'building'),
+        )).returning()
+        if (!updated) return null
+        const now = new Date()
+        if (updated.target === 'production') {
+          const previous = await transaction.select({ id: deployments.id })
+            .from(deployments)
+            .where(and(
+              eq(deployments.workspaceId, updated.workspaceId),
+              eq(deployments.projectId, updated.projectId),
+              eq(deployments.target, 'production'),
+              eq(deployments.status, 'ready'),
+              sql`${deployments.id} <> ${updated.id}`,
+            ))
+          if (previous.length) {
+            await transaction.update(leadFormBindings).set({
+              status: 'disabled', disabledAt: now, updatedAt: now,
+            }).where(and(
+              inArray(leadFormBindings.deploymentId, previous.map(item => item.id)),
+              inArray(leadFormBindings.status, ['pending', 'active']),
+            ))
+          }
+        }
+        await transaction.update(leadFormBindings).set({
+          status: 'active', disabledAt: null, updatedAt: now,
+        }).where(and(
+          eq(leadFormBindings.deploymentId, updated.id),
+          eq(leadFormBindings.status, 'pending'),
+        ))
+        return mappedDeployment(updated, transaction)
+      })
+    },
+
+    async disableLeadForms(
+      context: AuthContext,
+      projectId: string,
+      deploymentId: string,
+    ): Promise<DeploymentRecord | null> {
+      if (!await createProjectRepository(db).findById(context, projectId)) return null
+      return db.transaction(async transaction => {
+        const [deployment] = await transaction.select().from(deployments).where(and(
+          eq(deployments.id, deploymentId),
+          eq(deployments.workspaceId, context.workspaceId),
+          eq(deployments.projectId, projectId),
+          eq(deployments.status, 'ready'),
+        )).limit(1)
+        if (!deployment) return null
+        const now = new Date()
+        await transaction.update(leadFormBindings).set({
+          status: 'disabled', disabledAt: now, updatedAt: now,
+        }).where(and(
+          eq(leadFormBindings.deploymentId, deployment.id),
+          inArray(leadFormBindings.status, ['pending', 'active']),
+        ))
+        return mappedDeployment(deployment, transaction)
+      })
     },
 
     async fail(context: AuthContext, deploymentId: string, errorInput: string): Promise<DeploymentRecord | null> {
       const error = deploymentErrorCodeSchema.safeParse(errorInput)
       if (!error.success) return null
-      const [updated] = await db.update(deployments).set({
-        status: 'failed', errorCode: error.data, completedAt: new Date(),
-        leaseExpiresAt: null, lastHeartbeatAt: null, updatedAt: new Date(),
-      }).where(and(
-        eq(deployments.id, deploymentId),
-        eq(deployments.workspaceId, context.workspaceId),
-        eq(deployments.createdBy, context.userId),
-        inArray(deployments.status, ['queued', 'uploading', 'building']),
-      )).returning()
-      return updated ? mapDeployment(updated) : null
+      return db.transaction(async transaction => {
+        const [updated] = await transaction.update(deployments).set({
+          status: 'failed', errorCode: error.data, completedAt: new Date(),
+          leaseExpiresAt: null, lastHeartbeatAt: null, updatedAt: new Date(),
+        }).where(and(
+          eq(deployments.id, deploymentId),
+          eq(deployments.workspaceId, context.workspaceId),
+          eq(deployments.createdBy, context.userId),
+          inArray(deployments.status, ['queued', 'uploading', 'building']),
+        )).returning()
+        if (!updated) return null
+        const now = new Date()
+        await transaction.update(leadFormBindings).set({
+          status: 'disabled', disabledAt: now, updatedAt: now,
+        }).where(and(
+          eq(leadFormBindings.deploymentId, updated.id),
+          inArray(leadFormBindings.status, ['pending', 'active']),
+        ))
+        return mappedDeployment(updated, transaction)
+      })
     },
   }
 }

@@ -111,6 +111,7 @@ interface DeploymentRuntimeConfig {
   maxPollAttempts: number
   providerTimeoutMs: number
   projectNameSecret: string
+  leadIntakeOrigin: string
   credentialKeys: string
   credentialActiveKeyVersion: number
   clientId: string
@@ -155,6 +156,30 @@ function providerSetting(name: string): string {
   const value = required(name)
   if (/^replace-with-/i.test(value)) throw new Error(`${name} is not configured`)
   return value
+}
+
+function deploymentLeadIntakeOrigin(): string {
+  const value = required('SHARE_ORIGIN')
+  let origin: URL
+  try {
+    origin = new URL(value)
+  } catch {
+    throw new Error('SHARE_ORIGIN is invalid')
+  }
+  if (
+    origin.protocol !== 'https:'
+    || origin.origin !== value
+    || origin.pathname !== '/'
+    || origin.username
+    || origin.password
+  ) {
+    throw new Error(
+      origin.protocol === 'http:'
+        ? 'SHARE_ORIGIN must use HTTPS'
+        : 'SHARE_ORIGIN is invalid',
+    )
+  }
+  return origin.origin
 }
 
 function integer(name: string, fallback: number, min: number, max: number): number {
@@ -370,6 +395,7 @@ export function loadWorkerRuntimeConfig(): WorkerRuntimeConfig {
       maxPollAttempts: integer('DEPLOY_MAX_POLL_ATTEMPTS', 30, 1, 300),
       providerTimeoutMs: integer('DEPLOY_PROVIDER_TIMEOUT_MS', 30_000, 1_000, 120_000),
       projectNameSecret: required('DEPLOY_PROJECT_NAME_SECRET'),
+      leadIntakeOrigin: deploymentLeadIntakeOrigin(),
       ...keyring,
       clientId: required('VERCEL_CLIENT_ID'),
       clientSecret: required('VERCEL_CLIENT_SECRET'),
@@ -838,6 +864,7 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
       imagePolicy,
       maxArtifactBytes: config.storage.maxArtifactBytes,
       projectNameSecret: config.deployment.projectNameSecret,
+      leadIntakeOrigin: config.deployment.leadIntakeOrigin,
       pollIntervalMs: config.deployment.pollIntervalMs,
       maxPollAttempts: config.deployment.maxPollAttempts,
       provider: deploymentProvider,

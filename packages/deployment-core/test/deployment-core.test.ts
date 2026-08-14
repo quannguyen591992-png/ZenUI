@@ -66,6 +66,7 @@ it('keeps public deployment responses redacted and validates ready URLs', () => 
     status: 'ready',
     url: 'https://zenui-test.vercel.app',
     errorCode: null,
+    leadFormsLive: true,
     createdAt: '2026-07-22T12:00:00.000Z',
     updatedAt: '2026-07-22T12:01:00.000Z',
   }

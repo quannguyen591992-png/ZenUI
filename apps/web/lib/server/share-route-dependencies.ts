@@ -21,6 +21,7 @@ import { createRuntimeLeadKeyring } from './runtime-lead-keyring'
 import { getRuntimeSession } from './runtime-session'
 import { createRandomShareSlug, validateShareOrigin } from './share-api'
 
+import type { PublicDeploymentLeadDependencies } from './public-lead-api'
 import type { PublicShareDependencies, ShareApiDependencies } from './share-api'
 
 let redis: IORedis | undefined
@@ -106,6 +107,52 @@ export function createShareRouteDependencies(): ShareApiDependencies {
   }
 }
 
+function createLeadAdmission(
+  e2eEnabled: boolean,
+): PublicShareDependencies['leadAdmission'] {
+  if (e2eEnabled) {
+    return {
+      acquire: () => Promise.resolve({ accepted: true }),
+      release: () => Promise.resolve(),
+    }
+  }
+  redis ??= new IORedis(required('REDIS_URL'), {
+    maxRetriesPerRequest: 1,
+  })
+  const admissionSecret = required('AUTH_SECRET')
+  return createRedisLeadAdmissionGate(redis, {
+    ipPublicationRunsPerWindow: integer(
+      'LEAD_IP_PUBLICATION_RUNS_PER_WINDOW',
+      10,
+      1,
+      1_000,
+    ),
+    ipPublicationWindowSeconds: integer(
+      'LEAD_IP_PUBLICATION_WINDOW_SECONDS',
+      600,
+      1,
+      86_400,
+    ),
+    publicationRunsPerWindow: integer(
+      'LEAD_PUBLICATION_RUNS_PER_WINDOW',
+      1_000,
+      1,
+      100_000,
+    ),
+    publicationWindowSeconds: integer(
+      'LEAD_PUBLICATION_WINDOW_SECONDS',
+      600,
+      1,
+      86_400,
+    ),
+  }, {
+    digest: (purpose, value) => createHmac(
+      'sha256',
+      admissionSecret,
+    ).update(`${purpose}\0${value}`).digest('hex'),
+  })
+}
+
 export function createPublicShareRouteDependencies(): PublicShareDependencies {
   const database = getDatabase()
   const links = createShareLinkRepository(database)
@@ -157,10 +204,7 @@ export function createPublicShareRouteDependencies(): PublicShareDependencies {
       admission: {
         acquire: () => Promise.resolve({ accepted: true }),
       },
-      leadAdmission: {
-        acquire: () => Promise.resolve({ accepted: true }),
-        release: () => Promise.resolve(),
-      },
+      leadAdmission: createLeadAdmission(true),
     }
   }
 
@@ -184,36 +228,40 @@ export function createPublicShareRouteDependencies(): PublicShareDependencies {
         10_000,
       ),
     }, admissionSecret),
-    leadAdmission: createRedisLeadAdmissionGate(redis, {
-      ipPublicationRunsPerWindow: integer(
-        'LEAD_IP_PUBLICATION_RUNS_PER_WINDOW',
-        10,
-        1,
-        1_000,
+    leadAdmission: createLeadAdmission(false),
+  }
+}
+
+export function createPublicDeploymentLeadRouteDependencies(): PublicDeploymentLeadDependencies {
+  const database = getDatabase()
+  const leads = createLeadRepository(database)
+  const appOrigin = required('APP_ORIGIN')
+  const shareOrigin = validateShareOrigin(
+    required('SHARE_ORIGIN'),
+    appOrigin,
+  )
+  const e2eEnabled = isE2eRuntimeEnabled()
+  return {
+    shareOrigin,
+    createRequestId: () => randomUUID(),
+    createLeadId: () => randomUUID(),
+    now: () => new Date(),
+    leadKeyring: createRuntimeLeadKeyring(),
+    leadAdmission: createLeadAdmission(e2eEnabled),
+    leads: {
+      resolveDeploymentBinding: (
+        publicBindingId,
+        pageRoute,
+        formNodeId,
+      ) => leads.resolveDeploymentBinding(
+        publicBindingId,
+        pageRoute,
+        formNodeId,
       ),
-      ipPublicationWindowSeconds: integer(
-        'LEAD_IP_PUBLICATION_WINDOW_SECONDS',
-        600,
-        1,
-        86_400,
+      resolveDeploymentReceipt: publicBindingId => (
+        leads.resolveDeploymentReceipt(publicBindingId)
       ),
-      publicationRunsPerWindow: integer(
-        'LEAD_PUBLICATION_RUNS_PER_WINDOW',
-        1_000,
-        1,
-        100_000,
-      ),
-      publicationWindowSeconds: integer(
-        'LEAD_PUBLICATION_WINDOW_SECONDS',
-        600,
-        1,
-        86_400,
-      ),
-    }, {
-      digest: (purpose, value) => createHmac(
-        'sha256',
-        admissionSecret,
-      ).update(`${purpose}\0${value}`).digest('hex'),
-    }),
+      appendEncrypted: input => leads.appendEncrypted(input),
+    },
   }
 }

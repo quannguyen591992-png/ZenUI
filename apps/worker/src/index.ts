@@ -66,7 +66,10 @@ import {
 import { VercelProviderError } from '@zenui/deployment-core/server'
 import { collectAssetReferences, parseDesignDocument } from '@zenui/design-schema'
 import { EXPORT_CONTENT_TYPE, createDeterministicSiteArchive, exportJobSchema } from '@zenui/export-core'
-import { compileStaticSite } from '@zenui/html-compiler'
+import {
+  compileStaticSite,
+  type LiveLeadFormOptions,
+} from '@zenui/html-compiler'
 import { z } from 'zod'
 
 import type {
@@ -1026,6 +1029,7 @@ async function preparePublication(
     assetStore: PublicationAssetStore
     imagePolicy?: RemoteImagePolicy
     maxArtifactBytes?: number
+    liveLeadForms?: LiveLeadFormOptions
   },
 ): Promise<{ success: true; files: PublicationFile[]; routeCount: number } | { success: false; code: 'invalid_artifact' | 'artifact_too_large' | 'storage_unavailable' }> {
   const parsed = parseDesignDocument(document, {
@@ -1069,6 +1073,9 @@ async function preparePublication(
   const compiled = compileStaticSite(parsed.data, {
     ...(dependencies.imagePolicy ? { imagePolicy: dependencies.imagePolicy } : {}),
     portableAssetPaths: Object.fromEntries(assetIds.map(id => [id, `assets/${id}.webp`])),
+    ...(dependencies.liveLeadForms
+      ? { liveLeadForms: dependencies.liveLeadForms }
+      : {}),
     ...(maxArtifactBytes ? { maxSiteBytes: maxArtifactBytes - assetBytes } : {}),
   })
   if (!compiled.success) {
@@ -1198,6 +1205,25 @@ function deploymentFailureCode(error: unknown): DeploymentErrorCode {
   return 'provider_error'
 }
 
+function deploymentLeadForms(
+  origin: string,
+  bindings: DeploymentWorkerInput['leadFormBindings'],
+): LiveLeadFormOptions {
+  return {
+    origin,
+    bindings: Object.fromEntries(bindings.map(binding => [
+      binding.formNodeId,
+      {
+        action: new URL(
+          `/d/${binding.publicBindingId}`,
+          `${origin}/`,
+        ).href,
+        pageRoute: binding.pageRoute,
+      },
+    ])),
+  }
+}
+
 function wait(milliseconds: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, milliseconds))
 }
@@ -1209,6 +1235,7 @@ export function createDeploymentProcessor(dependencies: {
   provider: DeploymentProvider
   decryptCredential(connection: DeploymentConnectionInput): string
   projectNameSecret: string
+  leadIntakeOrigin?: string
   imagePolicy?: RemoteImagePolicy
   maxArtifactBytes?: number
   pollIntervalMs?: number
@@ -1229,6 +1256,15 @@ export function createDeploymentProcessor(dependencies: {
       assetStore: dependencies.assetStore ?? { get: () => Promise.resolve(null) },
       ...(dependencies.imagePolicy ? { imagePolicy: dependencies.imagePolicy } : {}),
       ...(dependencies.maxArtifactBytes ? { maxArtifactBytes: dependencies.maxArtifactBytes } : {}),
+      ...((input.leadFormBindings?.length ?? 0) > 0
+        ? {
+            liveLeadForms: deploymentLeadForms(
+              dependencies.leadIntakeOrigin
+                ?? (() => { throw new Error('lead_intake_origin_missing') })(),
+              input.leadFormBindings,
+            ),
+          }
+        : {}),
     })
     if (!prepared.success) {
       return await dependencies.repository.fail(context, input.id, prepared.code) ?? claimed

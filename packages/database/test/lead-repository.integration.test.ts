@@ -7,8 +7,10 @@ import { drizzle } from 'drizzle-orm/pglite'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import {
+  createDeploymentRepository,
   createLeadRepository,
   createProjectRepository,
+  createProviderConnectionRepository,
   createShareLinkRepository,
   migrateTestDatabase,
 } from '../src/index'
@@ -27,6 +29,12 @@ const envelope = {
   ciphertext: Buffer.from('encrypted-lead-payload').toString('base64'),
   iv: Buffer.alloc(12, 1).toString('base64'),
   authTag: Buffer.alloc(16, 2).toString('base64'),
+  keyVersion: 1,
+}
+const encryptedCredential = {
+  ciphertext: Buffer.from('encrypted-token-bytes').toString('base64'),
+  iv: Buffer.alloc(12, 3).toString('base64'),
+  authTag: Buffer.alloc(16, 4).toString('base64'),
   keyVersion: 1,
 }
 
@@ -281,6 +289,126 @@ describe('Customer Leads repository', () => {
         leadId: first.lead.id,
       },
     })
+  })
+
+  it('resolves and persists an active Deployment Lead in the shared Inbox', async () => {
+    const db = drizzle(client, { schema })
+    const projects = createProjectRepository(db)
+    const project = await projects.create(owner, {
+      name: 'Deployment Leads project',
+      document: withLeadForm(),
+    })
+    const revision = await projects.createRevision(owner, project.id, {
+      source: 'manual', summary: 'Deploy lead form',
+    })
+    const connection = await createProviderConnectionRepository(db).connect(owner, {
+      id: crypto.randomUUID(),
+      provider: 'vercel',
+      configurationId: 'icfg_deployment_leads',
+      teamId: null,
+      scopes: ['deployment:read-write'],
+      encryptedCredential,
+    })
+    const deployments = createDeploymentRepository(db)
+    const created = await deployments.create(owner, project.id, {
+      revisionId: revision.id,
+      connectionId: connection.id,
+      requestId: crypto.randomUUID(),
+      target: 'preview',
+    })
+    const worker = await deployments.getWorkerInput(owner, created.deployment.id)
+    const binding = worker?.leadFormBindings[0]
+    expect(binding).toBeDefined()
+    await deployments.claimUploading(owner, created.deployment.id)
+    await deployments.recordArtifact(owner, created.deployment.id, {
+      artifactKey: 'deployments/private/site.bundle',
+      checksum: 'e'.repeat(64),
+      bytes: 100,
+      contentType: 'application/zip',
+      providerProjectName: 'zenui-12345678',
+      providerDeploymentId: 'dpl_lead_intake',
+    })
+    await deployments.completeReady(owner, created.deployment.id, 'https://zenui-intake.vercel.app')
+
+    const leads = createLeadRepository(db)
+    const resolved = await leads.resolveDeploymentBinding(binding!.publicBindingId, '/', 'lead-form-1')
+    expect(resolved).toMatchObject({
+      workspaceId: owner.workspaceId,
+      projectId: project.id,
+      deploymentId: created.deployment.id,
+      revisionId: revision.id,
+      deploymentOrigin: 'https://zenui-intake.vercel.app',
+      formNodeId: 'lead-form-1',
+      pageRoute: '/',
+      form: { title: 'Yêu cầu tư vấn' },
+    })
+    const leadId = crypto.randomUUID()
+    const appended = await leads.appendEncrypted({
+      bindingId: resolved!.bindingId,
+      leadId,
+      requestId: crypto.randomUUID(),
+      envelope,
+      receivedAt,
+    })
+    expect(appended.created).toBe(true)
+    expect(await leads.findEncryptedById(owner, project.id, leadId)).toMatchObject({
+      envelope,
+      context: {
+        publication: 'deployment',
+        workspaceId: owner.workspaceId,
+        projectId: project.id,
+        deploymentId: created.deployment.id,
+        revisionId: revision.id,
+        formNodeId: 'lead-form-1',
+        leadId,
+      },
+    })
+    expect(await leads.list(owner, project.id)).toEqual([
+      expect.objectContaining({ id: leadId, status: 'new' }),
+    ])
+  })
+
+  it('rejects invalid publication combinations at the database boundary', async () => {
+    const context = await provision()
+    const connection = await createProviderConnectionRepository(context.db).connect(
+      owner,
+      {
+        id: crypto.randomUUID(),
+        provider: 'vercel',
+        configurationId: 'icfg_invalid_publication',
+        teamId: null,
+        scopes: ['deployment:read-write'],
+        encryptedCredential,
+      },
+    )
+    const deployment = await createDeploymentRepository(context.db).create(
+      owner,
+      context.project.id,
+      {
+        revisionId: context.revision.id,
+        connectionId: connection.id,
+        requestId: crypto.randomUUID(),
+        target: 'preview',
+      },
+    )
+    const invalidBindingId = crypto.randomUUID()
+
+    await expect(client.query(
+      `INSERT INTO lead_form_bindings (
+        id, workspace_id, project_id, share_link_id, deployment_id,
+        public_binding_id, revision_id, form_node_id, page_route,
+        form_title, form_snapshot, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'invalid-form', '/', 'Invalid', '{}'::jsonb, 'active')`,
+      [
+        invalidBindingId,
+        owner.workspaceId,
+        context.project.id,
+        context.share.link.id,
+        deployment.deployment.id,
+        'Z'.repeat(32),
+        context.revision.id,
+      ],
+    )).rejects.toThrow(/lead_form_bindings_publication_exactly_one_check/)
   })
 
   it('atomically marks new leads contacted and makes retries idempotent', async () => {

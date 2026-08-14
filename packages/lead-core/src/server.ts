@@ -16,19 +16,41 @@ export interface EncryptedLeadPayload {
   keyVersion: number
 }
 
-export interface LeadEncryptionContext {
+interface LeadEncryptionContextBase {
   workspaceId: string
   projectId: string
-  shareLinkId: string
   revisionId: string
   formNodeId: string
   leadId: string
 }
 
+export type LeadEncryptionContext = LeadEncryptionContextBase & (
+  | {
+      publication?: 'share'
+      shareLinkId: string
+    }
+  | {
+      publication: 'deployment'
+      deploymentId: string
+    }
+)
+
 function leadAad(
   context: LeadEncryptionContext,
   keyVersion: number,
 ): Buffer {
+  if (context.publication === 'deployment') {
+    return Buffer.from([
+      'zenui-lead-payload-v2',
+      context.workspaceId,
+      context.projectId,
+      context.deploymentId,
+      context.revisionId,
+      context.formNodeId,
+      context.leadId,
+      String(keyVersion),
+    ].join('\0'), 'utf8')
+  }
   return Buffer.from([
     'zenui-lead-payload-v1',
     context.workspaceId,

@@ -64,6 +64,143 @@ test('connects Vercel and deploys one immutable revision safely', async ({ page,
   await outsider.close()
 })
 
+test('collects a Deployment lead in Customer Leads and disables future intake', async ({ page, browser }) => {
+  test.setTimeout(90_000)
+  const projectId = await createProject(page, 'Deployment Customer Leads')
+  await page.goto(`/projects/${projectId}`)
+  await openAdvancedEditor(page)
+  await page.getByRole('treeitem', {
+    name: /^Khung chứa: Khung chứa/,
+  }).click()
+  await page.getByRole('tab', { name: 'Thành phần' }).click()
+  await page.getByRole('button', {
+    name: 'Thêm Biểu mẫu khách hàng',
+  }).click()
+  const builder = page.getByRole('region', {
+    name: 'Trình tạo biểu mẫu khách hàng',
+  })
+  await builder.getByLabel('Tiêu đề biểu mẫu').fill(
+    'Nhận tư vấn Deployment E2E',
+  )
+  await builder.getByLabel('Nhãn nút gửi').fill(
+    'Gửi Deployment E2E',
+  )
+  await builder.getByRole('button', { name: 'Lưu biểu mẫu' }).click()
+  await expect(page.locator('footer').getByText('Đã lưu')).toBeVisible()
+  await createRevision(page, projectId)
+
+  await page.getByRole('button', { name: 'Triển khai' }).click()
+  const popupPromise = page.waitForEvent('popup')
+  await page.getByRole('button', { name: 'Kết nối Vercel' }).click()
+  await popupPromise
+  await expect(page.getByText('Vercel đã kết nối')).toBeVisible({
+    timeout: 10_000,
+  })
+  await page.getByRole('checkbox', { name: /xác nhận triển khai/i }).check()
+  await page.getByRole('button', { name: 'Bắt đầu triển khai' }).click()
+  await expect(page.getByText('Triển khai đã sẵn sàng')).toBeVisible({
+    timeout: 15_000,
+  })
+  await expect(page.getByText(/Lead Form đang gửi thông tin/)).toBeVisible()
+
+  const deploymentsResponse = await page.request.get(
+    `/api/v1/projects/${projectId}/deployments?workspaceId=${workspaceId}`,
+  )
+  const deployment = (await deploymentsResponse.json()).data[0] as {
+    id: string
+    leadFormsLive: boolean
+    url: string
+  }
+  expect(deployment).toMatchObject({ leadFormsLive: true })
+  expect(JSON.stringify(deployment)).not.toMatch(
+    /publicBindingId|bindingId|workspaceId|projectId/i,
+  )
+
+  const artifact = await page.request.get(
+    `/api/e2e/deployments/${deployment.id}`,
+  )
+  const archive = Buffer.from(await artifact.body()).toString('utf8')
+  const action = archive.match(
+    /action="(http:\/\/127\.0\.0\.1:3000\/d\/[A-Za-z0-9_-]{32})"/,
+  )?.[1]
+  expect(action).toBeTruthy()
+  expect(archive).not.toContain('__zenui_request_id')
+  expect(archive).toContain("script-src 'none'")
+  const formNodeId = archive.match(
+    /name="__zenui_form_node_id" type="hidden" value="([A-Za-z0-9_-]+)"/,
+  )?.[1]
+  expect(formNodeId).toBeTruthy()
+
+  const visitor = await browser.newContext()
+  const submission = await visitor.request.post(action!, {
+    headers: {
+      host: '127.0.0.1:3000',
+      origin: new URL(deployment.url).origin,
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    form: {
+      __zenui_form_node_id: formNodeId!,
+      __zenui_page_route: '/',
+      name: 'Khách Deployment E2E',
+      email: 'deployment-lead@example.test',
+    },
+    maxRedirects: 0,
+  })
+  expect(submission.status()).toBe(303)
+  expect(submission.headers().location).toMatch(
+    /^\/d\/[A-Za-z0-9_-]{32}\/__zenui\/receipt$/,
+  )
+  const receipt = await visitor.request.get(
+    `http://127.0.0.1:3000${submission.headers().location}`,
+  )
+  expect(receipt.status()).toBe(200)
+  expect(await receipt.text()).not.toContain('deployment-lead@example.test')
+  await visitor.close()
+
+  await page.bringToFront()
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  const leadsTab = page.getByRole('tab', { name: /Khách hàng/ })
+  await expect(leadsTab).toContainText('1')
+  await leadsTab.click()
+  await page.getByRole('button', {
+    name: /Nhận tư vấn Deployment E2E/,
+  }).click()
+  await expect(page.getByText('deployment-lead@example.test')).toBeVisible()
+  await page.getByRole('button', { name: 'Đánh dấu đã liên hệ' }).click()
+  await expect(leadsTab).not.toContainText('1')
+  await page.reload()
+  await page.getByRole('tab', { name: /Khách hàng/ }).click()
+  await page.getByRole('button', {
+    name: /Nhận tư vấn Deployment E2E/,
+  }).click()
+  await expect(page.getByText('Đã liên hệ').first()).toBeVisible()
+
+  const disabledManagement = await page.request.delete(
+    `/api/v1/projects/${projectId}/deployments/${deployment.id}/lead-forms?workspaceId=${workspaceId}`,
+    { headers: { origin: 'http://localhost:3000' } },
+  )
+  expect(disabledManagement.status()).toBe(200)
+  expect((await disabledManagement.json()).data).toMatchObject({
+    id: deployment.id,
+    leadFormsLive: false,
+  })
+  const disabled = await page.request.post(action!, {
+    headers: {
+      host: '127.0.0.1:3000',
+      origin: new URL(deployment.url).origin,
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    form: {
+      __zenui_form_node_id: formNodeId!,
+      __zenui_page_route: '/',
+      name: 'Không được lưu',
+      email: 'disabled@example.test',
+    },
+    maxRedirects: 0,
+  })
+  expect(disabled.status()).toBe(404)
+})
+
 test('rejects forged deployment mutation, consumes OAuth state once and disconnects', async ({ page }) => {
   const projectId = await createProject(page, 'Triển khai security')
   await createRevision(page, projectId)

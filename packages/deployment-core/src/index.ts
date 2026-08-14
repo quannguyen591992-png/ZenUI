@@ -85,6 +85,7 @@ export const deploymentPublicSchema = z.object({
   status: deploymentStatusSchema,
   url: vercelDeploymentUrlSchema.nullable(),
   errorCode: deploymentErrorCodeSchema.nullable(),
+  leadFormsLive: z.boolean(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 }).strict().superRefine((value, context) => {

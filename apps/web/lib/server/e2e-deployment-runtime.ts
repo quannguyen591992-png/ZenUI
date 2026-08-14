@@ -17,6 +17,9 @@ export function createE2eDeploymentQueue(database: PgDatabase<PgQueryResultHKT, 
   const deployments = createDeploymentRepository(database)
   const imagePolicy = createRemoteImagePolicy(process.env.REMOTE_IMAGE_HOST_ALLOWLIST ?? '')
   const assetOrigin = new URL(process.env.ASSET_ORIGIN ?? 'http://127.0.0.1:3002').origin
+  const leadIntakeOrigin = new URL(
+    process.env.SHARE_ORIGIN ?? 'http://127.0.0.1:3000',
+  ).origin
   return {
     enqueue(jobInput: unknown): Promise<void> {
       const job = deploymentJobSchema.parse(jobInput)
@@ -25,7 +28,29 @@ export function createE2eDeploymentQueue(database: PgDatabase<PgQueryResultHKT, 
           const context = { userId: job.userId, workspaceId: job.workspaceId }
           const input = await deployments.getWorkerInput(context, job.deploymentId)
           if (!input || !await deployments.claimUploading(context, job.deploymentId)) return
-          const compiled = compileStaticSite(input.document, { imagePolicy, assetOrigin })
+          const compiled = compileStaticSite(input.document, {
+            imagePolicy,
+            assetOrigin,
+            ...(input.leadFormBindings.length > 0
+              ? {
+                  liveLeadForms: {
+                    origin: leadIntakeOrigin,
+                    bindings: Object.fromEntries(
+                      input.leadFormBindings.map(binding => [
+                        binding.formNodeId,
+                        {
+                          action: new URL(
+                            `/d/${binding.publicBindingId}`,
+                            `${leadIntakeOrigin}/`,
+                          ).href,
+                          pageRoute: binding.pageRoute,
+                        },
+                      ]),
+                    ),
+                  },
+                }
+              : {}),
+          })
           if (!compiled.success) {
             await deployments.fail(context, job.deploymentId, compiled.code === 'artifact_too_large' ? compiled.code : 'invalid_artifact')
             return

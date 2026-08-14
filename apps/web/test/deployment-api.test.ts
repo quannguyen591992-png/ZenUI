@@ -13,6 +13,7 @@ const route = { params: Promise.resolve({ projectId }) }
 const queued = {
   id: deploymentId, projectId, workspaceId, revisionId, provider: 'vercel' as const,
   target: 'preview' as const, status: 'queued' as const, url: null, errorCode: null,
+  leadFormsLive: false,
   createdAt: new Date('2026-07-22T12:00:00.000Z'), updatedAt: new Date('2026-07-22T12:00:00.000Z'),
 }
 
@@ -29,6 +30,12 @@ function dependencies(overrides: Record<string, unknown> = {}) {
       create: vi.fn().mockResolvedValue({ created: true, deployment: queued }),
       list: vi.fn().mockResolvedValue([queued]),
       findById: vi.fn().mockResolvedValue(queued),
+      disableLeadForms: vi.fn().mockResolvedValue({
+        ...queued,
+        status: 'ready',
+        url: 'https://zenui-test.vercel.app',
+        leadFormsLive: false,
+      }),
       fail: vi.fn().mockResolvedValue({ ...queued, status: 'failed', errorCode: 'queue_unavailable' }),
     },
     queue: { enqueue: vi.fn().mockResolvedValue(undefined) },
@@ -73,7 +80,7 @@ describe('deployment API', () => {
   it('does not enqueue idempotent duplicates and returns safe rate/queue errors', async () => {
     const duplicate = dependencies({ deployments: {
       create: vi.fn().mockResolvedValue({ created: false, deployment: queued }),
-      list: vi.fn(), findById: vi.fn(), fail: vi.fn(),
+      list: vi.fn(), findById: vi.fn(), disableLeadForms: vi.fn(), fail: vi.fn(),
     } })
     expect((await createDeploymentHandlers(duplicate).POST(post(createBody), route)).status).toBe(202)
     expect(duplicate.queue.enqueue).not.toHaveBeenCalled()
@@ -89,6 +96,61 @@ describe('deployment API', () => {
     expect(response.status).toBe(503)
     expect(failed.deployments.fail).toHaveBeenCalledWith(expect.any(Object), deploymentId, 'queue_unavailable')
     expect(JSON.stringify(await response.json())).not.toContain('provider-secret')
+  })
+
+  it('disables live Deployment Lead Forms with exact Origin and project authorization', async () => {
+    const deps = dependencies()
+    const handlers = createDeploymentHandlers(deps)
+    const request = new Request(
+      `http://localhost/api/v1/projects/${projectId}/deployments/${deploymentId}/lead-forms?workspaceId=${workspaceId}`,
+      { method: 'DELETE', headers: { origin: 'http://localhost:3000' } },
+    )
+    const response = await handlers.DELETE_LEAD_FORMS(request, {
+      params: Promise.resolve({ projectId, deploymentId }),
+    })
+    expect(response.status).toBe(200)
+    expect(deps.deployments.disableLeadForms).toHaveBeenCalledWith(
+      { userId, workspaceId },
+      projectId,
+      deploymentId,
+    )
+    expect(await response.json()).toMatchObject({
+      data: { id: deploymentId, leadFormsLive: false },
+    })
+
+    const denied = await handlers.DELETE_LEAD_FORMS(new Request(request.url, {
+      method: 'DELETE',
+      headers: { origin: 'https://evil.test' },
+    }), {
+      params: Promise.resolve({ projectId, deploymentId }),
+    })
+    expect(denied.status).toBe(403)
+  })
+
+  it('denies viewer and cross-project Deployment Lead Form management', async () => {
+    const request = new Request(
+      `http://localhost/api?workspaceId=${workspaceId}`,
+      { method: 'DELETE', headers: { origin: 'http://localhost:3000' } },
+    )
+    const viewer = dependencies({
+      findMembership: vi.fn().mockResolvedValue({
+        userId, workspaceId, role: 'viewer',
+      }),
+    })
+    expect((await createDeploymentHandlers(viewer).DELETE_LEAD_FORMS(
+      request,
+      { params: Promise.resolve({ projectId, deploymentId }) },
+    )).status).toBe(403)
+    expect(viewer.deployments.disableLeadForms).not.toHaveBeenCalled()
+
+    const crossProject = dependencies({
+      findProject: vi.fn().mockResolvedValue(null),
+    })
+    expect((await createDeploymentHandlers(crossProject).DELETE_LEAD_FORMS(
+      request,
+      { params: Promise.resolve({ projectId, deploymentId }) },
+    )).status).toBe(404)
+    expect(crossProject.deployments.disableLeadForms).not.toHaveBeenCalled()
   })
 
   it('returns only redacted tenant-scoped list and item resources', async () => {

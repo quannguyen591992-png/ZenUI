@@ -53,7 +53,7 @@ export const designDirectionStatus = pgEnum('design_direction_status', [
 ])
 export const exportStatus = pgEnum('export_status', ['queued', 'running', 'completed', 'failed'])
 export const shareLinkStatus = pgEnum('share_link_status', ['active', 'disabled'])
-export const leadBindingStatus = pgEnum('lead_binding_status', ['active', 'disabled'])
+export const leadBindingStatus = pgEnum('lead_binding_status', ['pending', 'active', 'disabled'])
 export const leadSubmissionStatus = pgEnum('lead_submission_status', ['new', 'contacted'])
 export const providerConnectionStatus = pgEnum('provider_connection_status', ['connected', 'disconnected', 'disabled'])
 export const deploymentTarget = pgEnum('deployment_target', ['preview', 'production'])
@@ -411,7 +411,9 @@ export const leadFormBindings = pgTable('lead_form_bindings', {
   id: uuid('id').primaryKey().defaultRandom(),
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
   projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
-  shareLinkId: uuid('share_link_id').notNull().references(() => shareLinks.id, { onDelete: 'cascade' }),
+  shareLinkId: uuid('share_link_id').references(() => shareLinks.id, { onDelete: 'cascade' }),
+  deploymentId: uuid('deployment_id').references((): AnyPgColumn => deployments.id, { onDelete: 'cascade' }),
+  publicBindingId: text('public_binding_id').notNull(),
   revisionId: uuid('revision_id').notNull().references(() => revisions.id, { onDelete: 'restrict' }),
   formNodeId: text('form_node_id').notNull(),
   pageRoute: text('page_route').notNull(),
@@ -423,8 +425,11 @@ export const leadFormBindings = pgTable('lead_form_bindings', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, table => [
   unique('lead_form_bindings_share_form_unique').on(table.shareLinkId, table.formNodeId),
+  unique('lead_form_bindings_deployment_form_unique').on(table.deploymentId, table.formNodeId),
+  unique('lead_form_bindings_public_binding_unique').on(table.publicBindingId),
   index('lead_form_bindings_project_idx').on(table.projectId),
   index('lead_form_bindings_share_idx').on(table.shareLinkId),
+  index('lead_form_bindings_deployment_idx').on(table.deploymentId),
   index('lead_form_bindings_revision_idx').on(table.revisionId),
 ])
 
@@ -433,7 +438,8 @@ export const leadSubmissions = pgTable('lead_submissions', {
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
   projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
   bindingId: uuid('binding_id').notNull().references(() => leadFormBindings.id, { onDelete: 'cascade' }),
-  shareLinkId: uuid('share_link_id').notNull().references(() => shareLinks.id, { onDelete: 'cascade' }),
+  shareLinkId: uuid('share_link_id').references(() => shareLinks.id, { onDelete: 'cascade' }),
+  deploymentId: uuid('deployment_id').references((): AnyPgColumn => deployments.id, { onDelete: 'cascade' }),
   revisionId: uuid('revision_id').notNull().references(() => revisions.id, { onDelete: 'restrict' }),
   requestId: uuid('request_id').notNull(),
   formNodeId: text('form_node_id').notNull(),
