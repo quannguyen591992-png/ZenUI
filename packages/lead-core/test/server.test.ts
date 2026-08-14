@@ -8,12 +8,22 @@ import {
 const key1 = Buffer.alloc(32, 1).toString('base64')
 const key2 = Buffer.alloc(32, 2).toString('base64')
 const context = {
+  publication: 'share' as const,
   workspaceId: '22222222-2222-4222-8222-222222222222',
   projectId: '33333333-3333-4333-8333-333333333333',
   shareLinkId: '44444444-4444-4444-8444-444444444444',
   revisionId: '55555555-5555-4555-8555-555555555555',
   formNodeId: 'lead-form-1',
   leadId: '66666666-6666-4666-8666-666666666666',
+}
+const deploymentContext = {
+  publication: 'deployment' as const,
+  workspaceId: context.workspaceId,
+  projectId: context.projectId,
+  deploymentId: '77777777-7777-4777-8777-777777777777',
+  revisionId: context.revisionId,
+  formNodeId: context.formNodeId,
+  leadId: context.leadId,
 }
 const payload = {
   formTitle: 'Yêu cầu tư vấn',
@@ -36,6 +46,21 @@ describe('lead encryption keyring', () => {
 
     const previous = createLeadKeyring({ activeKeyVersion: 1, keys: { 1: key1 } }).encrypt(payload, context)
     expect(keyring.decrypt(previous, context)).toEqual(payload)
+  })
+
+  it('domain-separates deployment payloads while retaining the exact Share context', () => {
+    const keyring = createLeadKeyring({ activeKeyVersion: 2, keys: { 1: key1, 2: key2 } })
+    const shareEnvelope = keyring.encrypt(payload, context)
+    const deploymentEnvelope = keyring.encrypt(payload, deploymentContext)
+
+    expect(keyring.decrypt(shareEnvelope, context)).toEqual(payload)
+    expect(keyring.decrypt(deploymentEnvelope, deploymentContext)).toEqual(payload)
+    expect(() => keyring.decrypt(deploymentEnvelope, {
+      ...deploymentContext,
+      deploymentId: '88888888-8888-4888-8888-888888888888',
+    })).toThrow('lead_decryption_failed')
+    expect(() => keyring.decrypt(deploymentEnvelope, context)).toThrow('lead_decryption_failed')
+    expect(() => keyring.decrypt(shareEnvelope, deploymentContext)).toThrow('lead_decryption_failed')
   })
 
   it('fails closed when ciphertext, AAD context, or key version changes', () => {

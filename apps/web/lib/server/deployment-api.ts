@@ -31,6 +31,11 @@ export interface DeploymentApiDependencies {
     }): Promise<{ created: boolean; deployment: DeploymentRecord }>
     list(context: AuthContext, projectId: string): Promise<DeploymentRecord[]>
     findById(context: AuthContext, deploymentId: string): Promise<DeploymentRecord | null>
+    disableLeadForms(
+      context: AuthContext,
+      projectId: string,
+      deploymentId: string,
+    ): Promise<DeploymentRecord | null>
     fail(context: AuthContext, deploymentId: string, code: string): Promise<DeploymentRecord | null>
   }
   queue: { enqueue(job: z.infer<typeof deploymentJobSchema>): Promise<void> }
@@ -73,6 +78,7 @@ function safeDeployment(deployment: DeploymentRecord) {
     status: deployment.status,
     url: deployment.url,
     errorCode: deployment.errorCode,
+    leadFormsLive: deployment.leadFormsLive,
     createdAt: deployment.createdAt.toISOString(),
     updatedAt: deployment.updatedAt.toISOString(),
   })
@@ -145,6 +151,35 @@ export function createDeploymentHandlers(deps: DeploymentApiDependencies) {
         if (!deployment || deployment.projectId !== projectId) throw new ApiError('not_found', 'Resource not found', 404)
         return successResponse(safeDeployment(deployment), { headers: { 'cache-control': 'private, no-store' } })
       } catch (error) { return errorResponse(error) }
+    },
+
+    async DELETE_LEAD_FORMS(
+      request: Request,
+      route: {
+        params: Promise<{ projectId: string; deploymentId: string }>
+      },
+    ) {
+      try {
+        trustedOrigin(request, deps.trustedOrigin)
+        const context = await authorize(deps, workspaceFrom(request))
+        const { projectId, deploymentId } = await route.params
+        if (!await deps.findProject(context, projectId)) {
+          throw new ApiError('not_found', 'Resource not found', 404)
+        }
+        const deployment = await deps.deployments.disableLeadForms(
+          context,
+          projectId,
+          deploymentId,
+        )
+        if (!deployment) {
+          throw new ApiError('not_found', 'Resource not found', 404)
+        }
+        return successResponse(safeDeployment(deployment), {
+          headers: { 'cache-control': 'private, no-store' },
+        })
+      } catch (error) {
+        return errorResponse(error)
+      }
     },
   }
 }

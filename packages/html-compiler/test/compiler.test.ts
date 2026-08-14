@@ -284,6 +284,89 @@ describe('standalone HTML compiler', () => {
     expect(compiled.csp).toContain("connect-src 'none'")
   })
 
+  it('activates static deployment Lead Forms per canonical route without a fixed request ID', () => {
+    const document = migrateDesignDocumentV1ToV2(withLeadForm())
+    document.nodes['about-root'] = {
+      id: 'about-root', type: 'page', parentId: null, children: ['about-section'], props: {}, style: {}, responsive: {},
+    }
+    document.nodes['about-section'] = {
+      id: 'about-section', type: 'section', parentId: 'about-root', children: ['about-container'],
+      props: { label: 'About form' }, style: {}, responsive: {},
+    }
+    document.nodes['about-container'] = {
+      id: 'about-container', type: 'container', parentId: 'about-section', children: ['about-form'],
+      props: {}, style: {}, responsive: {},
+    }
+    document.nodes['about-form'] = {
+      ...structuredClone(document.nodes['lead-form-1']!),
+      id: 'about-form',
+      parentId: 'about-container',
+    }
+    document.pages.push({ id: 'about', name: 'About', slug: '/about', rootNodeId: 'about-root' })
+
+    const compiled = compileStaticSite(document, {
+      liveLeadForms: {
+        origin: 'https://share.example.test',
+        bindings: {
+          'lead-form-1': {
+            action: 'https://share.example.test/d/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+            pageRoute: '/',
+          },
+          'about-form': {
+            action: 'https://share.example.test/d/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+            pageRoute: '/about',
+          },
+        },
+      },
+    })
+
+    expect(compiled.success, compiled.success ? '' : compiled.message).toBe(true)
+    if (!compiled.success) return
+    const home = compiled.files.find(file => file.route === '/')!
+    const about = compiled.files.find(file => file.route === '/about')!
+    expect(home.html).toContain('action="https://share.example.test/d/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" method="post"')
+    expect(about.html).toContain('action="https://share.example.test/d/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" method="post"')
+    for (const file of compiled.files) {
+      expect(file.html).not.toContain('__zenui_request_id')
+      expect(file.html).toContain('name="__zenui_form_node_id" type="hidden"')
+      expect(file.html).toContain(`name="__zenui_page_route" type="hidden" value="${file.route}"`)
+      expect(file.html).not.toMatch(/<script|\son\w+=/i)
+      expect(file.html).toContain('<meta name="referrer" content="origin">')
+      expect(file.csp).toContain('form-action https://share.example.test')
+      expect(file.csp).toContain("script-src 'none'")
+      expect(file.csp).toContain("connect-src 'none'")
+    }
+  })
+
+  it('rejects deployment authority with a request ID or malformed locator', () => {
+    const withRequestId = compileStandaloneHtml(withLeadForm(), {
+      liveLeadForms: {
+        origin: 'https://share.example.test',
+        bindings: {
+          'lead-form-1': {
+            action: 'https://share.example.test/d/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+            requestId: '11111111-1111-4111-8111-111111111111',
+            pageRoute: '/',
+          },
+        },
+      },
+    })
+    const malformedLocator = compileStandaloneHtml(withLeadForm(), {
+      liveLeadForms: {
+        origin: 'https://share.example.test',
+        bindings: {
+          'lead-form-1': {
+            action: 'https://share.example.test/d/not-safe',
+            pageRoute: '/',
+          },
+        },
+      },
+    })
+
+    expect(withRequestId).toMatchObject({ success: false, code: 'invalid_live_form_config' })
+    expect(malformedLocator).toMatchObject({ success: false, code: 'invalid_live_form_config' })
+  })
+
   it('rejects malformed or cross-origin managed Lead Form authority', () => {
     const loopback = compileStandaloneHtml(withLeadForm(), {
       liveLeadForms: {

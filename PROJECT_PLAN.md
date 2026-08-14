@@ -2123,9 +2123,33 @@ Automated evidence gần nhất:
 - Full-run log cũng tái hiện GitHub server action được render trong E2E mode dù GitHub credentials không được cấu hình, đúng lỗi owner gặp khi local server chạy sai mode. RED `access-surfaces.test.tsx` fail vì nút GitHub vẫn tồn tại; minimal GREEN chỉ render GitHub action khi cả ID/secret có cấu hình, vẫn ưu tiên local button trong local mode và hiện safe inactive status khi cả hai đường đều tắt. Focused Web tests passed `11/11`, Web typecheck/lint passed, Chromium public-access/axe passed `4/4`; code GitHub OAuth vẫn được giữ nhưng inactive/unconfigured, local account flow không bị refactor.
 - Local-live follow-up ngày 2026-08-13 tái hiện managed Share hiện có trả HTTP 500 vì cấu hình `LEAD_ENCRYPTION_KEYS` local thiếu/không hợp lệ; RED focused test fail đúng tại keyring boundary. Minimal GREEN hợp nhất keyring theo runtime: E2E giữ deterministic isolated key, guarded local mode dẫn xuất stable AES-256 key có domain separation từ local `AUTH_SECRET`, production vẫn fail closed và bắt buộc dedicated keyring/version. Không sửa `.env`, không đổi local auth, không tạo Share mới và không lộ Share slug/Lead PII/crypto material. Chính Share cũ sau hot reload trả HTTP 200; automated local-live journey GREEN: safe receipt, new-count tăng, Inbox list/detail 200, contacted 200, count giảm và contacted tồn tại sau đọc lại. Focused Lead+Share regression `32/32`, Web typecheck/lint/build và scoped `git diff --check` GREEN.
 
+### Vercel Deployment Customer Leads
+
+**Status:** Completed ngày 2026-08-14 sau khi automated gates xanh và owner hoàn tất live acceptance trên immutable Vercel deployment thật qua HTTPS intake origin do owner cấu hình. Owner xác nhận toàn bộ journey thành công: submit form, safe receipt, Inbox/badge/detail, contacted persistence và disable future intake. Managed Share Customer Leads ở trên vẫn `Completed`; Stage 10B1 vẫn `In review`.
+
+- [x] Deployment tạo pending Lead binding từ exact immutable revision; chỉ canonical ready `https://*.vercel.app` mới activate. Failed deployment disable fail closed; production replacement chỉ disable production binding cũ, preview độc lập.
+- [x] Static Deployment HTML POST tới opaque `/d/{publicBindingId}` trên isolated `SHARE_ORIGIN`; server tạo request ID cho từng POST. Không nhúng secret hoặc fixed request UUID; không tuyên bố exact-once và network retry có thể tạo lead thứ hai.
+- [x] Intake yêu cầu exact intake Host, exact canonical Deployment Origin, active binding, ready deployment, exact route/form metadata, bounded URL-encoded body và duplicate-free fields; AES-256-GCM dùng domain-separated Deployment AAD v2. Share ciphertext/AAD v1 giữ compatibility.
+- [x] Encrypt và durable append hoàn tất trước 303 receipt; receipt không echo PII. Deployment lead dùng chung project Inbox/badge/detail/contacted/retention với Share lead.
+- [x] Public Deployment DTO chỉ thêm `leadFormsLive`; không trả binding locator, workspace/project/provider internals. Owner có thể “Tắt nhận khách hàng” mà không xóa deployment hoặc leads cũ; không có re-enable ngầm.
+- [x] Preview/default compiler/ZIP Export tiếp tục visual-only; `script-src 'none'`, `connect-src 'none'` và default `form-action 'none'` không bị nới lỏng. Deployment artifact chỉ có exact intake `form-action` do server sở hữu.
+- [x] Live smoke đầu tiên phát hiện cross-origin Deployment form gửi `Origin: null` vì artifact dùng `Referrer-Policy: same-origin`; compiler đã có RED→GREEN để chỉ Deployment live dùng `origin`, qua đó gửi canonical origin mà không lộ path/query/PII. Managed Share tiếp tục `same-origin`; visual-only tiếp tục `no-referrer`.
+
+Automated evidence ngày 2026-08-14:
+
+- Focused package/API/UI gates GREEN: Lead Core `6/6` tại TDD cycle; HTML Compiler `22/22`; Database cuối `87/87`; Deployment Core `16/16`; Worker cuối `81/81`; Web Deployment API/UI/public Lead targets cuối `23/23`. Workspace test `31/31` Turbo tasks GREEN; Web full `369/369` tại run trước nhánh coverage và Web coverage run cuối `370/370`.
+- Focused Deployment → Customer Leads Playwright GREEN `3/3` trên Chromium, `3/3` Firefox và `3/3` WebKit: immutable artifact, exact simulated `.vercel.app` Origin, safe receipt, badge/Inbox/detail/contacted/reload và disabled binding trả 404. Managed Share regression GREEN `3/3` trên cả ba browser; WebKit invocation đầu bị 404 tại E2E reset do ba Playwright web servers chạy song song, isolated rerun ngay sau đó GREEN `3/3`.
+- Full gates GREEN: `pnpm test` `31/31` tasks; `pnpm test:coverage` `31/31` tasks và mọi configured metric ≥80% (Database branches `80.16%`; Web branches `80.06%`); `pnpm typecheck` `17/17`; `pnpm lint` `17/17`; `pnpm build` `17/17`; `git diff --check` không có whitespace error (chỉ LF→CRLF notices).
+- Live smoke referrer fix focused gates GREEN: HTML Compiler RED đúng `same-origin` rồi GREEN `22/22`; coverage statements `93.18%`, branches `87.71%`, functions `100%`, lines `96.81%`; typecheck/lint GREEN; Worker regression `81/81`; scoped `git diff --check` không có whitespace error.
+- Migration journal đã đăng ký `0017_deployment_leads`; database exactly-one test dùng deployment ID có foreign key hợp lệ và assert đúng named check constraint. Scoped security/redaction review không thấy Lead PII/crypto material/public binding locator trong public DTO, queue payload, metrics hoặc routine failure logs. Automated verification không gọi Gemini/Pexels/Vercel/email/CRM/webhook/payment provider; live owner smoke dùng provider đã được owner chủ động cấu hình. Local login/GitHub OAuth không đổi.
+
+Live acceptance ngày 2026-08-14:
+
+- [x] Owner triển khai immutable revision lên Vercel thật, gửi fixture không nhạy cảm từ canonical ready URL qua HTTPS intake origin, nhận safe receipt, xác nhận lead xuất hiện trong đúng project Inbox/badge/detail, đánh dấu contacted và reload vẫn giữ trạng thái, sau đó “Tắt nhận khách hàng” và xác nhận toàn bộ journey thành công.
+
 ### Later capabilities
 
-- [ ] Immutable Vercel Deployment publication binding after managed Share Customer Leads is accepted.
+- [x] Immutable Vercel Deployment publication binding completed with live owner acceptance ngày 2026-08-14.
 - [ ] Durable email notification with Inbox-first persistence.
 - [ ] Typed HTTPS booking/checkout links without card collection, arbitrary widgets or script relaxation.
 - [ ] Owner-only signed webhook/CRM with SSRF/replay/retry controls and Inbox fallback.

@@ -793,10 +793,33 @@ describe('AI worker boundary', () => {
         target: 'preview',
         document: (() => {
           const document = migrateDesignDocumentV1ToV2(createValidDesignFixture())
+          document.nodes['lead-form-1'] = {
+            id: 'lead-form-1',
+            type: 'lead-form',
+            parentId: 'container-1',
+            children: [],
+            props: {
+              title: 'Request a consultation',
+              description: 'Tell us how we can help.',
+              submitLabel: 'Send request',
+              successCopy: 'Thank you. We will be in touch.',
+              fields: [{
+                key: 'email', type: 'email', label: 'Email', required: true,
+              }],
+            },
+            style: {},
+            responsive: {},
+          }
+          document.nodes['container-1']!.children.push('lead-form-1')
           document.nodes['about-root'] = { id: 'about-root', type: 'page', parentId: null, children: [], props: {}, style: {}, responsive: {} }
           document.pages.push({ id: 'about', name: 'About', slug: '/about', rootNodeId: 'about-root' })
           return document
         })(),
+        leadFormBindings: [{
+          publicBindingId: 'A'.repeat(32),
+          formNodeId: 'lead-form-1',
+          pageRoute: '/',
+        }],
         connection: {
           id: '99999999-9999-4999-8999-999999999999',
           workspaceId: job.workspaceId,
@@ -835,6 +858,7 @@ describe('AI worker boundary', () => {
       provider,
       decryptCredential: vi.fn().mockReturnValue('provider-secret-token'),
       projectNameSecret: 'project-name-secret',
+      leadIntakeOrigin: 'https://share.zenui.example',
       pollIntervalMs: 1,
       maxPollAttempts: 3,
     })
@@ -850,10 +874,25 @@ describe('AI worker boundary', () => {
       target: 'preview',
       files: [
         expect.objectContaining({ path: 'about/index.html' }),
-        expect.objectContaining({ path: 'index.html', content: expect.stringContaining('Build your next product') }),
+        expect.objectContaining({
+          path: 'index.html',
+          content: expect.stringMatching(
+            /action="https:\/\/share\.zenui\.example\/d\/[A]{32}"[^>]*method="post"/,
+          ),
+        }),
       ],
       name: expect.stringMatching(/^zenui-[a-f0-9]{16}$/),
     }))
+    const deploymentRequest = provider.createDeployment.mock.calls[0]?.[1] as {
+      files: Array<{ path: string; content: string | Uint8Array }>
+    }
+    const deploymentHtml = deploymentRequest.files.find(file => (
+      file.path === 'index.html'
+    ))?.content
+    expect(deploymentHtml).toContain('Build your next product')
+    expect(deploymentHtml).toContain('name="__zenui_form_node_id" type="hidden" value="lead-form-1"')
+    expect(deploymentHtml).toContain('name="__zenui_page_route" type="hidden" value="/"')
+    expect(deploymentHtml).not.toContain('__zenui_request_id')
     expect(JSON.stringify(provider.createDeployment.mock.calls)).not.toContain('encrypted')
     expect(repository.recordArtifact).toHaveBeenCalledWith(expect.any(Object), deploymentId, expect.objectContaining({
       providerDeploymentId: 'dpl_test', checksum: expect.stringMatching(/^[a-f0-9]{64}$/),

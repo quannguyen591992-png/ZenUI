@@ -114,14 +114,19 @@ function validatedLiveLeadForms(input: LiveLeadFormOptions | undefined): {
     } catch {
       return { success: false, code: 'invalid_live_form_config', message: 'Live Lead Form action is invalid' }
     }
+    const isManagedShare = /^\/s\/[A-Za-z0-9_-]{32}$/.test(action.pathname)
+    const isDeployment = /^\/d\/[A-Za-z0-9_-]{32}$/.test(action.pathname)
+    const validRequestAuthority = isManagedShare
+      ? typeof binding.requestId === 'string'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(binding.requestId)
+      : isDeployment && binding.requestId === undefined
     if (
       !/^[A-Za-z][A-Za-z0-9_-]{0,99}$/.test(formNodeId)
       || action.origin !== origin.origin
       || binding.action !== action.href
-      || !/^\/s\/[A-Za-z0-9_-]{32}$/.test(action.pathname)
+      || !validRequestAuthority
       || action.search
       || action.hash
-      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(binding.requestId)
       || !/^\/(?:[a-z0-9]+(?:-[a-z0-9]+)*(?:\/[a-z0-9]+(?:-[a-z0-9]+)*)*)?$/.test(binding.pageRoute)
     ) {
       return { success: false, code: 'invalid_live_form_config', message: 'Live Lead Form binding is invalid' }
@@ -169,9 +174,16 @@ export function compileStandaloneHtml(
   const body = serializeNode(plan.root)
   const title = escapeHtml(options.title ?? 'ZenUI Export')
   const robots = options.robots ? `\n<meta name="robots" content="${options.robots}">` : ''
-  const referrerPolicy = liveLeadForms.options
-    ? 'same-origin'
-    : 'no-referrer'
+  const deploymentLeadForms = liveLeadForms.options
+    ? Object.values(liveLeadForms.options.bindings).some(binding => (
+        new URL(binding.action).pathname.startsWith('/d/')
+      ))
+    : false
+  const referrerPolicy = deploymentLeadForms
+    ? 'origin'
+    : liveLeadForms.options
+      ? 'same-origin'
+      : 'no-referrer'
   const html = `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<meta name="referrer" content="${referrerPolicy}">${robots}\n<meta http-equiv="Content-Security-Policy" content="${policy}">\n<title>${title}</title>\n<style>${plan.css}</style>\n</head>\n<body>${body}</body>\n</html>\n`
   const bytes = Buffer.byteLength(html, 'utf8')
   if (bytes > (options.maxArtifactBytes ?? DEFAULT_MAX_ARTIFACT_BYTES)) {
@@ -208,6 +220,7 @@ export function compileStaticSite(
     assetOrigin?: string
     portableAssetPaths?: Readonly<Record<string, string>>
     routePrefix?: string
+    liveLeadForms?: LiveLeadFormOptions
   } = {},
 ): CompileStaticSiteResult {
   const base = buildRenderPlan(input, {
@@ -232,7 +245,9 @@ export function compileStaticSite(
       ...(options.assetOrigin ? { assetOrigin: options.assetOrigin } : {}),
       ...(options.portableAssetPaths ? { portableAssetPaths: relativeAssetPaths(path, options.portableAssetPaths) } : {}),
       ...(options.routePrefix ? { routePrefix: options.routePrefix } : {}),
+      ...(options.liveLeadForms ? { liveLeadForms: options.liveLeadForms } : {}),
       pageId: page.id,
+      route: page.slug,
     })
     if (!compiled.success) return compiled
     files.push({

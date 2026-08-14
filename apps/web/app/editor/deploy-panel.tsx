@@ -31,6 +31,11 @@ export interface DeployApi {
     confirmed: true
   }): Promise<DeploymentPublic>
   get(projectId: string, workspaceId: string, deploymentId: string): Promise<DeploymentPublic>
+  disableLeadForms(
+    projectId: string,
+    workspaceId: string,
+    deploymentId: string,
+  ): Promise<DeploymentPublic>
 }
 
 async function data<T>(response: Response): Promise<T> {
@@ -65,6 +70,13 @@ export const browserDeployApi: DeployApi = {
     const result = await data<unknown>(await fetch(`/api/v1/projects/${projectId}/deployments/${deploymentId}?workspaceId=${encodeURIComponent(workspaceId)}`))
     return deploymentPublicSchema.parse(result)
   },
+  async disableLeadForms(projectId, workspaceId, deploymentId) {
+    const result = await data<unknown>(await fetch(
+      `/api/v1/projects/${projectId}/deployments/${deploymentId}/lead-forms?workspaceId=${encodeURIComponent(workspaceId)}`,
+      { method: 'DELETE' },
+    ))
+    return deploymentPublicSchema.parse(result)
+  },
 }
 
 interface DeployPanelProps {
@@ -83,6 +95,7 @@ export function DeployPanel({ projectId, workspaceId, revisions, api = browserDe
   const [target, setTarget] = useState<'preview' | 'production'>('preview')
   const [confirmed, setConfirmed] = useState(false)
   const [deployment, setDeployment] = useState<DeploymentPublic | null>(null)
+  const [leadFormsDisabled, setLeadFormsDisabled] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const timer = useRef<number | null>(null)
@@ -196,6 +209,7 @@ export function DeployPanel({ projectId, workspaceId, revisions, api = browserDe
       const created = await api.create(projectId, {
         workspaceId, revisionId, requestId: crypto.randomUUID(), target, confirmed: true,
       })
+      setLeadFormsDisabled(false)
       setDeployment(created)
       await pollDeployment(created.id)
     } catch {
@@ -203,6 +217,24 @@ export function DeployPanel({ projectId, workspaceId, revisions, api = browserDe
       setError('Không thể bắt đầu triển khai.')
     } finally {
       submitting.current = false
+    }
+  }
+
+  const disableLeadForms = async (): Promise<void> => {
+    if (!deployment?.leadFormsLive || busy) return
+    setBusy(true)
+    setError('')
+    try {
+      setDeployment(await api.disableLeadForms(
+        projectId,
+        workspaceId,
+        deployment.id,
+      ))
+      setLeadFormsDisabled(true)
+    } catch {
+      setError('Không thể tắt nhận khách hàng.')
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -263,6 +295,20 @@ export function DeployPanel({ projectId, workspaceId, revisions, api = browserDe
             <div>
               <p role="status">Triển khai đã sẵn sàng</p>
               <a href={deployment.url} target="_blank" rel="noreferrer">Mở website đã triển khai</a>
+              {deployment.leadFormsLive ? (
+                <div>
+                  <p>Lead Form đang gửi thông tin về Customer Leads. Dữ liệu được lưu tối đa 90 ngày.</p>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void disableLeadForms()}
+                  >
+                    {busy ? 'Đang tắt nhận khách hàng...' : 'Tắt nhận khách hàng'}
+                  </button>
+                </div>
+              ) : leadFormsDisabled ? (
+                <p role="status">Đã tắt nhận khách hàng cho lần triển khai này.</p>
+              ) : null}
             </div>
           )}
           {deployment?.status === 'failed' && deployment.errorCode && <p role="alert">{deploymentErrorLabel(deployment.errorCode)}</p>}

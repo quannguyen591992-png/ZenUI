@@ -1,5 +1,8 @@
 import { PGlite } from '@electric-sql/pglite'
-import { createValidDesignFixture } from '@zenui/design-schema'
+import {
+  createValidDesignFixture,
+  type DesignDocument,
+} from '@zenui/design-schema'
 import { drizzle } from 'drizzle-orm/pglite'
 import { beforeEach, describe, expect, it } from 'vitest'
 
@@ -18,6 +21,36 @@ const encrypted = {
   iv: Buffer.alloc(12, 1).toString('base64'),
   authTag: Buffer.alloc(16, 2).toString('base64'),
   keyVersion: 1,
+}
+
+function withLeadForm(): DesignDocument {
+  const document = createValidDesignFixture()
+  document.nodes['lead-form-1'] = {
+    id: 'lead-form-1',
+    type: 'lead-form',
+    parentId: 'container-1',
+    children: [],
+    props: {
+      title: 'Yêu cầu tư vấn',
+      description: 'Hãy cho chúng tôi biết nhu cầu của bạn.',
+      submitLabel: 'Gửi yêu cầu',
+      successCopy: 'Cảm ơn bạn. Chúng tôi sẽ liên hệ lại.',
+      fields: [{
+        key: 'email',
+        type: 'email',
+        label: 'Email',
+        required: true,
+      }],
+      consent: {
+        label: 'Tôi đồng ý được liên hệ.',
+        required: true,
+      },
+    },
+    style: {},
+    responsive: {},
+  }
+  document.nodes['container-1']!.children.push('lead-form-1')
+  return document
 }
 
 describe('workspace-scoped provider connections and deployments', () => {
@@ -39,10 +72,10 @@ describe('workspace-scoped provider connections and deployments', () => {
     `)
   })
 
-  async function setup() {
+  async function setup(document = createValidDesignFixture()) {
     const db = drizzle(client, { schema })
     const projects = createProjectRepository(db)
-    const project = await projects.create(owner, { name: 'Deploy page', document: createValidDesignFixture() })
+    const project = await projects.create(owner, { name: 'Deploy page', document })
     const revision = await projects.createRevision(owner, project.id, { source: 'manual', summary: 'Launch' })
     const connections = createProviderConnectionRepository(db)
     const connection = await connections.connect(owner, {
@@ -106,16 +139,33 @@ describe('workspace-scoped provider connections and deployments', () => {
   })
 
   it('rejects wrong-project revisions, disconnected connections and invalid input', async () => {
-    const { db, project, connection, deployments, connections } = await setup()
+    const { db, project, revision, connection, deployments, connections } = await setup()
     const other = await createProjectRepository(db).create(owner, { name: 'Other', document: createValidDesignFixture() })
     const otherRevision = await createProjectRepository(db).createRevision(owner, other.id, { source: 'manual', summary: 'Other' })
     await expect(deployments.create(owner, project.id, {
       revisionId: otherRevision.id, connectionId: connection.id, requestId: crypto.randomUUID(), target: 'preview',
     })).rejects.toThrow('not_found')
+    await expect(deployments.create(outsider, project.id, {
+      revisionId: revision.id, connectionId: connection.id, requestId: crypto.randomUUID(), target: 'preview',
+    })).rejects.toThrow('not_found')
+    const queued = await deployments.create(owner, project.id, {
+      revisionId: revision.id,
+      connectionId: connection.id,
+      requestId: crypto.randomUUID(),
+      target: 'preview',
+    })
     await connections.disconnect(owner, connection.id)
+    expect(await deployments.getWorkerInput(
+      owner,
+      queued.deployment.id,
+    )).toBeNull()
+    expect(await deployments.getReconciliationInput(
+      owner,
+      queued.deployment.id,
+    )).toBeNull()
     await expect(deployments.create(owner, project.id, {
-      revisionId: otherRevision.id, connectionId: connection.id, requestId: crypto.randomUUID(), target: 'preview',
-    })).rejects.toThrow()
+      revisionId: revision.id, connectionId: connection.id, requestId: crypto.randomUUID(), target: 'preview',
+    })).rejects.toThrow('connection_missing')
     await expect(deployments.create(owner, project.id, {
       revisionId: 'invalid', connectionId: connection.id, requestId: crypto.randomUUID(), target: 'preview',
     })).rejects.toThrow('invalid_deployment_input')
@@ -161,7 +211,38 @@ describe('workspace-scoped provider connections and deployments', () => {
     expect(await deployments.list(owner, project.id)).toEqual([expect.objectContaining({ id: created.deployment.id })])
     expect(await deployments.findById(owner, created.deployment.id)).toMatchObject({ id: created.deployment.id, url: null })
     expect(await deployments.getWorkerInput(outsider, created.deployment.id)).toBeNull()
+    expect(await deployments.getWorkerInput(
+      owner,
+      crypto.randomUUID(),
+    )).toBeNull()
+    expect(await deployments.getReconciliationInput(
+      owner,
+      crypto.randomUUID(),
+    )).toBeNull()
+    expect(await deployments.attachProviderDeployment(
+      owner,
+      created.deployment.id,
+      { providerProjectName: 'invalid', providerDeploymentId: '' },
+    )).toBeNull()
     expect(await deployments.recordArtifact(owner, created.deployment.id, { artifactKey: '' })).toBeNull()
+    expect(await deployments.recordArtifact(owner, created.deployment.id, {
+      artifactKey: 'deployments/private/site.bundle',
+      checksum: 'f'.repeat(64),
+      bytes: 100,
+      contentType: 'application/zip',
+      providerProjectName: 'zenui-12345678',
+      providerDeploymentId: 'dpl_wrong_state',
+    })).toBeNull()
+    expect(await deployments.completeReady(
+      owner,
+      created.deployment.id,
+      'https://queued.vercel.app',
+    )).toBeNull()
+    expect(await deployments.disableLeadForms(
+      owner,
+      project.id,
+      created.deployment.id,
+    )).toBeNull()
 
     await deployments.claimUploading(owner, created.deployment.id)
     await deployments.recordArtifact(owner, created.deployment.id, {
@@ -233,6 +314,98 @@ describe('workspace-scoped provider connections and deployments', () => {
     expect((await connections.getInternal(owner, connection.id))?.encryptedCredential).toEqual(rotated)
     expect(await connections.rotateCredential(connection.id, 1, encrypted)).toBe(false)
     expect(await connections.countCredentialsByKeyVersion(2)).toBe(1)
+  })
+
+  it('provisions one pending immutable Lead binding and exposes it only to the worker', async () => {
+    const { project, revision, connection, deployments } = await setup(withLeadForm())
+    const requestId = crypto.randomUUID()
+    const first = await deployments.create(owner, project.id, {
+      revisionId: revision.id, connectionId: connection.id, requestId, target: 'preview',
+    })
+    const duplicate = await deployments.create(owner, project.id, {
+      revisionId: revision.id, connectionId: connection.id, requestId, target: 'preview',
+    })
+
+    expect(first.deployment).toMatchObject({ leadFormsLive: false })
+    expect(first.deployment).not.toHaveProperty('publicBindingId')
+    expect(duplicate.deployment.id).toBe(first.deployment.id)
+    const worker = await deployments.getWorkerInput(owner, first.deployment.id)
+    expect(worker?.leadFormBindings).toEqual([{
+      publicBindingId: expect.stringMatching(/^[A-Za-z0-9_-]{32}$/),
+      formNodeId: 'lead-form-1',
+      pageRoute: '/',
+    }])
+    const rows = await client.query<{
+      deploymentId: string | null
+      shareLinkId: string | null
+      status: string
+    }>(
+      `SELECT deployment_id AS "deploymentId", share_link_id AS "shareLinkId", status
+       FROM lead_form_bindings WHERE deployment_id = $1`,
+      [first.deployment.id],
+    )
+    expect(rows.rows).toEqual([{
+      deploymentId: first.deployment.id,
+      shareLinkId: null,
+      status: 'pending',
+    }])
+  })
+
+  it('activates ready bindings, disables failed intake, and allows an owner to turn intake off', async () => {
+    const { project, revision, connection, deployments } = await setup(withLeadForm())
+    const ready = await deployments.create(owner, project.id, {
+      revisionId: revision.id, connectionId: connection.id, requestId: crypto.randomUUID(), target: 'preview',
+    })
+    await deployments.claimUploading(owner, ready.deployment.id)
+    await deployments.recordArtifact(owner, ready.deployment.id, {
+      artifactKey: 'deployments/private/site.bundle', checksum: 'c'.repeat(64), bytes: 100,
+      contentType: 'application/zip', providerProjectName: 'zenui-12345678', providerDeploymentId: 'dpl_leads_ready',
+    })
+    expect(await deployments.completeReady(owner, ready.deployment.id, 'https://zenui-leads.vercel.app'))
+      .toMatchObject({ status: 'ready', leadFormsLive: true })
+    expect(await deployments.disableLeadForms(owner, project.id, ready.deployment.id))
+      .toMatchObject({ status: 'ready', leadFormsLive: false })
+    expect(await deployments.disableLeadForms(outsider, project.id, ready.deployment.id)).toBeNull()
+
+    const failed = await deployments.create(owner, project.id, {
+      revisionId: revision.id, connectionId: connection.id, requestId: crypto.randomUUID(), target: 'preview',
+    })
+    expect(await deployments.fail(owner, failed.deployment.id, 'queue_unavailable'))
+      .toMatchObject({ status: 'failed', leadFormsLive: false })
+    const states = await client.query<{ deploymentId: string; status: string }>(
+      `SELECT deployment_id AS "deploymentId", status FROM lead_form_bindings
+       WHERE deployment_id IN ($1, $2) ORDER BY deployment_id`,
+      [ready.deployment.id, failed.deployment.id],
+    )
+    expect(states.rows).toEqual([
+      { deploymentId: ready.deployment.id, status: 'disabled' },
+      { deploymentId: failed.deployment.id, status: 'disabled' },
+    ].sort((left, right) => left.deploymentId.localeCompare(right.deploymentId)))
+  })
+
+  it('replaces only production Lead intake while preview deployments stay live', async () => {
+    const { project, revision, connection, deployments } = await setup(withLeadForm())
+    const makeReady = async (target: 'preview' | 'production', providerDeploymentId: string, host: string) => {
+      const created = await deployments.create(owner, project.id, {
+        revisionId: revision.id, connectionId: connection.id, requestId: crypto.randomUUID(), target,
+      })
+      await deployments.claimUploading(owner, created.deployment.id)
+      await deployments.recordArtifact(owner, created.deployment.id, {
+        artifactKey: `deployments/private/${providerDeploymentId}.bundle`, checksum: 'd'.repeat(64), bytes: 100,
+        contentType: 'application/zip', providerProjectName: 'zenui-12345678', providerDeploymentId,
+      })
+      const ready = await deployments.completeReady(owner, created.deployment.id, `https://${host}.vercel.app`)
+      expect(ready).toMatchObject({ leadFormsLive: true })
+      return created.deployment.id
+    }
+
+    const firstProductionId = await makeReady('production', 'dpl_prod_one', 'zenui-prod-one')
+    const previewId = await makeReady('preview', 'dpl_preview', 'zenui-preview')
+    const secondProductionId = await makeReady('production', 'dpl_prod_two', 'zenui-prod-two')
+
+    expect(await deployments.findById(owner, firstProductionId)).toMatchObject({ leadFormsLive: false })
+    expect(await deployments.findById(owner, previewId)).toMatchObject({ leadFormsLive: true })
+    expect(await deployments.findById(owner, secondProductionId)).toMatchObject({ leadFormsLive: true })
   })
 
   it('rejects malformed provider connections before persistence', async () => {

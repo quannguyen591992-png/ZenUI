@@ -144,7 +144,7 @@ export interface RenderPlan {
 
 export interface LiveLeadFormBinding {
   action: string
-  requestId: string
+  requestId?: string
   pageRoute: string
 }
 
@@ -386,8 +386,12 @@ function leadFormPlan(
   const children: RenderPlanNode[] = [textPlan('h2', node.props.title, { id: titleId })]
   if (node.props.description) children.push(textPlan('p', node.props.description, { id: descriptionId }))
   if (live) {
+    if (live.requestId) {
+      children.push(
+        hiddenLeadInput('__zenui_request_id', live.requestId),
+      )
+    }
     children.push(
-      hiddenLeadInput('__zenui_request_id', live.requestId),
       hiddenLeadInput('__zenui_form_node_id', node.id),
       hiddenLeadInput('__zenui_page_route', live.pageRoute),
     )

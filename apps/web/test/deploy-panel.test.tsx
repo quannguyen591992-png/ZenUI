@@ -13,10 +13,10 @@ const connectionId = '44444444-4444-4444-8444-444444444444'
 const deploymentId = '55555555-5555-4555-8555-555555555555'
 const revision = { id: revisionId, documentVersion: 1, summary: 'Launch revision', source: 'manual', createdAt: '2026-07-22T12:00:00.000Z' }
 const connection = { id: connectionId, provider: 'vercel' as const, status: 'connected' as const, connectedAt: '2026-07-22T12:00:00.000Z', updatedAt: '2026-07-22T12:00:00.000Z' }
-const queued = { id: deploymentId, revisionId, provider: 'vercel' as const, target: 'preview' as const, status: 'queued' as const, url: null, errorCode: null, createdAt: '2026-07-22T12:00:00.000Z', updatedAt: '2026-07-22T12:00:00.000Z' }
+const queued = { id: deploymentId, revisionId, provider: 'vercel' as const, target: 'preview' as const, status: 'queued' as const, url: null, errorCode: null, leadFormsLive: false, createdAt: '2026-07-22T12:00:00.000Z', updatedAt: '2026-07-22T12:00:00.000Z' }
 const uploading = { ...queued, status: 'uploading' as const }
 const building = { ...queued, status: 'building' as const }
-const ready = { ...queued, status: 'ready' as const, url: 'https://zenui-test.vercel.app' }
+const ready = { ...queued, status: 'ready' as const, url: 'https://zenui-test.vercel.app', leadFormsLive: true }
 const failedDeployment = { ...queued, status: 'failed' as const, errorCode: 'provider_error' as const }
 
 afterEach(() => {
@@ -32,6 +32,10 @@ function api(overrides: Record<string, unknown> = {}) {
     disconnect: vi.fn().mockResolvedValue({ ...connection, status: 'disconnected' }),
     create: vi.fn().mockResolvedValue(queued),
     get: vi.fn().mockResolvedValue(ready),
+    disableLeadForms: vi.fn().mockResolvedValue({
+      ...ready,
+      leadFormsLive: false,
+    }),
     ...overrides,
   }
 }
@@ -75,6 +79,53 @@ describe('DeployPanel', () => {
     expect(link).toHaveAttribute('href', 'https://zenui-test.vercel.app')
     expect(link).toHaveAttribute('target', '_blank')
     expect(link).toHaveAttribute('rel', 'noreferrer')
+  })
+
+  it('explains live Customer Leads and lets the owner disable intake without deleting the deployment', async () => {
+    const deploymentApi = api()
+    render(<DeployPanel projectId={projectId} workspaceId={workspaceId} revisions={[revision]} api={deploymentApi} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Triển khai' }))
+    await screen.findByText('Vercel đã kết nối')
+    await userEvent.click(screen.getByRole('checkbox', { name: /xác nhận triển khai/i }))
+    await userEvent.click(screen.getByRole('button', { name: 'Bắt đầu triển khai' }))
+
+    expect(await screen.findByText(/Customer Leads/)).toHaveTextContent(
+      'Lead Form đang gửi thông tin về Customer Leads. Dữ liệu được lưu tối đa 90 ngày.',
+    )
+    await userEvent.click(screen.getByRole('button', {
+      name: 'Tắt nhận khách hàng',
+    }))
+    expect(deploymentApi.disableLeadForms).toHaveBeenCalledWith(
+      projectId,
+      workspaceId,
+      deploymentId,
+    )
+    expect(await screen.findByText(
+      'Đã tắt nhận khách hàng cho lần triển khai này.',
+    )).toBeVisible()
+    expect(screen.getByRole('link', {
+      name: 'Mở website đã triển khai',
+    })).toBeVisible()
+  })
+
+  it('shows an accessible safe error when disabling Customer Leads fails', async () => {
+    const deploymentApi = api({
+      disableLeadForms: vi.fn().mockRejectedValue(
+        new Error('private failure'),
+      ),
+    })
+    render(<DeployPanel projectId={projectId} workspaceId={workspaceId} revisions={[revision]} api={deploymentApi} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Triển khai' }))
+    await screen.findByText('Vercel đã kết nối')
+    await userEvent.click(screen.getByRole('checkbox', { name: /xác nhận triển khai/i }))
+    await userEvent.click(screen.getByRole('button', { name: 'Bắt đầu triển khai' }))
+    await userEvent.click(await screen.findByRole('button', {
+      name: 'Tắt nhận khách hàng',
+    }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Không thể tắt nhận khách hàng.',
+    )
+    expect(screen.queryByText('private failure')).not.toBeInTheDocument()
   })
 
   it('connects through a popup and refreshes redacted status', async () => {
@@ -188,6 +239,9 @@ describe('DeployPanel', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { ...connection, status: 'disconnected' } }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: queued }), { status: 202 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: ready }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: { ...ready, leadFormsLive: false },
+      }), { status: 200 }))
 
     await expect(browserDeployApi.getConnection(workspaceId)).resolves.toBeNull()
     await expect(browserDeployApi.authorize({ workspaceId, returnPath: `/projects/${projectId}` }))
@@ -197,10 +251,19 @@ describe('DeployPanel', () => {
       workspaceId, revisionId, requestId: deploymentId, target: 'preview', confirmed: true,
     })).resolves.toEqual(queued)
     await expect(browserDeployApi.get(projectId, workspaceId, deploymentId)).resolves.toEqual(ready)
+    await expect(browserDeployApi.disableLeadForms(
+      projectId,
+      workspaceId,
+      deploymentId,
+    )).resolves.toMatchObject({ leadFormsLive: false })
 
     expect(fetch.mock.calls[2]?.[1]).toMatchObject({ method: 'DELETE' })
     expect(fetch.mock.calls[3]?.[1]).toMatchObject({ method: 'POST' })
     expect(fetch.mock.calls[4]?.[0]).toBe(`/api/v1/projects/${projectId}/deployments/${deploymentId}?workspaceId=${encodeURIComponent(workspaceId)}`)
+    expect(fetch.mock.calls[5]).toEqual([
+      `/api/v1/projects/${projectId}/deployments/${deploymentId}/lead-forms?workspaceId=${encodeURIComponent(workspaceId)}`,
+      { method: 'DELETE' },
+    ])
 
     fetch.mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 500 }))
     await expect(browserDeployApi.getConnection(workspaceId)).rejects.toThrow('deploy_request_failed')
