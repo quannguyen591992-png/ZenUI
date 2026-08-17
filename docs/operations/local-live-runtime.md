@@ -12,7 +12,7 @@ ZenUI local-live mode runs the product against local PostgreSQL, Redis/BullMQ an
 - Khi bật Vercel, trường **Redirect URL** trong Vercel Integration và `VERCEL_REDIRECT_URI` phải cùng là exact URL `http://localhost:3000/api/v1/provider-connections/vercel/callback`; không dùng homepage `http://localhost:3000/`. Root `pnpm dev` fail sớm nếu callback khác `APP_ORIGIN` hoặc sai path.
 - Vercel Integration phải yêu cầu tối thiểu **Integration Configuration**, **Deployments** và **Projects** ở mức `Read/Write`. First publish dùng tên project xác định và có thể tạo Vercel Project mới; chỉ cấp Deployment Read/Write sẽ kết nối được nhưng Vercel từ chối lần publish đầu.
 - Use `WORKER_SERVICES=generation,asset,export` for the current local stack. Add `deployment` only after Vercel OAuth and encryption keyring are configured; connection chỉ cấp quyền, còn deploy vẫn yêu cầu owner xác nhận immutable revision + target.
-- Set `ASSET_ORIGIN=http://127.0.0.1:3002` and keep it isolated from the `localhost` editor hostname. Owned normalized assets are resolved from this cookie-free origin in Canvas, Preview, Share, Export and Deploy.
+- Set `ASSET_ORIGIN=http://127.0.0.1:3002` and keep it isolated from the `localhost` editor hostname. Owned normalized assets are resolved from this cookie-free public origin in Canvas, Preview, Share, Export and Deploy. `ASSET_SERVER_ORIGIN` optionally selects the root loopback HTTP origin where the local asset process binds and where `pnpm dev` checks readiness; it falls back to `ASSET_ORIGIN` when omitted.
 - Set `PEXELS_API_KEY` only in the server/worker environment. Search returns redacted result IDs and previews; import jobs carry only local IDs and the worker re-resolves the fixed provider result.
 - `REMOTE_IMAGE_HOST_ALLOWLIST` remains a migration-only exact-host policy for legacy documents. New image and logo references use owned asset IDs rather than remote URLs.
 - AI Co-designer v2 requires an explicit rollout mode. `AI_ASSISTANT_ROLLOUT_MODE=disabled` is the default kill switch. `shadow` may run deterministic percentage sampling from `AI_ASSISTANT_SHADOW_SAMPLE_PERCENT` while v1 remains authoritative and the UI stays hidden. `opt-in` is the only mode that may enable `AI_ASSISTANT_V2_ENABLED` and the planner, media judge, multiple-candidate, style, layout or composition lane flags. Invalid combinations fail Worker startup; Web exposes v2 controls only in `opt-in` mode.
@@ -35,7 +35,26 @@ pnpm local:up
 pnpm dev
 ```
 
-Root `pnpm dev` starts Web, Preview and the Worker through Turbo. It fails before spawning if ports `3000`, `3001` or `9464` are already occupied, so stop the previous ZenUI process first rather than running overlapping topologies. The Worker reads `WORKER_SERVICES`, must report ready at `http://127.0.0.1:9464/health/ready`, and exposes only its random instance ID plus enabled service names at `/health/instance`; startup verifies that the current instance has `generation` enabled. For production-style non-watch execution, run `pnpm --filter @zenui/worker start` instead.
+Root `pnpm dev` starts Web, Preview and the Worker through Turbo. It fails before spawning if ports `3000`, `3001`, `9464` or the local `ASSET_SERVER_ORIGIN` port are already occupied, so stop the previous ZenUI process first rather than running overlapping topologies. The Worker reads `WORKER_SERVICES`, must report ready at `http://127.0.0.1:9464/health/ready`, and exposes only its random instance ID plus enabled service names at `/health/instance`; startup verifies that the current instance has `generation` enabled. For production-style non-watch execution, run `pnpm --filter @zenui/worker start` instead.
+
+### Public Share through ngrok
+
+For the local demo topology, one HTTPS tunnel to Web port `3000` serves both public surfaces:
+
+```bash
+ngrok http 3000
+```
+
+The public hostname routes Share HTML through `/s/<slug>` and owned WebP assets through `/a/<asset-id>`. Keep the editor on `localhost` so its authentication cookie is not scoped to the ngrok hostname, and keep the local asset process bound only to loopback:
+
+```dotenv
+APP_ORIGIN=http://localhost:3000
+SHARE_ORIGIN=https://<web-tunnel>.ngrok-free.app
+ASSET_ORIGIN=https://<web-tunnel>.ngrok-free.app
+ASSET_SERVER_ORIGIN=http://127.0.0.1:3002
+```
+
+`ASSET_ORIGIN` and `SHARE_ORIGIN` intentionally share the external hostname in this one-tunnel local topology, while `APP_ORIGIN` remains on the separate `localhost` hostname. Do not set `APP_ORIGIN` to the ngrok hostname, bind the asset process to `0.0.0.0`, expose port `3002`, or place ngrok credentials in the repository. Free tunnel domains may change after restart; when the Web tunnel domain changes, update both public origins and restart ZenUI before opening the Share link again. Existing active Share links compile their immutable revision on request and therefore use the current exact asset origin without requiring a new upload or revision; disabled or expired links correctly remain unavailable.
 
 Run `pnpm local:up` after pulling database changes so every pending migration is applied before Worker recovery starts. A dependency-health response alone is not sufficient evidence if the database schema is stale.
 

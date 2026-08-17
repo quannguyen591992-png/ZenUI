@@ -44,7 +44,7 @@ const mediaIntentSchema = z.object({
   alt: z.string().trim().min(1).max(300),
 }).strict()
 
-export const designDirectionContentBlueprintSchema = z.object({
+const designDirectionContentBlueprintBaseSchema = z.object({
   version: z.literal(2),
   language: z.enum(['vi', 'en']),
   pagePreset: z.enum(PAGE_PRESET_IDS),
@@ -101,7 +101,9 @@ export const designDirectionContentBlueprintSchema = z.object({
   footerTagline: z.string().trim().min(1).max(240),
   copyright: z.string().trim().min(1).max(200),
   sectionOrder: z.array(sectionTypeSchema).min(4).max(8),
-}).strict().superRefine((value, context) => {
+}).strict()
+
+export const designDirectionContentBlueprintSchema = designDirectionContentBlueprintBaseSchema.superRefine((value, context) => {
   if (new Set(value.sectionOrder).size !== value.sectionOrder.length) {
     context.addIssue({ code: 'custom', path: ['sectionOrder'], message: 'duplicate_section_type' })
   }
@@ -135,12 +137,16 @@ export const designDirectionContentBlueprintSchema = z.object({
 
 export type DesignDirectionContentBlueprint = z.infer<typeof designDirectionContentBlueprintSchema>
 
-export const designDirectionGenerationPlanSchema = z.object({
+const designDirectionGenerationPlanBaseSchema = z.object({
   version: z.literal('design-directions-v2'),
-  content: designDirectionContentBlueprintSchema,
+  content: designDirectionContentBlueprintBaseSchema,
   directions: z.array(z.object({
     presetId: designDirectionPresetIdSchema,
   }).strict()).length(3),
+}).strict()
+
+export const designDirectionGenerationPlanSchema = designDirectionGenerationPlanBaseSchema.extend({
+  content: designDirectionContentBlueprintSchema,
 }).strict()
 export type DesignDirectionGenerationPlan = z.infer<typeof designDirectionGenerationPlanSchema>
 export const designDirectionGenerationPlanJsonSchema = z.toJSONSchema(
@@ -336,6 +342,25 @@ function requiredBlueprintSections(brief: WebsiteBrief): string[] {
   return result
 }
 
+function normalizeProviderSectionRelationships(
+  content: z.infer<typeof designDirectionContentBlueprintBaseSchema>,
+  brief: WebsiteBrief,
+): DesignDirectionContentBlueprint | null {
+  const sectionOrder = [...new Set(content.sectionOrder.filter(type => type !== 'footer'))]
+  const required = new Set<z.infer<typeof sectionTypeSchema>>([
+    ...requiredBlueprintSections(brief) as z.infer<typeof sectionTypeSchema>[],
+    ...content.navigation.map(item => item.target),
+  ])
+  for (const type of required) {
+    if (type !== 'footer' && !sectionOrder.includes(type)) sectionOrder.push(type)
+  }
+  const normalized = designDirectionContentBlueprintSchema.safeParse({
+    ...content,
+    sectionOrder: [...sectionOrder, 'footer'],
+  })
+  return normalized.success ? normalized.data : null
+}
+
 function sectionsFor(
   brief: WebsiteBrief,
   content: DesignDirectionContentBlueprint,
@@ -380,7 +405,10 @@ function sectionsFor(
     },
   }
   type NonFooterSectionType = Exclude<z.infer<typeof sectionTypeSchema>, 'footer'>
-  const required = new Set<z.infer<typeof sectionTypeSchema>>(requiredBlueprintSections(brief) as z.infer<typeof sectionTypeSchema>[])
+  const required = new Set<z.infer<typeof sectionTypeSchema>>([
+    ...requiredBlueprintSections(brief) as z.infer<typeof sectionTypeSchema>[],
+    ...content.navigation.map(item => item.target),
+  ])
   const ordered: NonFooterSectionType[] = [...new Set(content.sectionOrder)]
     .filter((type): type is NonFooterSectionType => type !== 'footer')
     .filter(type => required.has(type) || type === 'logo-cloud' || type === 'stats')
@@ -558,6 +586,7 @@ export function materializeDesignDirections(input: {
       ...(input.imagePolicy ? { imagePolicy: input.imagePolicy } : {}),
       ...(Object.keys(directionMedia).length > 0 ? { ownedMedia: directionMedia } : {}),
       designSystem: brief.designSystem,
+      language: content.data.language,
     })
     if (!result.accepted) return { accepted: false, code: 'invalid_direction' }
     directions.push({
@@ -701,17 +730,28 @@ export async function runDesignDirectionGeneration(input: {
   }
   const parsedUsage = usageSchema.safeParse(response.usage)
   const actualUsage = parsedUsage.success ? parsedUsage.data : usage
-  const plan = designDirectionGenerationPlanSchema.safeParse(response.output)
-  if (!plan.success) {
+  const providerPlan = designDirectionGenerationPlanBaseSchema.safeParse(response.output)
+  if (!providerPlan.success) {
     return {
       accepted: false, code: 'invalid_model_output', usage: actualUsage,
       provider: input.provider.name, model: input.provider.model, promptVersion: 'directions-v2',
     }
   }
+  const normalizedContent = normalizeProviderSectionRelationships(providerPlan.data.content, brief)
+  if (!normalizedContent) {
+    return {
+      accepted: false, code: 'invalid_model_output', usage: actualUsage,
+      provider: input.provider.name, model: input.provider.model, promptVersion: 'directions-v2',
+    }
+  }
+  const plan = designDirectionGenerationPlanSchema.parse({
+    ...providerPlan.data,
+    content: normalizedContent,
+  })
   const resolvedPresetIds = resolveDesignDirectionPresetIds({
     brief,
     round: input.round,
-    plannedPresetIds: plan.data.directions.map(direction => direction.presetId),
+    plannedPresetIds: plan.directions.map(direction => direction.presetId),
     excludedPresetIds,
   })
   if (resolvedPresetIds.length !== 3) {
@@ -721,8 +761,8 @@ export async function runDesignDirectionGeneration(input: {
     }
   }
   const resolvedPlan: DesignDirectionGenerationPlan = {
-    ...plan.data,
-    directions: plan.data.directions.map((direction, index) => ({
+    ...plan,
+    directions: plan.directions.map((direction, index) => ({
       ...direction,
       presetId: resolvedPresetIds[index]!,
     })),

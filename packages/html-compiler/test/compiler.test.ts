@@ -436,6 +436,145 @@ describe('standalone HTML compiler', () => {
     expect(compiled.html).toContain('@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}')
   })
 
+  it('emits exact-origin Vietnamese font faces and portable self-hosted paths', () => {
+    const document = createValidDesignFixture()
+    document.theme.fonts.heading = 'Noto Serif'
+    document.theme.fonts.body = 'Be Vietnam Pro'
+    ;(document.theme as unknown as Record<string, unknown>).presentation = {
+      version: 1, profile: 'refined', language: 'vi',
+    }
+
+    const publicResult = compileStandaloneHtml(document, {
+      assetOrigin: 'https://assets.example.com',
+    })
+    expect(publicResult).toMatchObject({ success: true })
+    if (!publicResult.success) return
+    expect(publicResult.html).toContain("@font-face{font-family:'Noto Serif'")
+    expect(publicResult.html).toContain('https://assets.example.com/f/noto-serif/vietnamese.woff2')
+    expect(publicResult.html).toContain("font-family:'Be Vietnam Pro',sans-serif")
+    expect(publicResult.html).toContain('<html lang="vi">')
+    expect(publicResult.csp).toContain("font-src https://assets.example.com")
+
+    const portableResult = compileStandaloneHtml(document, {
+      portableFontPaths: {
+        'noto-serif': {
+          latin: 'fonts/noto-serif-latin.woff2',
+          vietnamese: 'fonts/noto-serif-vietnamese.woff2',
+        },
+        'be-vietnam-pro': {
+          latin: 'fonts/be-vietnam-pro-latin.woff2',
+          vietnamese: 'fonts/be-vietnam-pro-vietnamese.woff2',
+        },
+      },
+    })
+    expect(portableResult).toMatchObject({ success: true })
+    if (!portableResult.success) return
+    expect(portableResult.html).toContain('fonts/noto-serif-vietnamese.woff2')
+    expect(portableResult.csp).toContain("font-src 'self'")
+  })
+
+  it('resolves portable font paths relative to nested pages', () => {
+    const document: DesignDocumentV2 = migrateDesignDocumentV1ToV2(createValidDesignFixture())
+    document.theme.fonts.heading = 'Noto Serif'
+    document.theme.fonts.body = 'Be Vietnam Pro'
+    document.nodes['about-root'] = {
+      id: 'about-root', type: 'page', parentId: null, children: [], props: {}, style: {}, responsive: {},
+    }
+    document.pages.push({ id: 'about', name: 'About', slug: '/about', rootNodeId: 'about-root' })
+
+    const result = compileStaticSite(document, {
+      portableFontPaths: {
+        'noto-serif': {
+          latin: 'fonts/noto-serif-latin.woff2',
+          vietnamese: 'fonts/noto-serif-vietnamese.woff2',
+        },
+        'be-vietnam-pro': {
+          latin: 'fonts/be-vietnam-pro-latin.woff2',
+          vietnamese: 'fonts/be-vietnam-pro-vietnamese.woff2',
+        },
+      },
+    })
+
+    expect(result).toMatchObject({ success: true })
+    if (!result.success) return
+    expect(result.files.find(file => file.path === 'index.html')?.html)
+      .toContain("url('fonts/noto-serif-vietnamese.woff2')")
+    expect(result.files.find(file => file.path === 'about/index.html')?.html)
+      .toContain("url('../fonts/noto-serif-vietnamese.woff2')")
+    for (const file of result.files) expect(file.csp).toContain("font-src 'self'")
+  })
+
+  it('emits bounded shared presentation CSS with touch and reduced-motion guards', () => {
+    const document = createValidDesignFixture()
+    ;(document.theme as unknown as Record<string, unknown>).presentation = {
+      version: 1,
+      profile: 'dynamic',
+      language: 'vi',
+    }
+    document.nodes['button-1']!.style.shadow = 'xl'
+
+    const result = compileStandaloneHtml(document)
+
+    expect(result).toMatchObject({ success: true })
+    if (!result.success) return
+    expect(result.html).toContain('data-zenui-render-root=""')
+    expect(result.html).toContain('data-visual-profile="dynamic"')
+    expect(result.html).toContain('0 32px 80px rgba(15,23,42,.22)')
+    expect(result.html).toContain('@media(hover:hover) and (pointer:fine)')
+    expect(result.html).toContain('[data-zenui-render-root] [data-node-type="image"]{transition:transform .24s ease,box-shadow .24s ease}')
+    expect(result.html).toContain('[data-node-type="image"]{transition:transform .24s ease,box-shadow .24s ease}')
+    expect(result.html).toContain('[data-node-type="link"]::after')
+    expect(result.html).toContain('@keyframes zenui-dynamic-float')
+    expect(result.html).toContain('@media(prefers-reduced-motion:reduce)')
+    expect(result.html).toContain('animation:none!important;transition:none!important;transform:none!important')
+    expect(result.html).toContain(':focus-visible{outline:3px solid currentColor')
+    expect(result.csp).toContain("script-src 'none'")
+    expect(result.csp).toContain("connect-src 'none'")
+  })
+
+  it('keeps profile effects bounded, CSS-only and static on touch or reduced motion', () => {
+    const compileProfile = (profile: 'refined' | 'dynamic' | 'editorial') => {
+      const document = createValidDesignFixture()
+      document.theme.presentation = { version: 1, profile, language: 'vi' }
+      const result = compileStandaloneHtml(document)
+      expect(result).toMatchObject({ success: true })
+      if (!result.success) throw new Error('Expected profile compilation to succeed')
+      return result
+    }
+
+    const refined = compileProfile('refined')
+    expect(refined.html).toContain('@keyframes zenui-refined-reveal')
+    expect(refined.html).toContain('animation:zenui-refined-reveal .7s')
+    expect(refined.html).toContain('translateY(4px)')
+    expect(refined.html).not.toContain('zenui-dynamic-glow')
+    expect(refined.html).not.toContain(' infinite')
+
+    const dynamic = compileProfile('dynamic')
+    expect(dynamic.html).toContain('@keyframes zenui-dynamic-reveal')
+    expect(dynamic.html).toContain('animation:zenui-dynamic-reveal .76s')
+    expect(dynamic.html).toContain('scale(1.025)')
+    expect(dynamic.html).toContain('translateY(-6px)')
+    expect(dynamic.html).toContain('[data-node-type="hero"]::before')
+    expect(dynamic.html.match(/ infinite/g)).toHaveLength(1)
+    expect(dynamic.html).toContain('#features-section{animation-delay:.08s}')
+    expect(dynamic.html).toContain('#final-cta-section{animation-delay:.24s}')
+
+    const editorial = compileProfile('editorial')
+    expect(editorial.html).toContain('@keyframes zenui-editorial-reveal')
+    expect(editorial.html).toContain('animation:zenui-editorial-reveal .86s')
+    expect(editorial.html).not.toContain(' infinite')
+    expect(editorial.html).not.toContain('[data-node-type="hero"]::before')
+
+    for (const result of [refined, dynamic, editorial]) {
+      expect(result.html).toContain('@media(hover:hover) and (pointer:fine)')
+      expect(result.html).toContain('@media(hover:none),(pointer:coarse)')
+      expect(result.html).toContain('@media(prefers-reduced-motion:reduce)')
+      expect(result.html).toContain('animation:none!important;transition:none!important;transform:none!important')
+      expect(result.csp).toContain("script-src 'none'")
+      expect(result.csp).toContain("connect-src 'none'")
+    }
+  })
+
   it('emits strict CSP, correct void elements and privacy-safe external assets', () => {
     const document = createValidDesignFixture()
     document.nodes['container-1']!.children.push('divider-1')
@@ -453,9 +592,9 @@ describe('standalone HTML compiler', () => {
     expect(result.html).toContain('<meta name="referrer" content="no-referrer">')
     expect(result.html).toContain('referrerpolicy="no-referrer"')
     expect(result.html).toContain('loading="lazy"')
-    expect(result.html).toContain('[data-node-type="button"],[data-node-type="link"]{color:inherit;text-decoration:none}')
-    expect(result.html).toContain('[data-node-type="button"]{display:inline-flex')
-    expect(result.html).toContain('[data-node-type="badge"]{display:inline-flex')
+    expect(result.html).toContain('[data-zenui-render-root] [data-node-type="button"],[data-zenui-render-root] [data-node-type="link"]{color:inherit;text-decoration:none}')
+    expect(result.html).toContain('[data-zenui-render-root] [data-node-type="button"]{display:inline-flex')
+    expect(result.html).toContain('[data-zenui-render-root] [data-node-type="badge"]{display:inline-flex')
     expect(result.html).toContain(':focus-visible{outline:3px solid currentColor')
     expect(result.html).toMatch(/<img [^>]+>/)
     expect(result.html).not.toContain('</img>')

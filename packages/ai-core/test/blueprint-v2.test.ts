@@ -358,6 +358,57 @@ describe('Blueprint v2 and section presets', () => {
     })
   })
 
+  it.each([
+    ['editorial', 'editorial'],
+    ['bold', 'dynamic'],
+    ['confident', 'refined'],
+    ['friendly', 'refined'],
+  ] as const)('maps the %s mood to the server-owned %s presentation profile', (mood, profile) => {
+    const result = materializeLandingPageBlueprintV2({
+      blueprint: { ...blueprintV2, theme: { ...blueprintV2.theme, mood } },
+      current: createValidDesignFixture(),
+      language: 'vi',
+    })
+
+    expect(result).toMatchObject({
+      accepted: true,
+      document: {
+        theme: {
+          presentation: { version: 1, profile, language: 'vi' },
+        },
+      },
+    })
+  })
+
+  it.each([
+    ['expressive', 'dynamic'],
+    ['balanced', 'refined'],
+    ['compact', 'refined'],
+  ] as const)('maps custom %s typography to the server-owned %s profile', (typography, profile) => {
+    const result = materializeLandingPageBlueprintV2({
+      blueprint: blueprintV2,
+      current: createValidDesignFixture(),
+      language: 'en',
+      designSystem: {
+        mode: 'custom',
+        colors: { primary: '#2563eb', background: '#ffffff', text: '#0f172a' },
+        fonts: { heading: 'Noto Serif', body: 'Be Vietnam Pro' },
+        typography,
+        spacing: 'balanced',
+        radius: 'soft',
+      },
+    })
+
+    expect(result).toMatchObject({
+      accepted: true,
+      document: {
+        theme: {
+          presentation: { version: 1, profile, language: 'en' },
+        },
+      },
+    })
+  })
+
   it('adds one editorial divider after Hero and keeps the heaviest direction within document limits', () => {
     const heavyBlueprint = {
       ...blueprintV2,

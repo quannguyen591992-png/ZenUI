@@ -1,13 +1,9 @@
 import { createServer } from 'node:http'
 
-import { proxyAssetRequest } from './dev-runtime.mjs'
+import { proxyAssetRequest, resolveAssetServerOrigin } from './dev-runtime.mjs'
 
-const assetOrigin = new URL(process.env.ASSET_ORIGIN)
-if (assetOrigin.hostname !== '127.0.0.1' && assetOrigin.hostname !== 'localhost') {
-  throw new Error('Local asset server requires a loopback ASSET_ORIGIN')
-}
-
-const port = Number(assetOrigin.port || (assetOrigin.protocol === 'https:' ? 443 : 80))
+const assetServerOrigin = resolveAssetServerOrigin()
+const port = assetServerOrigin.port
 
 const server = createServer(async (request, response) => {
   if (request.url === '/__zenui/asset-health') {
@@ -34,4 +30,4 @@ const server = createServer(async (request, response) => {
   }
 })
 
-server.listen(port, assetOrigin.hostname)
+server.listen(port, assetServerOrigin.hostname)

@@ -1,8 +1,11 @@
+import { fontFaceCss, themeFontFamily } from '@zenui/font-library'
 import {
   conversionActionHref,
   isNodeHidden,
   nodeToBrowserStyle,
+  rendererPresentationCss,
   resolveNodeTag,
+  resolvePresentationProfile,
   type RenderViewport,
 } from '@zenui/html-compiler/render'
 import { createElement, type FormEvent, type ReactNode } from 'react'
@@ -28,6 +31,27 @@ function visualContent(node: DesignNode, children: ReactNode): ReactNode {
   if ('text' in node.props && typeof node.props.text === 'string') return node.props.text
   if (node.type === 'icon' && 'name' in node.props) return <DesignIcon name={node.props.name} />
   return children
+}
+
+function rendererFontCss(
+  document: DesignDocument,
+  assetOrigin: string | undefined,
+): string {
+  if (!assetOrigin) return ''
+  let origin: string
+  try {
+    origin = new URL(assetOrigin).origin
+  } catch {
+    return ''
+  }
+  return [
+    fontFaceCss(document.theme, fontId => ({
+      latin: `${origin}/f/${fontId}/latin.woff2`,
+      vietnamese: `${origin}/f/${fontId}/vietnamese.woff2`,
+    })),
+    `[data-zenui-render-root]{font-family:${themeFontFamily(document.theme.fonts.body)}}`,
+    `[data-zenui-render-root] [data-node-type="heading"]{font-family:${themeFontFamily(document.theme.fonts.heading)}}`,
+  ].join('')
 }
 
 function LeadForm({ node, viewport }: { node: DesignNode; viewport: RenderViewport }) {
@@ -148,19 +172,26 @@ export function DesignDocumentRenderer({
     ?? document.pages[0]!
   const renderRootId = rootNodeId && document.nodes[rootNodeId] ? rootNodeId : page.rootNodeId
   return (
-    <div
-      className={`design-document-renderer${compact ? ' is-compact' : ''}${className ? ` ${className}` : ''}`}
-      data-viewport={viewport}
-      data-render-root-id={renderRootId}
-      role="region"
-      aria-label={ariaLabel}
-    >
-      <RenderNode
-        document={document}
-        nodeId={renderRootId}
-        viewport={viewport}
-        assetOrigin={assetOrigin}
-      />
-    </div>
+    <>
+      <style data-zenui-render-style="">{
+        rendererFontCss(document, assetOrigin) + rendererPresentationCss(document)
+      }</style>
+      <div
+        className={`design-document-renderer${compact ? ' is-compact' : ''}${className ? ` ${className}` : ''}`}
+        data-viewport={viewport}
+        data-render-root-id={renderRootId}
+        data-zenui-render-root=""
+        data-visual-profile={resolvePresentationProfile(document)}
+        role="region"
+        aria-label={ariaLabel}
+      >
+        <RenderNode
+          document={document}
+          nodeId={renderRootId}
+          viewport={viewport}
+          assetOrigin={assetOrigin}
+        />
+      </div>
+    </>
   )
 }

@@ -755,6 +755,7 @@ export async function runGeneration(input: {
             blueprint: normalizedV2 ?? response.output,
             current: input.document,
             ...(input.imagePolicy ? { imagePolicy: input.imagePolicy } : {}),
+            language: 'en',
           })
         : materializeLandingPageBlueprint({
             blueprint: response.output,

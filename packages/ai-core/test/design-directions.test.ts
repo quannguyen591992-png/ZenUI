@@ -261,7 +261,7 @@ describe('Stage 5 guided brief and design direction contracts', () => {
         slot: 'feature-4', query: 'extra unbounded image', alt: 'Ảnh vượt giới hạn',
       }],
     }).success).toBe(false)
-    expect(schema).not.toMatch(/themePreset|mood|density|navbarVariant|heroVariant|featuresVariant|nodeId|parentId|nodes|rawCss|javascript|providerResultId|assetId|recipient|endpoint|publication|secret/i)
+    expect(schema).not.toMatch(/themePreset|mood|density|navbarVariant|heroVariant|featuresVariant|presentation|profile|effect|selector|keyframe|nodeId|parentId|nodes|rawCss|javascript|providerResultId|assetId|recipient|endpoint|publication|secret/i)
     expect(schema.length).toBeLessThan(21_000)
   })
 
@@ -558,6 +558,7 @@ describe('Stage 5 guided brief and design direction contracts', () => {
       colors: { primary: '#24eb94', background: '#ffffff', text: '#2c56ba' },
       fonts: { heading: 'Georgia', body: 'Arial' },
       radius: { sm: 12, md: 20, lg: 28 },
+      presentation: { version: 1, profile: 'dynamic', language: 'vi' },
     }
     const sectionIds = new Set([
       'logo-cloud-section',
@@ -664,6 +665,59 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     }))
     if (result.accepted) {
       expect(result.directions.every(direction => direction.document.theme.fonts.heading === 'Georgia')).toBe(true)
+    }
+  })
+
+  it('repairs typed provider section relationships deterministically before materialization', async () => {
+    const plan = generationPlan('vi')
+    const generateContentBlueprint = vi.fn().mockResolvedValue({
+      output: {
+        ...plan,
+        content: {
+          ...plan.content,
+          sectionOrder: plan.content.sectionOrder.filter(type => type !== 'testimonials'),
+        },
+      },
+      usage: { inputTokens: 919, outputTokens: 1481, totalTokens: 2400 },
+    })
+
+    const result = await runDesignDirectionGeneration({
+      provider: { name: 'mock', model: 'mock-v1', generateContentBlueprint },
+      brief: vietnameseBrief,
+      current: createValidDesignFixture(),
+      round: 0,
+    })
+
+    expect(result.accepted).toBe(true)
+    if (!result.accepted) return
+    expect(result.blueprint.content.sectionOrder).toContain('testimonials')
+    expect(result.blueprint.content.sectionOrder.at(-1)).toBe('footer')
+    expect(result.directions).toHaveLength(3)
+  })
+
+  it('keeps allowlisted provider navigation targets when the brief does not require those sections', async () => {
+    const plan = generationPlan('vi')
+    const generateContentBlueprint = vi.fn().mockResolvedValue({
+      output: plan,
+      usage: { inputTokens: 919, outputTokens: 1480, totalTokens: 2399 },
+    })
+
+    const result = await runDesignDirectionGeneration({
+      provider: { name: 'mock', model: 'mock-v1', generateContentBlueprint },
+      brief: {
+        ...vietnameseBrief,
+        mustHaveSections: ['introduction', 'benefits', 'contact'],
+      },
+      current: createValidDesignFixture(),
+      round: 0,
+    })
+
+    expect(result.accepted).toBe(true)
+    if (!result.accepted) return
+    for (const direction of result.directions) {
+      for (const target of plan.content.navigation.map(item => item.target)) {
+        expect(direction.document.nodes[`${target}-section`]).toBeDefined()
+      }
     }
   })
 

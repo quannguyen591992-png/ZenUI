@@ -14,6 +14,11 @@ import {
   type LeadFormProps,
   type NodeStyle,
 } from '@zenui/design-schema'
+import {
+  fontFaceCss,
+  themeFontFamily,
+  type FontSubsetPaths,
+} from '@zenui/font-library'
 
 const styleOrder: readonly (keyof NodeStyle)[] = [
   'display', 'flexDirection', 'justifyContent', 'alignItems', 'gap', 'gridColumns', 'gridColumnSpan', 'gridRowSpan',
@@ -68,30 +73,77 @@ const semanticBrowserStyles: Partial<Record<DesignNode['type'], BrowserNodeStyle
   'lead-form': { display: 'grid', gap: '16px', width: '100%' },
 }
 
+const renderRootSelector = '[data-zenui-render-root]'
+
 export const RENDERER_SEMANTIC_CSS = [
-  '[data-node-type="heading"]{margin:0}',
-  '[data-node-type="paragraph"]{margin:0}',
-  '[data-node-type="button"],[data-node-type="link"]{color:inherit;text-decoration:none}',
-  '[data-node-type="image"]{display:block;max-width:100%;height:auto;background:#e2e8f0}',
-  '[data-node-type="container"]{margin-left:auto;margin-right:auto}',
-  '[data-node-type="button"]{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:12px 22px;font-weight:700;line-height:1.2;text-align:center;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,opacity .18s ease}',
-  '[data-node-type="button"]:hover{transform:translateY(-2px);opacity:.94}',
-  '[data-node-type="button"]:focus-visible,[data-node-type="link"]:focus-visible{outline:3px solid currentColor;outline-offset:3px}',
-  '[data-node-type="link"]{transition:opacity .18s ease}[data-node-type="link"]:hover{opacity:.68}',
-  '[data-node-type="badge"]{display:inline-flex;align-items:center;justify-content:center;width:max-content;line-height:1.2}',
-  '[data-node-type="icon"]{display:inline-flex;align-items:center;justify-content:center;font-size:24px;line-height:1}',
-  '[data-node-type="feature-card"]{transition:transform .2s ease,box-shadow .2s ease}[data-node-type="feature-card"]:hover{transform:translateY(-4px)}',
-  '[data-node-type="lead-form"]{display:grid;gap:16px;width:100%}',
-  '[data-lead-form-field]{display:grid;gap:6px}',
-  '[data-node-type="lead-form"] label{font-weight:600}',
-  '[data-node-type="lead-form"] input:not([type="checkbox"]),[data-node-type="lead-form"] textarea,[data-node-type="lead-form"] select{width:100%;min-height:48px;padding:10px 12px;border:1px solid #94a3b8;border-radius:8px;background:transparent;color:inherit;font:inherit}',
-  '[data-node-type="lead-form"] textarea{min-height:112px;resize:vertical}',
-  '[data-node-type="lead-form"] [type="checkbox"]{width:20px;height:20px}',
-  '[data-lead-form-consent]{display:flex;align-items:flex-start;gap:10px}',
-  '[data-node-type="lead-form"] button{min-height:48px;padding:12px 22px;border:0;border-radius:8px;color:#fff;background:#344054;cursor:pointer}',
-  '[data-node-type="lead-form"] input:focus-visible,[data-node-type="lead-form"] textarea:focus-visible,[data-node-type="lead-form"] select:focus-visible,[data-node-type="lead-form"] button:focus-visible{outline:3px solid currentColor;outline-offset:3px}',
-  '[data-lead-form-notice]{margin:0;font-size:14px}',
+  `${renderRootSelector} [data-node-type="heading"]{margin:0}`,
+  `${renderRootSelector} [data-node-type="paragraph"]{margin:0}`,
+  `${renderRootSelector} [data-node-type="button"],${renderRootSelector} [data-node-type="link"]{color:inherit;text-decoration:none}`,
+  `${renderRootSelector} [data-node-type="image"]{display:block;max-width:100%;height:auto;background:#e2e8f0}`,
+  `${renderRootSelector} [data-node-type="container"]{margin-left:auto;margin-right:auto}`,
+  `${renderRootSelector} [data-node-type="button"]{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:12px 22px;font-weight:700;line-height:1.2;text-align:center;cursor:pointer}`,
+  `${renderRootSelector} [data-node-type="button"]:focus-visible,${renderRootSelector} [data-node-type="link"]:focus-visible{outline:3px solid currentColor;outline-offset:3px}`,
+  `${renderRootSelector} [data-node-type="badge"]{display:inline-flex;align-items:center;justify-content:center;width:max-content;line-height:1.2}`,
+  `${renderRootSelector} [data-node-type="icon"]{display:inline-flex;align-items:center;justify-content:center;font-size:24px;line-height:1}`,
+  `${renderRootSelector} [data-node-type="lead-form"]{display:grid;gap:16px;width:100%}`,
+  `${renderRootSelector} [data-lead-form-field]{display:grid;gap:6px}`,
+  `${renderRootSelector} [data-node-type="lead-form"] label{font-weight:600}`,
+  `${renderRootSelector} [data-node-type="lead-form"] input:not([type="checkbox"]),${renderRootSelector} [data-node-type="lead-form"] textarea,${renderRootSelector} [data-node-type="lead-form"] select{width:100%;min-height:48px;padding:10px 12px;border:1px solid #94a3b8;border-radius:8px;background:transparent;color:inherit;font:inherit}`,
+  `${renderRootSelector} [data-node-type="lead-form"] textarea{min-height:112px;resize:vertical}`,
+  `${renderRootSelector} [data-node-type="lead-form"] [type="checkbox"]{width:20px;height:20px}`,
+  `${renderRootSelector} [data-lead-form-consent]{display:flex;align-items:flex-start;gap:10px}`,
+  `${renderRootSelector} [data-node-type="lead-form"] button{min-height:48px;padding:12px 22px;border:0;border-radius:8px;color:#fff;background:#344054;cursor:pointer}`,
+  `${renderRootSelector} [data-node-type="lead-form"] input:focus-visible,${renderRootSelector} [data-node-type="lead-form"] textarea:focus-visible,${renderRootSelector} [data-node-type="lead-form"] select:focus-visible,${renderRootSelector} [data-node-type="lead-form"] button:focus-visible{outline:3px solid currentColor;outline-offset:3px}`,
+  `${renderRootSelector} [data-lead-form-notice]{margin:0;font-size:14px}`,
 ].join('')
+
+export type PresentationProfile = NonNullable<DesignDocument['theme']['presentation']>['profile']
+
+export function resolvePresentationProfile(document: DesignDocument): PresentationProfile {
+  return document.theme.presentation?.profile ?? 'refined'
+}
+
+const presentationProfileCss: Record<PresentationProfile, string> = {
+  refined: [
+    '@keyframes zenui-refined-reveal{from{opacity:.001;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}',
+    '[data-zenui-render-root][data-visual-profile="refined"]>[data-node-type="section"]{animation:zenui-refined-reveal .7s ease-out both}',
+  ].join(''),
+  dynamic: [
+    '@keyframes zenui-dynamic-reveal{from{opacity:.001;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}',
+    '@keyframes zenui-dynamic-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}',
+    '[data-zenui-render-root][data-visual-profile="dynamic"]>[data-node-type="section"]{animation:zenui-dynamic-reveal .76s cubic-bezier(.2,.7,.2,1) both}',
+    '[data-zenui-render-root][data-visual-profile="dynamic"] #features-section{animation-delay:.08s}',
+    '[data-zenui-render-root][data-visual-profile="dynamic"] #testimonials-section{animation-delay:.16s}',
+    '[data-zenui-render-root][data-visual-profile="dynamic"] #final-cta-section{animation-delay:.24s}',
+    '[data-zenui-render-root][data-visual-profile="dynamic"] [data-node-type="hero"]{position:relative;isolation:isolate}',
+    '[data-zenui-render-root][data-visual-profile="dynamic"] [data-node-type="hero"]::before{position:absolute;inset:8% 6% auto auto;z-index:-1;width:min(28vw,360px);aspect-ratio:1;border-radius:50%;background:radial-gradient(circle,currentColor 0,transparent 68%);content:"";opacity:.32;pointer-events:none;transform:scale(1.025)}',
+    '[data-zenui-render-root][data-visual-profile="dynamic"] [data-node-type="hero"] [data-node-type="image"]{animation:zenui-dynamic-float 6s ease-in-out infinite}',
+  ].join(''),
+  editorial: [
+    '@keyframes zenui-editorial-reveal{from{opacity:.001;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}',
+    '[data-zenui-render-root][data-visual-profile="editorial"]>[data-node-type="section"]{animation:zenui-editorial-reveal .86s cubic-bezier(.22,.61,.36,1) both}',
+    '[data-zenui-render-root][data-visual-profile="editorial"] [data-node-type="divider"]{opacity:.72}',
+    '[data-zenui-render-root][data-visual-profile="editorial"] [data-node-type="heading"]{text-wrap:balance}',
+  ].join(''),
+}
+
+export function rendererPresentationCss(document: DesignDocument): string {
+  const profile = resolvePresentationProfile(document)
+  return [
+    RENDERER_SEMANTIC_CSS,
+    `${renderRootSelector} [data-node-type="button"]{transition:transform .18s ease,box-shadow .18s ease,opacity .18s ease}`,
+    `${renderRootSelector} [data-node-type="button"]:active{transform:translateY(0) scale(.985)}`,
+    `${renderRootSelector} [data-node-type="link"]{position:relative;transition:opacity .18s ease}`,
+    `${renderRootSelector} [data-node-type="link"]::after{position:absolute;right:0;bottom:-.18em;left:0;height:2px;background:currentColor;content:"";transform:scaleX(0);transform-origin:right;transition:transform .2s ease}`,
+    `${renderRootSelector} [data-node-type="feature-card"]{transition:transform .22s ease,box-shadow .22s ease}`,
+    `${renderRootSelector} [data-node-type="image"]{transition:transform .24s ease,box-shadow .24s ease}`,
+    `${renderRootSelector} [data-node-type="lead-form"] input:not([type="checkbox"]),${renderRootSelector} [data-node-type="lead-form"] textarea,${renderRootSelector} [data-node-type="lead-form"] select{transition:border-color .18s ease,box-shadow .18s ease}`,
+    `@media(hover:hover) and (pointer:fine){${renderRootSelector} [data-node-type="button"]:hover{transform:translateY(-2px);opacity:.94}${renderRootSelector} [data-node-type="link"]:hover{opacity:.78}${renderRootSelector} [data-node-type="link"]:hover::after{transform:scaleX(1);transform-origin:left}${renderRootSelector} [data-node-type="feature-card"]:hover{transform:translateY(-4px)}${renderRootSelector} [data-node-type="image"]:hover{transform:scale(1.018)}}`,
+    presentationProfileCss[profile],
+    '@media(hover:none),(pointer:coarse){[data-zenui-render-root] *,[data-zenui-render-root] *::before,[data-zenui-render-root] *::after{animation:none!important;transform:none!important}}',
+    '@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}[data-zenui-render-root] *,[data-zenui-render-root] *::before,[data-zenui-render-root] *::after{animation:none!important;transition:none!important;transform:none!important}}',
+  ].join('')
+}
 
 const unitless = new Set<keyof NodeStyle>([
   'display', 'flexDirection', 'justifyContent', 'alignItems', 'fontFamily', 'fontWeight',
@@ -99,9 +151,11 @@ const unitless = new Set<keyof NodeStyle>([
   'objectFit', 'objectPosition', 'opacity',
 ])
 const shadows = {
+  xs: '0 1px 2px rgba(15,23,42,.04)',
   sm: '0 1px 2px rgba(15,23,42,.06)',
   md: '0 12px 32px rgba(15,23,42,.10)',
   lg: '0 24px 64px rgba(15,23,42,.16)',
+  xl: '0 32px 80px rgba(15,23,42,.22)',
 } as const
 const iconStrokeAttributes = {
   viewBox: '0 0 24 24',
@@ -157,6 +211,7 @@ export interface RenderAssetOptions {
   imagePolicy?: RemoteImagePolicy
   assetOrigin?: string
   portableAssetPaths?: Readonly<Record<string, string>>
+  portableFontPaths?: Readonly<Record<string, FontSubsetPaths>>
   pageId?: string
   route?: string
   routePrefix?: string
@@ -467,7 +522,22 @@ function rule(node: DesignNode, style: NodeStyle): string {
   return declarations ? `[data-node-id="${node.id}"]{${declarations}}` : ''
 }
 
-function compileCss(document: DesignDocument): string {
+function fontCss(document: DesignDocument, options: RenderAssetOptions): string {
+  if (options.portableFontPaths) {
+    return fontFaceCss(document.theme, fontId => options.portableFontPaths?.[fontId] ?? {
+      latin: '', vietnamese: '',
+    })
+  }
+  if (options.portableAssetPaths || !options.assetOrigin) return ''
+  let origin: string
+  try { origin = new URL(options.assetOrigin).origin } catch { return '' }
+  return fontFaceCss(document.theme, fontId => ({
+    latin: `${origin}/f/${fontId}/latin.woff2`,
+    vietnamese: `${origin}/f/${fontId}/vietnamese.woff2`,
+  }))
+}
+
+function compileCss(document: DesignDocument, options: RenderAssetOptions): string {
   const visibleNodes = Object.values(document.nodes).filter(node => !isNodeHidden(node))
   const base = visibleNodes.map(node => rule(node, node.style)).join('')
   const tablet = visibleNodes.map(node => rule(node, node.responsive.tablet ?? {})).join('')
@@ -475,12 +545,14 @@ function compileCss(document: DesignDocument): string {
   const tabletRules = tablet ? `html[data-viewport="tablet"] ${tablet.replaceAll('}[', '}html[data-viewport="tablet"] [')}` : ''
   const mobileRules = mobile ? `html[data-viewport="mobile"] ${mobile.replaceAll('}[', '}html[data-viewport="mobile"] [')}` : ''
   return [
+    fontCss(document, options),
     '*{box-sizing:border-box}',
     'html{scroll-behavior:smooth}',
     '[data-node-id]{scroll-margin-top:96px}',
     '@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}',
-    `body{margin:0;background:${document.theme.colors.background};color:${document.theme.colors.text};font-family:${document.theme.fonts.body},sans-serif;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}`,
-    RENDERER_SEMANTIC_CSS,
+    `body{margin:0;background:${document.theme.colors.background};color:${document.theme.colors.text};font-family:${themeFontFamily(document.theme.fonts.body)};-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}`,
+    `${renderRootSelector} [data-node-type="heading"]{font-family:${themeFontFamily(document.theme.fonts.heading)}}`,
+    rendererPresentationCss(document),
     base,
     tabletRules,
     mobileRules,
@@ -509,6 +581,8 @@ export function buildRenderPlan(
       : document.pages[0]
   if (!page) return { success: false, code: 'route_not_found', message: 'Page route does not exist' }
   const root = renderPlanNode(document, page.rootNodeId, options)
-  const css = compileCss(document)
+  root.attributes['data-zenui-render-root'] = ''
+  root.attributes['data-visual-profile'] = resolvePresentationProfile(document)
+  const css = compileCss(document, options)
   return { success: true, plan: { document, root, css }, root, css }
 }

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import { DESIGN_LIMITS } from '@zenui/design-schema'
+import { collectHostedFontFamilies, type FontSubsetPaths } from '@zenui/font-library'
 
 import {
   buildRenderPlan,
@@ -20,7 +21,9 @@ export {
   nodeStyleToCss,
   nodeToBrowserStyle,
   RENDERER_SEMANTIC_CSS,
+  rendererPresentationCss,
   resolveNodeStyle,
+  resolvePresentationProfile,
   resolveNodeTag,
   type BrowserNodeStyle,
   type LiveLeadFormBinding,
@@ -144,6 +147,7 @@ export function compileStandaloneHtml(
     imagePolicy?: RemoteImagePolicy
     assetOrigin?: string
     portableAssetPaths?: Readonly<Record<string, string>>
+    portableFontPaths?: Readonly<Record<string, FontSubsetPaths>>
     pageId?: string
     route?: string
     routePrefix?: string
@@ -156,6 +160,7 @@ export function compileStandaloneHtml(
     ...(options.imagePolicy ? { imagePolicy: options.imagePolicy } : {}),
     ...(options.assetOrigin ? { assetOrigin: options.assetOrigin } : {}),
     ...(options.portableAssetPaths ? { portableAssetPaths: options.portableAssetPaths } : {}),
+    ...(options.portableFontPaths ? { portableFontPaths: options.portableFontPaths } : {}),
     ...(options.pageId ? { pageId: options.pageId } : {}),
     ...(options.route ? { route: options.route } : {}),
     ...(options.routePrefix ? { routePrefix: options.routePrefix } : {}),
@@ -163,13 +168,23 @@ export function compileStandaloneHtml(
     currentPageRoute: options.route ?? '/',
   })
   if (!plan.success) return plan
+  const hostedFonts = collectHostedFontFamilies(plan.plan.document.theme)
+  const fontSource = hostedFonts.length === 0
+    ? "'none'"
+    : options.portableFontPaths
+      ? "'self'"
+      : options.portableAssetPaths
+        ? "'none'"
+        : options.assetOrigin
+          ? new URL(options.assetOrigin).origin
+          : "'none'"
   const policy = [
     "default-src 'none'", "base-uri 'none'", "object-src 'none'", "frame-ancestors 'none'",
     `form-action ${liveLeadForms.options ? liveLeadForms.options.origin : "'none'"}`, "script-src 'none'", `style-src 'sha256-${styleHash(plan.css)}'`,
     `img-src ${[
       ...(options.portableAssetPaths ? ["'self'"] : options.assetOrigin ? [new URL(options.assetOrigin).origin] : []),
       ...(options.imagePolicy?.sources ?? []),
-    ].join(' ') || "'none'"}`, "font-src 'none'", "connect-src 'none'",
+    ].join(' ') || "'none'"}`, `font-src ${fontSource}`, "connect-src 'none'",
   ].join('; ')
   const body = serializeNode(plan.root)
   const title = escapeHtml(options.title ?? 'ZenUI Export')
@@ -184,7 +199,8 @@ export function compileStandaloneHtml(
     : liveLeadForms.options
       ? 'same-origin'
       : 'no-referrer'
-  const html = `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<meta name="referrer" content="${referrerPolicy}">${robots}\n<meta http-equiv="Content-Security-Policy" content="${policy}">\n<title>${title}</title>\n<style>${plan.css}</style>\n</head>\n<body>${body}</body>\n</html>\n`
+  const language = plan.plan.document.theme.presentation?.language ?? 'en'
+  const html = `<!doctype html>\n<html lang="${language}">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<meta name="referrer" content="${referrerPolicy}">${robots}\n<meta http-equiv="Content-Security-Policy" content="${policy}">\n<title>${title}</title>\n<style>${plan.css}</style>\n</head>\n<body>${body}</body>\n</html>\n`
   const bytes = Buffer.byteLength(html, 'utf8')
   if (bytes > (options.maxArtifactBytes ?? DEFAULT_MAX_ARTIFACT_BYTES)) {
     return { success: false, code: 'artifact_too_large', message: 'Compiled artifact exceeds the size limit' }
@@ -202,10 +218,18 @@ function routePath(route: string): string {
   return route === '/' ? 'index.html' : `${route.slice(1)}/index.html`
 }
 
-function relativeAssetPaths(pagePath: string, paths: Readonly<Record<string, string>>): Record<string, string> {
+function relativePaths<T extends string | FontSubsetPaths>(
+  pagePath: string,
+  paths: Readonly<Record<string, T>>,
+): Record<string, T> {
   const depth = pagePath.split('/').length - 1
   const prefix = depth === 0 ? '' : '../'.repeat(depth)
-  return Object.fromEntries(Object.entries(paths).map(([assetId, path]) => [assetId, `${prefix}${path}`]))
+  return Object.fromEntries(Object.entries(paths).map(([id, value]) => [
+    id,
+    typeof value === 'string'
+      ? `${prefix}${value}`
+      : { latin: `${prefix}${value.latin}`, vietnamese: `${prefix}${value.vietnamese}` },
+  ])) as Record<string, T>
 }
 
 export function compileStaticSite(
@@ -219,6 +243,7 @@ export function compileStaticSite(
     imagePolicy?: RemoteImagePolicy
     assetOrigin?: string
     portableAssetPaths?: Readonly<Record<string, string>>
+    portableFontPaths?: Readonly<Record<string, FontSubsetPaths>>
     routePrefix?: string
     liveLeadForms?: LiveLeadFormOptions
   } = {},
@@ -227,6 +252,7 @@ export function compileStaticSite(
     ...(options.imagePolicy ? { imagePolicy: options.imagePolicy } : {}),
     ...(options.assetOrigin ? { assetOrigin: options.assetOrigin } : {}),
     ...(options.portableAssetPaths ? { portableAssetPaths: options.portableAssetPaths } : {}),
+    ...(options.portableFontPaths ? { portableFontPaths: options.portableFontPaths } : {}),
   })
   if (!base.success) return base
   const pages = [...base.plan.document.pages]
@@ -243,7 +269,8 @@ export function compileStaticSite(
       ...(options.robots ? { robots: options.robots } : {}),
       ...(options.imagePolicy ? { imagePolicy: options.imagePolicy } : {}),
       ...(options.assetOrigin ? { assetOrigin: options.assetOrigin } : {}),
-      ...(options.portableAssetPaths ? { portableAssetPaths: relativeAssetPaths(path, options.portableAssetPaths) } : {}),
+      ...(options.portableAssetPaths ? { portableAssetPaths: relativePaths(path, options.portableAssetPaths) } : {}),
+      ...(options.portableFontPaths ? { portableFontPaths: relativePaths(path, options.portableFontPaths) } : {}),
       ...(options.routePrefix ? { routePrefix: options.routePrefix } : {}),
       ...(options.liveLeadForms ? { liveLeadForms: options.liveLeadForms } : {}),
       pageId: page.id,

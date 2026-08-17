@@ -5,14 +5,37 @@ import { connect } from 'node:net'
 export const DEV_PORTS = [3000, 3001, 9464]
 export const VERCEL_CALLBACK_PATH = '/api/v1/provider-connections/vercel/callback'
 
+export function resolveAssetServerOrigin(environment = process.env) {
+  const configured = environment.ASSET_SERVER_ORIGIN ?? environment.ASSET_ORIGIN
+  try {
+    const origin = new URL(configured)
+    if (
+      origin.protocol !== 'http:'
+      || (origin.hostname !== '127.0.0.1' && origin.hostname !== 'localhost')
+      || origin.username
+      || origin.password
+      || origin.pathname !== '/'
+      || origin.search
+      || origin.hash
+    ) {
+      throw new Error('invalid')
+    }
+    return {
+      origin: origin.origin,
+      hostname: origin.hostname,
+      port: Number(origin.port || 80),
+    }
+  } catch {
+    throw new Error('ASSET_SERVER_ORIGIN must be a root loopback HTTP origin')
+  }
+}
+
 export function getDevPorts(environment = process.env) {
   const ports = new Set(DEV_PORTS)
   try {
-    const assetOrigin = new URL(environment.ASSET_ORIGIN)
-    const port = Number(assetOrigin.port || (assetOrigin.protocol === 'https:' ? 443 : 80))
-    if (assetOrigin.hostname === '127.0.0.1' || assetOrigin.hostname === 'localhost') ports.add(port)
+    ports.add(resolveAssetServerOrigin(environment).port)
   } catch {
-    // Required runtime configuration reports invalid ASSET_ORIGIN separately.
+    // Startup validation reports invalid asset server configuration separately.
   }
   return [...ports].sort((left, right) => left - right)
 }
@@ -46,6 +69,7 @@ export function isPortAvailable(port, host = '127.0.0.1') {
 }
 
 export async function assertDevPortsAvailable(check = isPortAvailable, environment = process.env) {
+  resolveAssetServerOrigin(environment)
   const occupied = []
   for (const port of getDevPorts(environment)) {
     if (!await check(port)) occupied.push(port)
@@ -58,9 +82,11 @@ export async function assertDevPortsAvailable(check = isPortAvailable, environme
 export function proxyAssetRequest(request, environment = process.env, requestOverride) {
   const assetOrigin = new URL(environment.ASSET_ORIGIN)
   const upstreamUrl = new URL(request.url ?? '/', new URL(environment.APP_ORIGIN).origin)
+  const ownedAssetPath = /^\/a\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  const fontPath = /^\/f\/(?:manrope|be-vietnam-pro|inter|noto-sans|noto-serif)\/(?:latin|vietnamese)\.woff2$/
   if (
     request.method !== 'GET'
-    || !/^\/a\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(upstreamUrl.pathname)
+    || (!ownedAssetPath.test(upstreamUrl.pathname) && !fontPath.test(upstreamUrl.pathname))
     || upstreamUrl.search
     || upstreamUrl.hash
   ) {
@@ -80,6 +106,7 @@ export function proxyAssetRequest(request, environment = process.env, requestOve
     headers[name] = Array.isArray(value) ? value.join(', ') : value
   }
   headers.host = assetOrigin.host
+  headers['x-forwarded-proto'] = assetOrigin.protocol.slice(0, -1)
   const requester = requestOverride
     ?? (upstreamUrl.protocol === 'https:' ? httpsRequest : httpRequest)
 
@@ -121,7 +148,7 @@ export function isExpectedWorkerInstance(value, instanceId) {
 }
 
 export async function waitForDevReadiness(instanceId, fetcher = fetch, attempts = 120, environment = process.env) {
-  const assetHealthUrl = `${new URL(environment.ASSET_ORIGIN).origin}/__zenui/asset-health`
+  const assetHealthUrl = `${resolveAssetServerOrigin(environment).origin}/__zenui/asset-health`
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const [web, preview, asset, worker, instance] = await Promise.all([

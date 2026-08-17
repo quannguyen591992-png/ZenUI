@@ -5,6 +5,8 @@ import { extname, resolve } from 'node:path'
 
 import { createRemoteImagePolicy } from '@zenui/design-schema'
 
+import { createPreviewCsp } from './src/server-policy.ts'
+
 const port = Number(process.env.PREVIEW_PORT ?? 3001)
 const editorOrigin = new URL(process.env.EDITOR_ORIGIN ?? 'http://localhost:3000').origin
 const imagePolicy = createRemoteImagePolicy(process.env.REMOTE_IMAGE_HOST_ALLOWLIST ?? '')
@@ -31,18 +33,12 @@ createServer((request, response) => {
         `<html lang="en" data-nonce="${nonce}" data-remote-image-host-allowlist="${process.env.REMOTE_IMAGE_HOST_ALLOWLIST}" data-asset-origin="${assetOrigin}">`,
       ))
     }
-    const csp = [
-      "default-src 'none'",
-      "base-uri 'none'",
-      "object-src 'none'",
-      `frame-ancestors ${editorOrigin}`,
-      "form-action 'none'",
-      "script-src 'self'",
-      `style-src 'nonce-${nonce}'`,
-      `img-src ${[assetOrigin, ...imagePolicy.sources].join(' ')}`,
-      "connect-src 'none'",
-      "font-src 'none'",
-    ].join('; ')
+    const csp = createPreviewCsp({
+      editorOrigin,
+      assetOrigin,
+      imageSources: imagePolicy.sources,
+      nonce,
+    })
     response.writeHead(200, {
       'content-type': types[extname(filePath)] ?? 'application/octet-stream',
       'content-security-policy': csp,

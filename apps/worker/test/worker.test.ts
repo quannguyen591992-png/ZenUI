@@ -681,6 +681,70 @@ describe('AI worker boundary', () => {
     expect(archive).not.toMatch(/localhost|127\.0\.0\.1|private\//)
   })
 
+  it('bundles only used Vietnamese font subsets into portable export artifacts', async () => {
+    const document = createValidDesignFixture()
+    document.theme.fonts.heading = 'Noto Serif'
+    document.theme.fonts.body = 'Be Vietnam Pro'
+    const repository = {
+      getWorkerInput: vi.fn().mockResolvedValue({
+        id: '55555555-5555-4555-8555-555555555555', projectId: job.projectId,
+        workspaceId: job.workspaceId, createdBy: job.userId, document,
+      }),
+      claim: vi.fn().mockResolvedValue({ status: 'running' }),
+      complete: vi.fn().mockResolvedValue({ status: 'completed' }),
+      fail: vi.fn(),
+    }
+    const fontBytes = Uint8Array.from([0x77, 0x4f, 0x46, 0x32])
+    const loadFont = vi.fn().mockResolvedValue({
+      bytes: fontBytes,
+      checksum: createHash('sha256').update(fontBytes).digest('hex'),
+    })
+    const store = { put: vi.fn().mockResolvedValue(undefined), get: vi.fn() }
+    const processor = createExportProcessor({ repository, store, loadFont })
+
+    await expect(processor({ data: {
+      exportRunId: '55555555-5555-4555-8555-555555555555', projectId: job.projectId,
+      workspaceId: job.workspaceId, userId: job.userId,
+    } })).resolves.toMatchObject({ status: 'completed' })
+
+    expect(loadFont).toHaveBeenCalledTimes(4)
+    const uploaded = store.put.mock.calls[0]?.[0] as { content: Uint8Array } | undefined
+    const archive = new TextDecoder().decode(uploaded?.content)
+    expect(archive).toContain('fonts/noto-serif-vietnamese.woff2')
+    expect(archive).toContain('fonts/be-vietnam-pro-latin.woff2')
+    expect(archive).toContain("font-src 'self'")
+    expect(archive).not.toMatch(/fonts\.google|localhost|127\.0\.0\.1/)
+  })
+
+  it('fails portable export when a font subset exceeds the bounded binary limit', async () => {
+    const document = createValidDesignFixture()
+    document.theme.fonts.heading = 'Noto Serif'
+    document.theme.fonts.body = 'Arial'
+    const repository = {
+      getWorkerInput: vi.fn().mockResolvedValue({
+        id: '55555555-5555-4555-8555-555555555555', projectId: job.projectId,
+        workspaceId: job.workspaceId, createdBy: job.userId, document,
+      }),
+      claim: vi.fn().mockResolvedValue({ status: 'running' }),
+      complete: vi.fn(),
+      fail: vi.fn().mockResolvedValue({ status: 'failed' }),
+    }
+    const oversized = new Uint8Array(128 * 1024 + 1)
+    const loadFont = vi.fn().mockResolvedValue({
+      bytes: oversized,
+      checksum: createHash('sha256').update(oversized).digest('hex'),
+    })
+    const store = { put: vi.fn(), get: vi.fn() }
+    const processor = createExportProcessor({ repository, store, loadFont })
+
+    await expect(processor({ data: {
+      exportRunId: '55555555-5555-4555-8555-555555555555', projectId: job.projectId,
+      workspaceId: job.workspaceId, userId: job.userId,
+    } })).resolves.toMatchObject({ status: 'failed' })
+    expect(repository.fail).toHaveBeenCalledWith(context, expect.any(String), 'invalid_document')
+    expect(store.put).not.toHaveBeenCalled()
+  })
+
   it('fails portable export when an owned asset is corrupt before artifact storage', async () => {
     const assetId = '66666666-6666-4666-8666-666666666666'
     const document = createValidDesignFixture()
@@ -876,7 +940,7 @@ describe('AI worker boundary', () => {
     }))
     expect(provider.createDeployment).toHaveBeenCalledWith('provider-secret-token', expect.objectContaining({
       target: 'preview',
-      files: [
+      files: expect.arrayContaining([
         expect.objectContaining({ path: 'about/index.html' }),
         expect.objectContaining({
           path: 'index.html',
@@ -884,7 +948,7 @@ describe('AI worker boundary', () => {
             /action="https:\/\/share\.zenui\.example\/d\/[A]{32}"[^>]*method="post"/,
           ),
         }),
-      ],
+      ]),
       name: expect.stringMatching(/^zenui-[a-f0-9]{16}$/),
     }))
     const deploymentRequest = provider.createDeployment.mock.calls[0]?.[1] as {
@@ -949,12 +1013,12 @@ describe('AI worker boundary', () => {
     } })).resolves.toMatchObject({ status: 'ready' })
     expect(repository.getPublicationAssets).toHaveBeenCalledWith(context, job.projectId, [assetId])
     expect(provider.createDeployment).toHaveBeenCalledWith('token', expect.objectContaining({
-      files: [
+      files: expect.arrayContaining([
         { path: `assets/${assetId}.webp`, content: bytes },
         expect.objectContaining({
           path: 'index.html', content: expect.stringContaining(`src="assets/${assetId}.webp"`),
         }),
-      ],
+      ]),
     }))
     expect(JSON.stringify(provider.createDeployment.mock.calls)).not.toMatch(/localhost|127\.0\.0\.1|private\//)
   })

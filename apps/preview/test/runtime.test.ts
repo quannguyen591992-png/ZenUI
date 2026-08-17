@@ -38,6 +38,28 @@ describe('preview runtime', () => {
     runtime.dispose()
   })
 
+  it('uses the shared presentation marker and guarded visual stylesheet', () => {
+    const fixture = createValidDesignFixture()
+    ;(fixture.theme as unknown as Record<string, unknown>).presentation = {
+      version: 1,
+      profile: 'editorial',
+      language: 'vi',
+    }
+    const runtime = createPreviewRuntime({
+      editorOrigin, channelId, parentWindow, document,
+      remoteImageHostAllowlist: 'images.example.com',
+    })
+
+    dispatch(createEditorMessage(channelId, 'SET_DOCUMENT', { document: fixture }))
+
+    expect(document.querySelector('[data-zenui-render-root]')?.getAttribute('data-visual-profile')).toBe('editorial')
+    const css = document.getElementById('zenui-preview-style')?.textContent ?? ''
+    expect(css).toContain('@media(hover:hover) and (pointer:fine)')
+    expect(css).toContain('@media(prefers-reduced-motion:reduce)')
+    expect(css).toContain('[data-node-type="link"]::after')
+    runtime.dispose()
+  })
+
   it('prevents native Lead Form submissions and removes the guard on dispose', () => {
     const fixture = createValidDesignFixture()
     fixture.nodes['lead-form-1'] = {
