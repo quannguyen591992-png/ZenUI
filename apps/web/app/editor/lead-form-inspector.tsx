@@ -152,109 +152,135 @@ export function LeadFormInspector({ nodeId, documentVersion, props, viewport, ex
 
   return (
     <section className="lead-form-builder" aria-label="Trình tạo biểu mẫu khách hàng">
-      <fieldset aria-label="Bố cục biểu mẫu">
+      <fieldset className="lead-form-layout-card" aria-label="Bố cục biểu mẫu">
         <legend>Bố cục biểu mẫu</legend>
         <p>Kéo chỉ dùng để đổi thứ tự. Dùng các nút dưới đây để canh ngang biểu mẫu.</p>
-        <div>
+        <div className="lead-form-layout-actions">
           {leadFormLayouts.map(({ layout, label }) => (
-            <button key={layout} type="button" onClick={() => updateLayout(layout)}>{label}</button>
+            <button
+              key={layout}
+              type="button"
+              className="lead-form-button lead-form-button-secondary"
+              onClick={() => updateLayout(layout)}
+            >{label}</button>
           ))}
         </div>
       </fieldset>
-      <label>
-        Tiêu đề biểu mẫu
-        <input
-          aria-label="Tiêu đề biểu mẫu"
-          value={draft.title}
-          maxLength={DESIGN_LIMITS.maxLeadFormTitleLength}
-          onChange={event => setDraft(current => ({ ...current, title: event.target.value }))}
-        />
-      </label>
-      <label>
-        Mô tả biểu mẫu
-        <textarea
-          aria-label="Mô tả biểu mẫu"
-          value={draft.description}
-          maxLength={DESIGN_LIMITS.maxLeadFormCopyLength}
-          onChange={event => setDraft(current => ({ ...current, description: event.target.value }))}
-        />
-      </label>
-      <label>
-        Nhãn nút gửi
-        <input
-          aria-label="Nhãn nút gửi"
-          value={draft.submitLabel}
-          maxLength={DESIGN_LIMITS.maxLeadFieldLabelLength}
-          onChange={event => setDraft(current => ({ ...current, submitLabel: event.target.value }))}
-        />
-      </label>
-      <label>
-        Nội dung cảm ơn
-        <textarea
-          aria-label="Nội dung cảm ơn"
-          value={draft.successCopy}
-          maxLength={DESIGN_LIMITS.maxLeadFormCopyLength}
-          onChange={event => setDraft(current => ({ ...current, successCopy: event.target.value }))}
-        />
-      </label>
 
-      <div className="lead-form-fields">
-        <h3>Trường thông tin</h3>
+      <section className="lead-form-copy-card" aria-label="Nội dung biểu mẫu">
+        <h3>Nội dung biểu mẫu</h3>
+        <div className="lead-form-copy-fields">
+          <label className="inspector-field-group">
+            <span>Tiêu đề biểu mẫu</span>
+            <input
+              className="pro-input"
+              aria-label="Tiêu đề biểu mẫu"
+              value={draft.title}
+              maxLength={DESIGN_LIMITS.maxLeadFormTitleLength}
+              onChange={event => setDraft(current => ({ ...current, title: event.target.value }))}
+            />
+          </label>
+          <label className="inspector-field-group">
+            <span>Mô tả biểu mẫu</span>
+            <textarea
+              className="pro-input"
+              aria-label="Mô tả biểu mẫu"
+              value={draft.description}
+              maxLength={DESIGN_LIMITS.maxLeadFormCopyLength}
+              onChange={event => setDraft(current => ({ ...current, description: event.target.value }))}
+            />
+          </label>
+          <label className="inspector-field-group">
+            <span>Nhãn nút gửi</span>
+            <input
+              className="pro-input"
+              aria-label="Nhãn nút gửi"
+              value={draft.submitLabel}
+              maxLength={DESIGN_LIMITS.maxLeadFieldLabelLength}
+              onChange={event => setDraft(current => ({ ...current, submitLabel: event.target.value }))}
+            />
+          </label>
+          <label className="inspector-field-group">
+            <span>Nội dung cảm ơn</span>
+            <textarea
+              className="pro-input"
+              aria-label="Nội dung cảm ơn"
+              value={draft.successCopy}
+              maxLength={DESIGN_LIMITS.maxLeadFormCopyLength}
+              onChange={event => setDraft(current => ({ ...current, successCopy: event.target.value }))}
+            />
+          </label>
+        </div>
+      </section>
+
+      <section className="lead-form-fields" aria-label="Các trường thông tin">
+        <div className="lead-form-section-heading">
+          <h3>Trường thông tin</h3>
+          <span>{draft.fields.length}/{DESIGN_LIMITS.maxLeadFormFields}</span>
+        </div>
         {draft.fields.map((field, index) => (
-          <fieldset key={fieldIds[index]} aria-label={`Trường ${index + 1}`}>
+          <fieldset key={fieldIds[index]} className="lead-form-field-card" aria-label={`Trường ${index + 1}`}>
             <legend>Trường {index + 1}</legend>
-            <label>
-              Khóa trường
-              <input
-                aria-label="Khóa trường"
-                value={field.key}
-                maxLength={DESIGN_LIMITS.maxLeadFieldKeyLength}
-                onChange={event => updateField(index, { ...field, key: event.target.value })}
-              />
-            </label>
-            <label>
-              Nhãn trường
-              <input
-                aria-label="Nhãn trường"
-                value={field.label}
-                maxLength={DESIGN_LIMITS.maxLeadFieldLabelLength}
-                onChange={event => updateField(index, { ...field, label: event.target.value })}
-              />
-            </label>
-            <label>
-              Loại trường
-              <select
-                aria-label="Loại trường"
-                value={field.type}
-                onChange={event => updateField(index, fieldWithType(field, event.target.value as LeadFormField['type']))}
-              >
-                {Object.entries(fieldTypeLabels).map(([type, label]) => <option key={type} value={type}>{label}</option>)}
-              </select>
-            </label>
-            <label>
-              Gợi ý nhập
-              <input
-                aria-label="Gợi ý nhập"
-                value={field.placeholder ?? ''}
-                maxLength={DESIGN_LIMITS.maxLeadFieldPlaceholderLength}
-                onChange={event => updateField(index, { ...field, placeholder: event.target.value })}
-              />
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={field.required}
-                onChange={event => updateField(index, { ...field, required: event.target.checked })}
-              />
-              Bắt buộc
-            </label>
+            <div className="lead-form-field-grid">
+              <label className="inspector-field-group">
+                <span>Khóa trường</span>
+                <input
+                  className="pro-input"
+                  aria-label="Khóa trường"
+                  value={field.key}
+                  maxLength={DESIGN_LIMITS.maxLeadFieldKeyLength}
+                  onChange={event => updateField(index, { ...field, key: event.target.value })}
+                />
+              </label>
+              <label className="inspector-field-group">
+                <span>Nhãn trường</span>
+                <input
+                  className="pro-input"
+                  aria-label="Nhãn trường"
+                  value={field.label}
+                  maxLength={DESIGN_LIMITS.maxLeadFieldLabelLength}
+                  onChange={event => updateField(index, { ...field, label: event.target.value })}
+                />
+              </label>
+              <label className="inspector-field-group">
+                <span>Loại trường</span>
+                <select
+                  className="pro-input"
+                  aria-label="Loại trường"
+                  value={field.type}
+                  onChange={event => updateField(index, fieldWithType(field, event.target.value as LeadFormField['type']))}
+                >
+                  {Object.entries(fieldTypeLabels).map(([type, label]) => <option key={type} value={type}>{label}</option>)}
+                </select>
+              </label>
+              <label className="inspector-field-group">
+                <span>Gợi ý nhập</span>
+                <input
+                  className="pro-input"
+                  aria-label="Gợi ý nhập"
+                  value={field.placeholder ?? ''}
+                  maxLength={DESIGN_LIMITS.maxLeadFieldPlaceholderLength}
+                  onChange={event => updateField(index, { ...field, placeholder: event.target.value })}
+                />
+              </label>
+              <label className="lead-form-checkbox">
+                <input
+                  type="checkbox"
+                  checked={field.required}
+                  onChange={event => updateField(index, { ...field, required: event.target.checked })}
+                />
+                <span>Bắt buộc</span>
+              </label>
+            </div>
             {field.type === 'select' ? (
-              <div aria-label="Các lựa chọn">
+              <div className="lead-form-options" aria-label="Các lựa chọn">
+                <h4>Các lựa chọn</h4>
                 {field.options.map((option, optionIndex) => (
-                  <div key={`${fieldIds[index]}:option:${optionIndex}`}>
-                    <label>
-                      Nhãn lựa chọn {optionIndex + 1}
+                  <div className="lead-form-option-card" key={`${fieldIds[index]}:option:${optionIndex}`}>
+                    <label className="inspector-field-group">
+                      <span>Nhãn lựa chọn {optionIndex + 1}</span>
                       <input
+                        className="pro-input"
                         aria-label={`Nhãn lựa chọn ${optionIndex + 1}`}
                         value={option.label}
                         maxLength={DESIGN_LIMITS.maxLeadSelectOptionLength}
@@ -266,9 +292,10 @@ export function LeadFormInspector({ nodeId, documentVersion, props, viewport, ex
                         })}
                       />
                     </label>
-                    <label>
-                      Giá trị lựa chọn {optionIndex + 1}
+                    <label className="inspector-field-group">
+                      <span>Giá trị lựa chọn {optionIndex + 1}</span>
                       <input
+                        className="pro-input"
                         aria-label={`Giá trị lựa chọn ${optionIndex + 1}`}
                         value={option.value}
                         maxLength={DESIGN_LIMITS.maxLeadSelectOptionLength}
@@ -282,6 +309,7 @@ export function LeadFormInspector({ nodeId, documentVersion, props, viewport, ex
                     </label>
                     <button
                       type="button"
+                      className="lead-form-button lead-form-button-danger"
                       aria-label={`Xóa lựa chọn ${optionIndex + 1}`}
                       disabled={field.options.length <= 1}
                       onClick={() => updateField(index, { ...field, options: field.options.filter((_, candidateIndex) => candidateIndex !== optionIndex) })}
@@ -290,6 +318,7 @@ export function LeadFormInspector({ nodeId, documentVersion, props, viewport, ex
                 ))}
                 <button
                   type="button"
+                  className="lead-form-button lead-form-button-tertiary"
                   disabled={field.options.length >= DESIGN_LIMITS.maxLeadSelectOptions}
                   onClick={() => updateField(index, {
                     ...field,
@@ -298,59 +327,71 @@ export function LeadFormInspector({ nodeId, documentVersion, props, viewport, ex
                 >Thêm lựa chọn</button>
               </div>
             ) : null}
-            <div>
-              <button type="button" aria-label={`Đưa trường ${index + 1} lên`} disabled={index === 0} onClick={() => moveField(index, -1)}>Đưa lên</button>
-              <button type="button" aria-label={`Đưa trường ${index + 1} xuống`} disabled={index === draft.fields.length - 1} onClick={() => moveField(index, 1)}>Đưa xuống</button>
-              <button type="button" aria-label={`Xóa trường ${index + 1}`} disabled={draft.fields.length <= 1} onClick={() => removeField(index)}>Xóa trường</button>
+            <div className="lead-form-field-actions">
+              <button className="lead-form-button lead-form-button-secondary" type="button" aria-label={`Đưa trường ${index + 1} lên`} disabled={index === 0} onClick={() => moveField(index, -1)}>Đưa lên</button>
+              <button className="lead-form-button lead-form-button-secondary" type="button" aria-label={`Đưa trường ${index + 1} xuống`} disabled={index === draft.fields.length - 1} onClick={() => moveField(index, 1)}>Đưa xuống</button>
+              <button className="lead-form-button lead-form-button-danger" type="button" aria-label={`Xóa trường ${index + 1}`} disabled={draft.fields.length <= 1} onClick={() => removeField(index)}>Xóa trường</button>
             </div>
           </fieldset>
         ))}
-        <button type="button" disabled={draft.fields.length >= DESIGN_LIMITS.maxLeadFormFields} onClick={addField}>Thêm trường</button>
-      </div>
+        <button
+          type="button"
+          className="lead-form-button lead-form-button-tertiary lead-form-add-field"
+          disabled={draft.fields.length >= DESIGN_LIMITS.maxLeadFormFields}
+          onClick={addField}
+        >Thêm trường</button>
+      </section>
 
-      <label>
-        <input
-          type="checkbox"
-          checked={Boolean(draft.consent)}
-          onChange={event => setDraft(current => event.target.checked
-            ? { ...current, consent: { label: 'Tôi đồng ý để ZenUI liên hệ', required: false } }
-            : {
-                title: current.title,
-                description: current.description,
-                submitLabel: current.submitLabel,
-                successCopy: current.successCopy,
-                fields: current.fields,
-              })}
-        />
-        Hiển thị đồng ý liên hệ
-      </label>
-      {draft.consent ? (
-        <>
-          <label>
-            Nội dung đồng ý
-            <textarea
-              aria-label="Nội dung đồng ý"
-              value={draft.consent.label}
-              maxLength={DESIGN_LIMITS.maxLeadFormCopyLength}
-              onChange={event => setDraft(current => current.consent
-                ? { ...current, consent: { ...current.consent, label: event.target.value } }
-                : current)}
-            />
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={draft.consent.required}
-              onChange={event => setDraft(current => current.consent
-                ? { ...current, consent: { ...current.consent, required: event.target.checked } }
-                : current)}
-            />
-            Bắt buộc đồng ý
-          </label>
-        </>
-      ) : null}
-      {error ? <p role="alert" className="inspector-error">{error}</p> : null}
-      <button type="button" onClick={save}>Lưu biểu mẫu</button>
+      <section className="lead-form-consent" aria-label="Đồng ý liên hệ">
+        <h3>Đồng ý liên hệ</h3>
+        <label className="lead-form-checkbox">
+          <input
+            type="checkbox"
+            checked={Boolean(draft.consent)}
+            onChange={event => setDraft(current => event.target.checked
+              ? { ...current, consent: { label: 'Tôi đồng ý để ZenUI liên hệ', required: false } }
+              : {
+                  title: current.title,
+                  description: current.description,
+                  submitLabel: current.submitLabel,
+                  successCopy: current.successCopy,
+                  fields: current.fields,
+                })}
+          />
+          <span>Hiển thị đồng ý liên hệ</span>
+        </label>
+        {draft.consent ? (
+          <div className="lead-form-consent-fields">
+            <label className="inspector-field-group">
+              <span>Nội dung đồng ý</span>
+              <textarea
+                className="pro-input"
+                aria-label="Nội dung đồng ý"
+                value={draft.consent.label}
+                maxLength={DESIGN_LIMITS.maxLeadFormCopyLength}
+                onChange={event => setDraft(current => current.consent
+                  ? { ...current, consent: { ...current.consent, label: event.target.value } }
+                  : current)}
+              />
+            </label>
+            <label className="lead-form-checkbox">
+              <input
+                type="checkbox"
+                checked={draft.consent.required}
+                onChange={event => setDraft(current => current.consent
+                  ? { ...current, consent: { ...current.consent, required: event.target.checked } }
+                  : current)}
+              />
+              <span>Bắt buộc đồng ý</span>
+            </label>
+          </div>
+        ) : null}
+      </section>
+
+      <div className="lead-form-save-bar" role="group" aria-label="Hành động biểu mẫu">
+        {error ? <p role="alert" className="inspector-error">{error}</p> : null}
+        <button type="button" className="lead-form-button lead-form-button-primary" onClick={save}>Lưu biểu mẫu</button>
+      </div>
     </section>
   )
 }

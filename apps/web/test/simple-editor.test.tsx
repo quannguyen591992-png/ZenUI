@@ -468,6 +468,35 @@ describe('Stage 6 section-first editor', () => {
     expect(screen.getByText(/Đang chỉnh:/).closest('p')).toHaveTextContent('Đang chỉnh: Phần Features')
   })
 
+  it('groups the Canvas and Asset panels in one center scroll region', async () => {
+    renderSimple()
+
+    const canvas = await screen.findByLabelText('Khung thiết kế')
+    const assets = screen.getByRole('complementary', { name: 'Ảnh và thương hiệu' })
+    const centerScroll = canvas.closest<HTMLElement>('.editor-center-scroll')
+
+    expect(centerScroll).not.toBeNull()
+    expect(centerScroll).toContainElement(assets)
+    expect(screen.getByRole('navigation', { name: 'Câu chuyện trang' })).not.toBe(centerScroll)
+    expect(screen.getByRole('complementary', { name: 'Chỉnh sửa section' })).not.toBe(centerScroll)
+  })
+
+  it('auto-grows the ordinary content textarea without changing its command flow', async () => {
+    const scrollHeight = vi.spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get')
+      .mockReturnValue(120)
+    const user = userEvent.setup()
+    renderSimple()
+
+    const canvas = await screen.findByLabelText('Khung thiết kế')
+    await user.click(within(canvas).getByRole('heading', { name: 'Build your next product' }))
+    const textarea = within(screen.getByRole('region', { name: 'Chỉnh sửa trực tiếp' }))
+      .getByRole('textbox', { name: 'Nội dung' })
+
+    await waitFor(() => expect(textarea).toHaveStyle({ height: '120px', overflowY: 'hidden' }))
+    expect(textarea).toHaveClass('inspector-content-textarea')
+    scrollHeight.mockRestore()
+  })
+
   it('creates and restores immutable revisions in visual design mode', async () => {
     const initialRevision = {
       id: 'revision-initial', documentVersion: 1, summary: 'Bản ban đầu', source: 'manual', createdAt: '2026-08-05T00:00:00.000Z',
@@ -911,13 +940,19 @@ describe('Stage 6 section-first editor', () => {
     await user.click(within(canvas).getByRole('form', { name: 'Request a consultation' }))
 
     const manualEditor = screen.getByRole('region', { name: 'Chỉnh sửa trực tiếp' })
-    expect(within(manualEditor).getByRole('region', { name: 'Trình tạo biểu mẫu khách hàng' })).toBeVisible()
+    const desktopBuilder = within(manualEditor).getByRole('region', { name: 'Trình tạo biểu mẫu khách hàng' })
+    expect(desktopBuilder).toBeVisible()
+    expect(within(desktopBuilder).getByRole('region', { name: 'Nội dung biểu mẫu' })).toBeVisible()
+    expect(within(desktopBuilder).getByRole('group', { name: 'Hành động biểu mẫu' })).toBeVisible()
     expect(within(manualEditor).getByLabelText('Tiêu đề biểu mẫu')).toHaveValue('Request a consultation')
     expect(within(manualEditor).getByRole('group', { name: 'Bố cục biểu mẫu' })).toBeVisible()
 
     await user.click(screen.getByRole('button', { name: 'Chỉnh sửa' }))
     const dialog = screen.getByRole('dialog', { name: 'Chỉnh sửa trực tiếp' })
-    expect(within(dialog).getByRole('region', { name: 'Trình tạo biểu mẫu khách hàng' })).toBeVisible()
+    const sheetBuilder = within(dialog).getByRole('region', { name: 'Trình tạo biểu mẫu khách hàng' })
+    expect(sheetBuilder).toBeVisible()
+    expect(within(sheetBuilder).getByRole('region', { name: 'Nội dung biểu mẫu' })).toBeVisible()
+    expect(within(sheetBuilder).getByRole('group', { name: 'Hành động biểu mẫu' })).toBeVisible()
     expect(within(dialog).getByLabelText('Tiêu đề biểu mẫu')).toHaveValue('Request a consultation')
     expect(within(dialog).getByRole('group', { name: 'Bố cục biểu mẫu' })).toBeVisible()
     expect(within(dialog).queryByLabelText(/JSON|endpoint|người nhận/i)).toBeNull()

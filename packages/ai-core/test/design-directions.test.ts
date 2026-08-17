@@ -47,12 +47,22 @@ const plannedPresetIds = ['calm-clarity', 'bold-launch', 'proof-command'] as con
 function content(language: 'vi' | 'en'): DesignDirectionContentBlueprint {
   const vi = language === 'vi'
   return {
-    version: 1,
+    version: 2,
     language,
     pagePreset: vi ? 'saas' : 'course',
     brand: vi ? 'NovaFlow' : 'Atlas Course',
     announcement: vi ? 'Lập kế hoạch ra mắt nhẹ nhàng hơn' : 'Turn your expertise into a clear course',
-    navLabels: vi ? ['Lợi ích', 'Kết quả', 'Câu hỏi'] : ['Benefits', 'Pricing', 'Questions'],
+    navigation: vi
+      ? [
+          { text: 'Lợi ích', target: 'features' },
+          { text: 'Kết quả', target: 'testimonials' },
+          { text: 'Câu hỏi', target: 'faq' },
+        ]
+      : [
+          { text: 'Benefits', target: 'features' },
+          { text: 'Pricing', target: 'pricing' },
+          { text: 'Questions', target: 'faq' },
+        ],
     heroBadge: vi ? 'Cho nhóm sản phẩm nhỏ' : 'For independent consultants',
     heroHeading: vi ? 'Lập kế hoạch cho mọi lần ra mắt một cách rõ ràng' : 'Build a course people are ready to buy',
     heroParagraph: vi
@@ -221,6 +231,30 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     expect(schema).toContain('contentImages')
     expect(schema).toContain('feature-1')
     expect(schema).toContain('query')
+    expect(schema).toContain('navigation')
+    expect(schema).toContain('target')
+    expect(designDirectionContentBlueprintSchema.safeParse({
+      ...content('vi'),
+      navigation: [
+        { text: 'Lợi ích', target: 'features' },
+        { text: 'Lặp lại', target: 'features' },
+      ],
+    }).success).toBe(false)
+    expect(designDirectionContentBlueprintSchema.safeParse({
+      ...content('vi'),
+      navigation: [
+        { text: 'Lợi ích', target: 'features-section' },
+        { text: 'Câu hỏi', target: 'faq' },
+      ],
+    }).success).toBe(false)
+    expect(designDirectionContentBlueprintSchema.safeParse({
+      ...content('vi'),
+      navigation: [
+        { text: 'Lợi ích', target: 'features' },
+        { text: 'Bảng giá', target: 'pricing' },
+      ],
+      sectionOrder: content('vi').sectionOrder.filter(type => type !== 'pricing'),
+    }).success).toBe(false)
     expect(designDirectionContentBlueprintSchema.safeParse({
       ...content('vi'),
       contentImages: [...content('vi').contentImages, {
@@ -311,6 +345,17 @@ describe('Stage 5 guided brief and design direction contracts', () => {
     }
     const serialized = JSON.stringify(result.directions)
     expect(serialized).toContain(language === 'vi' ? 'Lập kế hoạch' : 'Build a course')
+    expect(serialized).not.toContain('#start')
+    for (const direction of result.directions) {
+      const navHrefs = ['navbar-link-1', 'navbar-link-2', 'navbar-link-3'].map(id => {
+        const props = direction.document.nodes[id]?.props
+        return props && 'href' in props ? props.href : null
+      })
+      for (const href of navHrefs) {
+        expect(href).not.toBeNull()
+        expect(direction.document.nodes[String(href).slice(1)]).toBeDefined()
+      }
+    }
   })
 
   it('preserves one server-owned Lead Form conversion across all three design directions', () => {

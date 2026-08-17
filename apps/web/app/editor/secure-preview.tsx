@@ -19,6 +19,7 @@ interface SecurePreviewProps {
   route?: string
   viewport: 'desktop' | 'tablet' | 'mobile'
   selectedNodeId: string | null
+  interactionMode: 'inspect' | 'presentation'
   presentation?: 'simple' | 'advanced'
   saveStatus?: 'idle' | 'dirty' | 'saving' | 'saved' | 'offline' | 'error' | 'conflict'
   onSelect: (nodeId: string) => void
@@ -33,6 +34,7 @@ export function SecurePreview({
   route = '/',
   viewport,
   selectedNodeId,
+  interactionMode,
   presentation = 'advanced',
   saveStatus = 'saved',
   onSelect,
@@ -53,12 +55,12 @@ export function SecurePreview({
     target.postMessage(createEditorMessage(channelId, 'SET_ROUTE', { route }), previewOrigin)
     target.postMessage(createEditorMessage(channelId, 'SET_VIEWPORT', { viewport }), previewOrigin)
     target.postMessage(createEditorMessage(channelId, 'SELECT_NODE', { nodeId: selectedNodeId }), previewOrigin)
-    target.postMessage(createEditorMessage(channelId, 'SET_MODE', { mode: 'inspect' }), previewOrigin)
+    target.postMessage(createEditorMessage(channelId, 'SET_MODE', { mode: interactionMode }), previewOrigin)
   }
 
   useEffect(() => {
     if (open) post()
-  }, [document, open, route, selectedNodeId, viewport])
+  }, [document, interactionMode, open, route, selectedNodeId, viewport])
 
   useEffect(() => {
     if (open) {

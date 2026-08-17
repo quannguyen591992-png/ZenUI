@@ -125,12 +125,17 @@ describe('preview runtime', () => {
     runtime.dispose()
   })
 
-  it('applies viewport, mode, selection and hover messages without navigation', () => {
+  it('applies viewport and lets presentation links navigate while inspect links select', () => {
     const fixture = createValidDesignFixture()
     fixture.nodes['heading-1']!.responsive = {
       tablet: { fontSize: 36 },
       mobile: { fontSize: 24, display: 'none' },
     }
+    fixture.nodes['link-1'] = {
+      id: 'link-1', type: 'link', parentId: 'container-1', children: [],
+      props: { text: 'Jump to section', href: '#section-1' }, style: {}, responsive: {},
+    }
+    fixture.nodes['container-1']!.children.push('link-1')
     const runtime = createPreviewRuntime({ editorOrigin, channelId, parentWindow, document, remoteImageHostAllowlist: 'images.example.com' })
     dispatch(createEditorMessage(channelId, 'SET_DOCUMENT', { document: fixture }))
     dispatch(createEditorMessage(channelId, 'SET_VIEWPORT', { viewport: 'mobile' }))
@@ -140,16 +145,27 @@ describe('preview runtime', () => {
     expect(document.getElementById('zenui-preview-style')?.textContent).toContain('html[data-viewport="tablet"]')
     expect(document.getElementById('zenui-preview-style')?.textContent).toContain('html[data-viewport="mobile"]')
     expect(document.querySelector('[data-node-id="heading-1"]')?.hasAttribute('data-selected')).toBe(true)
+    expect(document.getElementById('section-1')).not.toBeNull()
     const heading = document.querySelector('h1')!
     heading.dispatchEvent(new Event('pointerover', { bubbles: true }))
     expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
       type: 'NODE_HOVERED', payload: { nodeId: 'heading-1' },
     }), editorOrigin)
 
+    const link = document.querySelector<HTMLAnchorElement>('[data-node-id="link-1"]')!
+    const inspectClick = new MouseEvent('click', { bubbles: true, cancelable: true })
+    link.dispatchEvent(inspectClick)
+    expect(inspectClick.defaultPrevented).toBe(true)
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'NODE_CLICKED', payload: { nodeId: 'link-1' },
+    }), editorOrigin)
+
     dispatch(createEditorMessage(channelId, 'SET_MODE', { mode: 'presentation' }))
     const calls = postMessage.mock.calls.length
-    heading.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    const presentationClick = new MouseEvent('click', { bubbles: true, cancelable: true })
+    link.dispatchEvent(presentationClick)
     heading.dispatchEvent(new Event('pointerover', { bubbles: true }))
+    expect(presentationClick.defaultPrevented).toBe(false)
     expect(postMessage).toHaveBeenCalledTimes(calls)
     runtime.dispose()
   })

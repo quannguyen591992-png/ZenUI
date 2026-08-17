@@ -105,8 +105,8 @@ export function createPreviewRuntime(options: PreviewRuntimeOptions) {
   }
 
   const onClick = (event: MouseEvent): void => {
-    event.preventDefault()
     if (mode !== 'inspect') return
+    event.preventDefault()
     const element = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-node-id]') : null
     if (element?.dataset.nodeId) send('NODE_CLICKED', { nodeId: element.dataset.nodeId })
   }

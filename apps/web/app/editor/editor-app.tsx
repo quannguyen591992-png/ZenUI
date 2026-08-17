@@ -619,10 +619,19 @@ function Layers({ document: design, rootNodeId, selectedNodeId, onSelect }: Laye
 function Inspector({ state, viewport, execute }: InspectorProps) {
   const node = state.selectedNodeId ? state.document.nodes[state.selectedNodeId] : undefined
   const [text, setText] = useState<string>('')
+  const textAreaRef = useRef<HTMLTextAreaElement | null>(null)
   const [fontSize, setFontSize] = useState('')
   const [gap, setGap] = useState('')
   const [error, setError] = useState<string | null>(null)
   const currentStyle = node ? resolveNodeStyle(node, viewport) : {}
+  const supportsGap = Boolean(node && (
+    node.type === 'lead-form'
+    || (
+      componentRegistry[node.type].isContainer
+      && node.children.length > 1
+      && (currentStyle.display === 'flex' || currentStyle.display === 'grid')
+    )
+  ))
 
   useEffect(() => {
     setText(node && 'text' in node.props ? String(node.props.text) : '')
@@ -630,6 +639,17 @@ function Inspector({ state, viewport, execute }: InspectorProps) {
     setGap(currentStyle.gap === undefined ? '' : String(currentStyle.gap))
     setError(null)
   }, [currentStyle.fontSize, currentStyle.gap, node])
+
+  useEffect(() => {
+    const textarea = textAreaRef.current
+    if (!textarea) return
+    const maxHeight = 240
+    textarea.style.height = 'auto'
+    const height = Math.min(textarea.scrollHeight, maxHeight)
+    textarea.style.height = `${height}px`
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden'
+  }, [node?.id, text])
+
   if (!node) return <p>Chọn một thành phần để chỉnh sửa.</p>
 
   const updateStyle = (key: 'fontSize' | 'gap' | 'color', value: number | string): void => {
@@ -678,8 +698,9 @@ function Inspector({ state, viewport, execute }: InspectorProps) {
         <div className="inspector-field-group">
           <label>Nội dung</label>
           <textarea
+            ref={textAreaRef}
             aria-label="Nội dung"
-            className="pro-input"
+            className="pro-input inspector-content-textarea"
             rows={3}
             value={text}
             onChange={event => {
@@ -738,30 +759,32 @@ function Inspector({ state, viewport, execute }: InspectorProps) {
         </div>
       </div>
 
-      <div className="inspector-field-group">
-        <label>Khoảng cách</label>
-        <div className="pro-slider-group">
-          <input
-            type="range"
-            aria-label="Điều chỉnh khoảng cách"
-            min="0"
-            max="200"
-            value={gap || 0}
-            onChange={event => {
-              setGap(event.target.value)
-              updateStyle('gap', Number(event.target.value))
-            }}
-          />
-          <input
-            aria-label="Khoảng cách"
-            inputMode="numeric"
-            className="pro-input pro-input-small"
-            value={gap}
-            onChange={event => setGap(event.target.value)}
-            onBlur={() => commitNumber('gap', gap)}
-          />
+      {supportsGap && (
+        <div className="inspector-field-group">
+          <label>Khoảng cách giữa các phần tử</label>
+          <div className="pro-slider-group">
+            <input
+              type="range"
+              aria-label="Điều chỉnh khoảng cách giữa các phần tử"
+              min="0"
+              max="200"
+              value={gap || 0}
+              onChange={event => {
+                setGap(event.target.value)
+                updateStyle('gap', Number(event.target.value))
+              }}
+            />
+            <input
+              aria-label="Khoảng cách giữa các phần tử"
+              inputMode="numeric"
+              className="pro-input pro-input-small"
+              value={gap}
+              onChange={event => setGap(event.target.value)}
+              onBlur={() => commitNumber('gap', gap)}
+            />
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="inspector-field-group">
         <label>Màu sắc</label>
@@ -1338,6 +1361,71 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
     },
     onDelete: () => setDialog(actionIsTopLevelSection ? 'delete-section' : 'delete-node'),
   } : null
+  const assetBrandPanel = isFixture ? null : (
+    <aside ref={assetPanelRef} className="asset-brand-panel" aria-label="Ảnh và thương hiệu">
+      <AssetLibraryPanel
+        projectId={projectId}
+        workspaceId={workspaceId}
+        assetOrigin={assetOrigin}
+        canManageAssets={canMutate}
+        canApply={canMutate && Boolean(selectedImageId || selectedHeroSlotId)}
+        targetLabel={assetTargetLabel}
+        api={assetApi}
+        onApply={props => {
+          if (selectedImageId) {
+            execute({
+              commandId: `asset-${selectedImageId}-${Date.now()}`,
+              documentVersion: stateRef.current.document.version,
+              source: 'user',
+              type: 'UPDATE_PROPS',
+              nodeId: selectedImageId,
+              patch: { ...props, src: null },
+            })
+            return
+          }
+          if (!selectedHeroSlotId) return
+          const target = stateRef.current.document.nodes[selectedHeroSlotId]
+          if (!target?.parentId) return
+          const imageId = `hero-image-${Date.now()}-${idCounter.current++}`
+          applyCommands([{
+            commandId: `asset-${selectedHeroSlotId}-${Date.now()}`,
+            documentVersion: stateRef.current.document.version,
+            source: 'user',
+            type: 'REPLACE_SUBTREE',
+            nodeId: selectedHeroSlotId,
+            rootNodeId: imageId,
+            nodes: [{
+              id: imageId,
+              type: 'image',
+              parentId: target.parentId,
+              children: [],
+              props,
+              style: {
+                width: 'full', aspectRatio: 'wide', objectFit: 'cover', objectPosition: 'center',
+                borderRadius: stateRef.current.document.theme.radius.md, shadow: 'md', backgroundColor: '#eef2ff',
+              },
+              responsive: { tablet: { aspectRatio: 'landscape' }, mobile: { aspectRatio: 'landscape', objectPosition: 'top' } },
+            }],
+          }], imageId)
+        }}
+      />
+      {role === 'owner' && (
+        <BrandKitPanel
+          projectId={projectId}
+          workspaceId={workspaceId}
+          expectedDocumentVersion={autosave.serverVersion}
+          canManage={autosave.status === 'idle' || autosave.status === 'saved'}
+          api={brandApi}
+          onApplied={result => {
+            setState(createEditorState(result.document))
+            setAutosave(createAutosaveState(result.version))
+            window.localStorage.removeItem(recoveryKey)
+            setAnnouncement('Đã áp dụng Brand Kit cho website')
+          }}
+        />
+      )}
+    </aside>
+  )
 
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
@@ -1376,6 +1464,7 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
               route={activePage.slug}
               viewport={viewport}
               selectedNodeId={state.selectedNodeId}
+              interactionMode="presentation"
               presentation={mode}
               saveStatus={autosave.status}
               onSelect={selectEditorNode}
@@ -1556,21 +1645,24 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
             >Thêm thao tác</button>
           </div>
         )}
-        <section className="canvas-panel" aria-label="Khung thiết kế" data-viewport={viewport}>
-          <div className="canvas-viewport" style={{ width: canvasViewportWidths[viewport] }}>
-            <CanvasNode
-              document={state.document}
-              nodeId={activePage.rootNodeId}
-              selectedNodeId={state.selectedNodeId ?? (mode === 'simple' ? selectedSectionId : null)}
-              viewport={viewport}
-              onSelect={selectEditorNode}
-              onChooseImage={chooseImageTarget}
-              canMutate={canMutate}
-              assetOrigin={assetOrigin}
-              selectionActions={selectionActions}
-            />
-          </div>
-        </section>
+        <div className="editor-center-scroll">
+          <section className="canvas-panel" aria-label="Khung thiết kế" data-viewport={viewport}>
+            <div className="canvas-viewport" style={{ width: canvasViewportWidths[viewport] }}>
+              <CanvasNode
+                document={state.document}
+                nodeId={activePage.rootNodeId}
+                selectedNodeId={state.selectedNodeId ?? (mode === 'simple' ? selectedSectionId : null)}
+                viewport={viewport}
+                onSelect={selectEditorNode}
+                onChooseImage={chooseImageTarget}
+                canMutate={canMutate}
+                assetOrigin={assetOrigin}
+                selectionActions={selectionActions}
+              />
+            </div>
+          </section>
+          {assetBrandPanel}
+        </div>
         {mode === 'simple' ? (
           <aside className="section-guide" aria-label="Chỉnh sửa section">
             {isFixture ? (
@@ -1690,71 +1782,6 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
                   onRestore={revisionId => void restoreRevision(revisionId)}
                 />
               </>
-            )}
-          </aside>
-        )}
-        {!isFixture && (
-          <aside ref={assetPanelRef} className="asset-brand-panel" aria-label="Ảnh và thương hiệu">
-            <AssetLibraryPanel
-              projectId={projectId}
-              workspaceId={workspaceId}
-              assetOrigin={assetOrigin}
-              canManageAssets={canMutate}
-              canApply={canMutate && Boolean(selectedImageId || selectedHeroSlotId)}
-              targetLabel={assetTargetLabel}
-              api={assetApi}
-              onApply={props => {
-                if (selectedImageId) {
-                  execute({
-                    commandId: `asset-${selectedImageId}-${Date.now()}`,
-                    documentVersion: stateRef.current.document.version,
-                    source: 'user',
-                    type: 'UPDATE_PROPS',
-                    nodeId: selectedImageId,
-                    patch: { ...props, src: null },
-                  })
-                  return
-                }
-                if (!selectedHeroSlotId) return
-                const target = stateRef.current.document.nodes[selectedHeroSlotId]
-                if (!target?.parentId) return
-                const imageId = `hero-image-${Date.now()}-${idCounter.current++}`
-                applyCommands([{
-                  commandId: `asset-${selectedHeroSlotId}-${Date.now()}`,
-                  documentVersion: stateRef.current.document.version,
-                  source: 'user',
-                  type: 'REPLACE_SUBTREE',
-                  nodeId: selectedHeroSlotId,
-                  rootNodeId: imageId,
-                  nodes: [{
-                    id: imageId,
-                    type: 'image',
-                    parentId: target.parentId,
-                    children: [],
-                    props,
-                    style: {
-                      width: 'full', aspectRatio: 'wide', objectFit: 'cover', objectPosition: 'center',
-                      borderRadius: stateRef.current.document.theme.radius.md, shadow: 'md', backgroundColor: '#eef2ff',
-                    },
-                    responsive: { tablet: { aspectRatio: 'landscape' }, mobile: { aspectRatio: 'landscape', objectPosition: 'top' } },
-                  }],
-                }], imageId)
-              }}
-            />
-            {role === 'owner' && (
-              <BrandKitPanel
-                projectId={projectId}
-                workspaceId={workspaceId}
-                expectedDocumentVersion={autosave.serverVersion}
-                canManage={autosave.status === 'idle' || autosave.status === 'saved'}
-                api={brandApi}
-                onApplied={result => {
-                  setState(createEditorState(result.document))
-                  setAutosave(createAutosaveState(result.version))
-                  window.localStorage.removeItem(recoveryKey)
-                  setAnnouncement('Đã áp dụng Brand Kit cho website')
-                }}
-              />
             )}
           </aside>
         )}

@@ -23,9 +23,9 @@ const blueprintV2 = {
     variant: 'announcement' as const,
     announcement: 'New: AI workflows for growing teams',
     links: [
-      { text: 'Features', href: '#features' },
-      { text: 'Pricing', href: '#pricing' },
-      { text: 'FAQ', href: '#faq' },
+      { text: 'Features', target: 'features' as const },
+      { text: 'Pricing', target: 'pricing' as const },
+      { text: 'FAQ', target: 'faq' as const },
     ],
     cta: { text: 'Start free', href: '#start' },
   },
@@ -171,6 +171,53 @@ describe('Blueprint v2 and section presets', () => {
     }).success).toBe(false)
   })
 
+  it('accepts only semantic navbar targets that exist in the section set', () => {
+    expect(landingPageBlueprintV2Schema.safeParse(blueprintV2).success).toBe(true)
+    expect(landingPageBlueprintV2Schema.safeParse({
+      ...blueprintV2,
+      navbar: {
+        ...blueprintV2.navbar,
+        links: [...blueprintV2.navbar.links, { text: 'Duplicate', target: 'features' }],
+      },
+    }).success).toBe(false)
+    expect(landingPageBlueprintV2Schema.safeParse({
+      ...blueprintV2,
+      navbar: {
+        ...blueprintV2.navbar,
+        links: [{ text: 'Missing', target: 'stats' }, ...blueprintV2.navbar.links.slice(1)],
+      },
+      sections: blueprintV2.sections.filter(section => section.type !== 'stats'),
+    }).success).toBe(false)
+    expect(landingPageBlueprintV2Schema.safeParse({
+      ...blueprintV2,
+      navbar: {
+        ...blueprintV2.navbar,
+        links: [{ text: 'Forged', target: 'features-section' }, ...blueprintV2.navbar.links.slice(1)],
+      },
+    }).success).toBe(false)
+  })
+
+  it('materializes semantic navigation to existing canonical section IDs without dead fragments', () => {
+    const result = materializeLandingPageBlueprintV2({
+      blueprint: blueprintV2,
+      current: createValidDesignFixture(),
+      imagePolicy: createRemoteImagePolicy('images.unsplash.com'),
+    })
+
+    expect(result).toMatchObject({ accepted: true })
+    if (!result.accepted) return
+    const hrefs = ['navbar-link-1', 'navbar-link-2', 'navbar-link-3'].map(id => {
+      const props = result.document.nodes[id]?.props
+      return props && 'href' in props ? props.href : null
+    })
+    expect(hrefs).toEqual(['#features-section', '#pricing-section', '#faq-section'])
+    for (const href of hrefs) {
+      expect(href).not.toBeNull()
+      expect(result.document.nodes[String(href).slice(1)]).toBeDefined()
+    }
+    expect(JSON.stringify(result.document)).not.toContain('#start')
+  })
+
   it('materializes one deterministic server-owned Lead Form and canonical primary actions', () => {
     const leadBlueprint = {
       ...blueprintV2,
@@ -218,9 +265,11 @@ describe('Blueprint v2 and section presets', () => {
     expect(result).toMatchObject({ accepted: true })
     if (!result.accepted) return
     expect(Object.values(result.document.nodes).filter(node => node.type === 'lead-form')).toHaveLength(0)
-    expect(result.document.nodes['hero-primary-cta']?.props).toMatchObject({
-      action: { type: 'internal_page', pageId: 'home' },
+    expect(result.document.nodes['hero-primary-cta']?.props).toEqual({
+      text: 'Start free',
+      href: '#final-cta-section',
     })
+    expect(result.document.nodes['final-cta-section']).toBeDefined()
   })
 
   it('materializes a complete deterministic editable landing page', () => {

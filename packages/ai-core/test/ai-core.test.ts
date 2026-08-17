@@ -57,8 +57,8 @@ const blueprintV2 = {
   },
   navbar: {
     variant: 'compact' as const,
-    links: [{ text: 'Benefits', href: '#benefits' }, { text: 'FAQ', href: '#faq' }],
-    cta: { text: 'Join waitlist', href: '#start' },
+    links: [{ text: 'Benefits', target: 'features' }, { text: 'FAQ', target: 'faq' }],
+    cta: { text: 'Join waitlist', href: '#final-cta-section' },
   },
   hero: {
     variant: 'centered' as const,

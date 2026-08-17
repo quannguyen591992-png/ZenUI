@@ -11,6 +11,16 @@ const safeHrefSchema = z.string().min(1).max(500).refine(value => {
   }
 }, 'unsafe_href')
 
+export const NAVIGATION_SECTION_TARGETS = [
+  'logo-cloud', 'stats', 'features', 'testimonials', 'pricing', 'faq', 'final-cta',
+] as const
+export const navigationSectionTargetSchema = z.enum(NAVIGATION_SECTION_TARGETS)
+export type NavigationSectionTarget = z.infer<typeof navigationSectionTargetSchema>
+
+export function navigationSectionNodeId(target: NavigationSectionTarget): string {
+  return `${target}-section`
+}
+
 const shortTextSchema = z.string().trim().min(1).max(160)
 const bodyTextSchema = z.string().trim().min(1).max(1000)
 const ctaSchema = z.object({ text: z.string().trim().min(1).max(120), href: safeHrefSchema }).strict()
@@ -19,6 +29,10 @@ const imageSchema = z.object({
   alt: z.string().trim().min(1).max(300),
 }).strict()
 const linkSchema = z.object({ text: z.string().trim().min(1).max(100), href: safeHrefSchema }).strict()
+const navigationLinkSchema = z.object({
+  text: z.string().trim().min(1).max(100),
+  target: navigationSectionTargetSchema,
+}).strict()
 
 export const PAGE_PRESET_IDS = ['saas', 'course', 'agency', 'portfolio', 'product-launch'] as const
 export const THEME_PRESET_IDS = ['indigo', 'emerald', 'coral', 'violet', 'graphite'] as const
@@ -27,10 +41,15 @@ export const DENSITY_PRESET_IDS = ['compact', 'balanced', 'airy'] as const
 
 export const navbarPresetSchema = z.object({
   variant: z.enum(['compact', 'centered', 'announcement']),
-  links: z.array(linkSchema).min(2).max(5),
+  links: z.array(navigationLinkSchema).min(2).max(5),
   cta: ctaSchema,
   announcement: z.string().trim().min(1).max(140).optional(),
-}).strict()
+}).strict().superRefine((value, context) => {
+  const targets = value.links.map(link => link.target)
+  if (new Set(targets).size !== targets.length) {
+    context.addIssue({ code: 'custom', path: ['links'], message: 'duplicate_navigation_target' })
+  }
+})
 
 export const heroPresetSchema = z.object({
   variant: z.enum(['split', 'centered', 'product-shot', 'editorial', 'overlap']),

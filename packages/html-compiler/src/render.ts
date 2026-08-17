@@ -266,7 +266,7 @@ export function conversionActionHref(
 }
 
 function nodeAttributes(document: DesignDocument, node: DesignNode, options: RenderAssetOptions): Record<string, string> {
-  const attributes: Record<string, string> = { 'data-node-id': node.id, 'data-node-type': node.type }
+  const attributes: Record<string, string> = { id: node.id, 'data-node-id': node.id, 'data-node-type': node.type }
   if (node.type === 'image' && 'alt' in node.props) {
     if ('src' in node.props) attributes.src = node.props.src
     if ('assetId' in node.props) {
@@ -428,6 +428,7 @@ function leadFormPlan(
   return {
     tag: 'form',
     attributes: {
+      id: node.id,
       'data-node-id': node.id,
       'data-node-type': node.type,
       ...(live ? { action: live.action, method: 'post' } : {}),
@@ -476,6 +477,8 @@ function compileCss(document: DesignDocument): string {
   return [
     '*{box-sizing:border-box}',
     'html{scroll-behavior:smooth}',
+    '[data-node-id]{scroll-margin-top:96px}',
+    '@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}',
     `body{margin:0;background:${document.theme.colors.background};color:${document.theme.colors.text};font-family:${document.theme.fonts.body},sans-serif;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}`,
     RENDERER_SEMANTIC_CSS,
     base,

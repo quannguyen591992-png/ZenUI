@@ -57,6 +57,138 @@ test('builds, edits, reorders, restores and exports a standalone design', async 
   expect(await download.path()).not.toBeNull()
 })
 
+test('changes visible spacing only for a supported multi-item layout', async ({ page }) => {
+  const projectId = await createProject(page, 'Visible layout spacing')
+  await page.goto(`/projects/${projectId}`)
+  await openAdvancedEditor(page)
+
+  await page.getByRole('treeitem', { name: /^Khung chứa: Khung chứa/ }).click()
+  await expect(page.getByLabel('Khoảng cách giữa các phần tử')).toHaveCount(0)
+  await page.getByRole('tab', { name: 'Thành phần' }).click()
+  await page.getByRole('button', { name: 'Thêm Nhóm xếp chồng' }).click()
+  await page.getByRole('button', { name: 'Thêm Tiêu đề' }).click()
+  await page.getByRole('tab', { name: 'Lớp' }).click()
+  const stackLayer = page.getByRole('treeitem', { name: /^Nhóm xếp chồng: Nhóm xếp chồng/ })
+  await stackLayer.click()
+  await page.getByRole('tab', { name: 'Thành phần' }).click()
+  await page.getByRole('button', { name: 'Thêm Đoạn văn' }).click()
+  await page.getByRole('tab', { name: 'Lớp' }).click()
+  await stackLayer.click()
+
+  const stackId = await stackLayer.getAttribute('data-layer-id')
+  expect(stackId).not.toBeNull()
+  const stack = page.locator(`[data-node-id="${stackId}"] > .node-visual > [data-node-type="stack"]`)
+  const renderedGap = () => stack.evaluate(element => {
+    const first = element.children[0]?.getBoundingClientRect()
+    const second = element.children[1]?.getBoundingClientRect()
+    if (!first || !second) throw new Error('Stack needs two rendered children')
+    return second.top - first.bottom
+  })
+  await expect.poll(renderedGap).toBeCloseTo(16, 0)
+
+  await page.getByRole('slider', { name: 'Điều chỉnh khoảng cách giữa các phần tử' }).fill('48')
+  await expect(page.getByRole('textbox', { name: 'Khoảng cách giữa các phần tử' })).toHaveValue('48')
+  await expect.poll(renderedGap).toBeCloseTo(48, 0)
+  await expect.poll(async () => (
+    await projectDocument(page, projectId)
+  ).document.nodes[stackId!]?.style.gap).toBe(48)
+
+  await page.getByRole('button', { name: 'Hoàn tác' }).click()
+  await expect.poll(renderedGap).toBeCloseTo(16, 0)
+  await page.getByRole('button', { name: 'Làm lại' }).click()
+  await expect.poll(renderedGap).toBeCloseTo(48, 0)
+
+  await page.reload()
+  await openAdvancedEditor(page)
+  await page.getByRole('treeitem', { name: /^Nhóm xếp chồng: Nhóm xếp chồng/ }).click()
+  await expect.poll(renderedGap).toBeCloseTo(48, 0)
+  await page.getByRole('treeitem', { name: /^Tiêu đề: Tiêu đề mới/ }).click()
+  await expect(page.getByLabel('Khoảng cách giữa các phần tử')).toHaveCount(0)
+})
+
+test('keeps desktop controls available while only the center workspace scrolls', async ({ page }) => {
+  const projectId = await createProject(page, 'Bounded editor workspace')
+  await page.goto(`/projects/${projectId}`)
+  await expect(page.getByLabel('Khung thiết kế')).toBeVisible()
+
+  const initialLayout = await page.evaluate(() => {
+    const bounds = (selector: string) => {
+      const element = document.querySelector<HTMLElement>(selector)
+      if (!element) throw new Error(`Missing layout element: ${selector}`)
+      const rectangle = element.getBoundingClientRect()
+      return {
+        top: rectangle.top,
+        right: rectangle.right,
+        bottom: rectangle.bottom,
+        left: rectangle.left,
+      }
+    }
+    const center = document.querySelector<HTMLElement>('.editor-center-scroll')
+    const designPanel = document.querySelector<HTMLElement>('#project-design-panel')
+    if (!center || !designPanel) throw new Error('Missing bounded editor workspace')
+    return {
+      viewportHeight: document.documentElement.clientHeight,
+      viewportWidth: document.documentElement.clientWidth,
+      documentHeight: document.documentElement.scrollHeight,
+      documentWidth: document.documentElement.scrollWidth,
+      windowScrollY: window.scrollY,
+      tabs: bounds('.project-surface-tabs'),
+      designPanel: bounds('#project-design-panel'),
+      toolbar: bounds('.editor-toolbar'),
+      story: bounds('.page-story-pro'),
+      design: bounds('.section-guide'),
+      center: bounds('.editor-center-scroll'),
+      canvas: bounds('.canvas-panel'),
+      assets: bounds('.asset-brand-panel'),
+      centerClientHeight: center.clientHeight,
+      centerScrollHeight: center.scrollHeight,
+      centerOverflowY: getComputedStyle(center).overflowY,
+      designPanelOverflowY: getComputedStyle(designPanel).overflowY,
+    }
+  })
+
+  expect(initialLayout.designPanel.top).toBeCloseTo(initialLayout.tabs.bottom, 0)
+  expect(initialLayout.designPanel.bottom).toBeCloseTo(initialLayout.viewportHeight, 0)
+  expect(initialLayout.documentHeight).toBeLessThanOrEqual(initialLayout.viewportHeight)
+  expect(initialLayout.documentWidth).toBeLessThanOrEqual(initialLayout.viewportWidth)
+  expect(initialLayout.centerScrollHeight).toBeGreaterThan(initialLayout.centerClientHeight)
+  expect(initialLayout.centerOverflowY).toBe('auto')
+  expect(initialLayout.designPanelOverflowY).toBe('hidden')
+
+  await page.locator('.editor-center-scroll').evaluate(element => {
+    element.scrollTop = element.scrollHeight
+    element.dispatchEvent(new Event('scroll'))
+  })
+  await expect.poll(() => page.locator('.editor-center-scroll').evaluate(element => element.scrollTop))
+    .toBeGreaterThan(0)
+
+  const scrolledLayout = await page.evaluate(() => {
+    const bounds = (selector: string) => {
+      const element = document.querySelector<HTMLElement>(selector)
+      if (!element) throw new Error(`Missing layout element: ${selector}`)
+      const rectangle = element.getBoundingClientRect()
+      return { top: rectangle.top, bottom: rectangle.bottom }
+    }
+    return {
+      windowScrollY: window.scrollY,
+      toolbar: bounds('.editor-toolbar'),
+      story: bounds('.page-story-pro'),
+      design: bounds('.section-guide'),
+      center: bounds('.editor-center-scroll'),
+      canvas: bounds('.canvas-panel'),
+      assets: bounds('.asset-brand-panel'),
+    }
+  })
+
+  expect(scrolledLayout.windowScrollY).toBe(initialLayout.windowScrollY)
+  expect(scrolledLayout.toolbar.top).toBeCloseTo(initialLayout.toolbar.top, 0)
+  expect(scrolledLayout.story.top).toBeCloseTo(initialLayout.story.top, 0)
+  expect(scrolledLayout.design.top).toBeCloseTo(initialLayout.design.top, 0)
+  expect(scrolledLayout.canvas.top).toBeLessThan(initialLayout.canvas.top)
+  expect(scrolledLayout.assets.top).toBeLessThan(scrolledLayout.center.bottom)
+  expect(scrolledLayout.assets.bottom).toBeGreaterThan(scrolledLayout.center.top)
+})
+
 test('authors a bounded visual-only Lead Form and preserves its immutable revision', async ({ page }) => {
   const projectId = await createProject(page, 'Lead Form foundation')
   await page.goto(`/projects/${projectId}`)
@@ -67,6 +199,44 @@ test('authors a bounded visual-only Lead Form and preserves its immutable revisi
 
   const builder = page.getByRole('region', { name: 'Trình tạo biểu mẫu khách hàng' })
   await expect(builder).toBeVisible()
+  const desktopInspectorLayout = await page.locator('.inspector-panel').evaluate(element => {
+    const panel = element as HTMLElement
+    const saveBar = panel.querySelector<HTMLElement>('.lead-form-save-bar')
+    if (!saveBar) throw new Error('Missing Lead Form save bar')
+    const bounds = panel.getBoundingClientRect()
+    const nestedScrollOwners = Array.from(panel.querySelectorAll<HTMLElement>('*')).filter(child => {
+      const overflowY = getComputedStyle(child).overflowY
+      return (overflowY === 'auto' || overflowY === 'scroll')
+        && child.scrollHeight > child.clientHeight
+    })
+    return {
+      panelPosition: getComputedStyle(panel).position,
+      panelOverflowY: getComputedStyle(panel).overflowY,
+      panelTop: bounds.top,
+      panelBottom: bounds.bottom,
+      viewportHeight: document.documentElement.clientHeight,
+      panelClientHeight: panel.clientHeight,
+      panelScrollHeight: panel.scrollHeight,
+      nestedScrollOwnerCount: nestedScrollOwners.length,
+      saveBarPosition: getComputedStyle(saveBar).position,
+      documentWidth: document.documentElement.scrollWidth,
+      viewportWidth: document.documentElement.clientWidth,
+    }
+  })
+  expect(desktopInspectorLayout.panelPosition).toBe('static')
+  expect(desktopInspectorLayout.panelOverflowY).toBe('auto')
+  expect(desktopInspectorLayout.panelTop).toBeGreaterThanOrEqual(0)
+  expect(desktopInspectorLayout.panelBottom).toBeLessThanOrEqual(desktopInspectorLayout.viewportHeight)
+  expect(desktopInspectorLayout.panelScrollHeight).toBeGreaterThan(desktopInspectorLayout.panelClientHeight)
+  expect(desktopInspectorLayout.nestedScrollOwnerCount).toBe(0)
+  expect(desktopInspectorLayout.saveBarPosition).toBe('sticky')
+  expect(desktopInspectorLayout.documentWidth).toBeLessThanOrEqual(desktopInspectorLayout.viewportWidth)
+
+  await page.locator('.inspector-panel').evaluate(element => {
+    element.scrollTop = element.scrollHeight
+    element.dispatchEvent(new Event('scroll'))
+  })
+  await expect(page.locator('.lead-form-save-bar')).toBeVisible()
   await builder.getByLabel('Tiêu đề biểu mẫu').fill('Nhận tư vấn sản phẩm')
   await builder.getByLabel('Mô tả biểu mẫu').fill('Cho chúng tôi biết nhu cầu của bạn.')
   await builder.getByLabel('Nhãn nút gửi').fill('Gửi nhu cầu')
@@ -186,6 +356,27 @@ test('authors a bounded visual-only Lead Form and preserves its immutable revisi
 
   const accessibility = await new AxeBuilder({ page }).include('[data-node-type="lead-form"]').analyze()
   expect(accessibility.violations.filter(item => ['serious', 'critical'].includes(item.impact ?? ''))).toEqual([])
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await reloadedForm.click()
+  await page.getByRole('button', { name: 'Chỉnh sửa', exact: true }).click()
+  const editSheet = page.getByRole('dialog', { name: 'Chỉnh sửa trực tiếp' })
+  await expect(editSheet.getByRole('region', { name: 'Trình tạo biểu mẫu khách hàng' })).toBeVisible()
+  const mobileLayout = await editSheet.evaluate(element => {
+    const saveBar = element.querySelector<HTMLElement>('.lead-form-save-bar')
+    if (!saveBar) throw new Error('Missing Lead Form save bar in edit sheet')
+    return {
+      sheetOverflowY: getComputedStyle(element).overflowY,
+      saveBarPosition: getComputedStyle(saveBar).position,
+      documentWidth: document.documentElement.scrollWidth,
+      viewportWidth: document.documentElement.clientWidth,
+    }
+  })
+  expect(mobileLayout.sheetOverflowY).toBe('auto')
+  expect(mobileLayout.saveBarPosition).toBe('static')
+  expect(mobileLayout.documentWidth).toBeLessThanOrEqual(mobileLayout.viewportWidth)
+  const mobileAccessibility = await new AxeBuilder({ page }).include('.section-sheet').analyze()
+  expect(mobileAccessibility.violations.filter(item => ['serious', 'critical'].includes(item.impact ?? ''))).toEqual([])
 })
 
 test('centers an exact Lead Form through a structured AI style proposal without changing copy', async ({ page }) => {
@@ -308,8 +499,12 @@ test('creates pages, edits navigation and switches active routes in Simple mode'
       return { top: rectangle.top, right: rectangle.right, bottom: rectangle.bottom, left: rectangle.left }
     }
     const manager = document.querySelector<HTMLElement>('.page-manager-pro')
-    if (!manager) throw new Error('Missing Page Manager')
+    const center = document.querySelector<HTMLElement>('.editor-center-scroll')
+    const assets = document.querySelector<HTMLElement>('.asset-brand-panel')
+    if (!manager || !center || !assets) throw new Error('Missing Page Manager workspace')
     return {
+      viewportHeight: document.documentElement.clientHeight,
+      documentHeight: document.documentElement.scrollHeight,
       viewportWidth: document.documentElement.clientWidth,
       documentWidth: document.documentElement.scrollWidth,
       shell: bounds('.editor-shell'),
@@ -318,24 +513,33 @@ test('creates pages, edits navigation and switches active routes in Simple mode'
       managerScrollHeight: manager.scrollHeight,
       managerOverflowY: getComputedStyle(manager).overflowY,
       story: bounds('.page-story-pro'),
+      center: bounds('.editor-center-scroll'),
       canvas: bounds('.canvas-panel'),
       guide: bounds('.section-guide'),
       assets: bounds('.asset-brand-panel'),
+      centerContainsAssets: center.contains(assets),
+      centerClientHeight: center.clientHeight,
+      centerScrollHeight: center.scrollHeight,
     }
   })
+  expect(desktopLayout.documentHeight).toBeLessThanOrEqual(desktopLayout.viewportHeight)
   expect(desktopLayout.documentWidth).toBeLessThanOrEqual(desktopLayout.viewportWidth)
   expect(desktopLayout.managerScrollHeight).toBeLessThanOrEqual(desktopLayout.managerClientHeight)
   expect(desktopLayout.managerOverflowY).not.toBe('scroll')
   expect(desktopLayout.managerOverflowY).not.toBe('auto')
   expect(desktopLayout.manager.right).toBeLessThanOrEqual(desktopLayout.shell.right)
-  expect(desktopLayout.assets.right).toBeLessThanOrEqual(desktopLayout.shell.right)
-  expect(desktopLayout.story.top).toBe(desktopLayout.canvas.top)
-  expect(desktopLayout.guide.top).toBe(desktopLayout.canvas.top)
-  expect(desktopLayout.assets.top).toBeGreaterThanOrEqual(Math.max(
-    desktopLayout.story.bottom,
-    desktopLayout.canvas.bottom,
-    desktopLayout.guide.bottom,
-  ))
+  expect(desktopLayout.center.right).toBeLessThanOrEqual(desktopLayout.shell.right)
+  expect(desktopLayout.assets.right).toBeLessThanOrEqual(desktopLayout.center.right)
+  expect(desktopLayout.centerContainsAssets).toBe(true)
+  expect(desktopLayout.centerScrollHeight).toBeGreaterThan(desktopLayout.centerClientHeight)
+  expect(desktopLayout.story.top).toBeCloseTo(desktopLayout.center.top, 0)
+  expect(desktopLayout.guide.top).toBeCloseTo(desktopLayout.center.top, 0)
+  expect(desktopLayout.assets.top).toBeGreaterThanOrEqual(desktopLayout.canvas.bottom)
+
+  await page.locator('.editor-center-scroll').evaluate(element => {
+    element.scrollTop = element.scrollHeight
+  })
+  await expect(page.getByRole('complementary', { name: 'Ảnh và thương hiệu' })).toBeVisible()
 
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.getByRole('complementary', { name: 'Quản lý trang' })).toBeVisible()
@@ -540,11 +744,29 @@ test('selects and edits directly on the Simple Canvas without relying on AI', as
   const manualEditor = page.getByRole('region', { name: 'Chỉnh sửa trực tiếp' })
   const contentInput = manualEditor.getByRole('textbox', { name: 'Nội dung' })
   await expect(contentInput).toHaveValue('Biến ý tưởng thành website của riêng bạn')
+  const initialTextareaLayout = await contentInput.evaluate(element => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+    overflowY: getComputedStyle(element).overflowY,
+  }))
+  expect(initialTextareaLayout.clientHeight).toBeGreaterThanOrEqual(initialTextareaLayout.scrollHeight)
+  expect(initialTextareaLayout.overflowY).toBe('hidden')
   await expect(page.getByRole('button', { name: 'Hoàn tác' })).toBeDisabled()
 
   await page.waitForTimeout(150)
   const before = await projectDocument(page, projectId)
   expect(JSON.stringify(before.document)).toContain('Biến ý tưởng thành website của riêng bạn')
+
+  await contentInput.fill([
+    'Dòng nội dung thứ nhất',
+    'Dòng nội dung thứ hai',
+    'Dòng nội dung thứ ba',
+    'Dòng nội dung thứ tư',
+  ].join('\n'))
+  await expect.poll(() => contentInput.evaluate(element => element.clientHeight))
+    .toBeGreaterThan(initialTextareaLayout.clientHeight)
+  await expect.poll(() => contentInput.evaluate(element => getComputedStyle(element).overflowY))
+    .toBe('hidden')
 
   await contentInput.fill('Sửa tay trong chế độ đơn giản')
   await expect(canvas.getByRole('heading', { name: 'Sửa tay trong chế độ đơn giản' })).toBeVisible()

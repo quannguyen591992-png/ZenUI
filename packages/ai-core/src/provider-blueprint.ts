@@ -6,7 +6,10 @@ import {
   MOOD_PRESET_IDS,
   PAGE_PRESET_IDS,
   THEME_PRESET_IDS,
+  navigationSectionNodeId,
+  navigationSectionTargetSchema,
   type BlueprintV2SectionType,
+  type NavigationSectionTarget,
 } from './section-presets'
 
 import type { LandingPageBlueprintV2 } from './blueprint-v2'
@@ -29,7 +32,10 @@ export const landingPageProviderBlueprintSchema = z.object({
   featuresVariant: z.enum(['grid', 'bento', 'alternating']),
   sectionOrder: z.array(sectionTypeSchema).min(4).max(8),
   announcement: shortTextSchema,
-  navLabels: z.array(shortTextSchema).min(2).max(5),
+  navigation: z.array(z.object({
+    text: shortTextSchema,
+    target: navigationSectionTargetSchema,
+  }).strict()).min(2).max(5),
   navbarCta: shortTextSchema,
   conversionIntent: z.enum(['lead_form', 'internal_page']).optional(),
   heroBadge: shortTextSchema,
@@ -72,6 +78,15 @@ export const landingPageProviderBlueprintSchema = z.object({
   if (Boolean(value.heroImageUrl) !== Boolean(value.heroImageAlt)) {
     context.addIssue({ code: 'custom', path: ['heroImageUrl'], message: 'image_url_and_alt_must_appear_together' })
   }
+  const targets = value.navigation.map(item => item.target)
+  if (new Set(targets).size !== targets.length) {
+    context.addIssue({ code: 'custom', path: ['navigation'], message: 'duplicate_navigation_target' })
+  }
+  for (const [index, item] of value.navigation.entries()) {
+    if (!value.sectionOrder.includes(item.target)) {
+      context.addIssue({ code: 'custom', path: ['navigation', index, 'target'], message: 'navigation_target_missing' })
+    }
+  }
 })
 
 export type LandingPageProviderBlueprint = z.infer<typeof landingPageProviderBlueprintSchema>
@@ -90,9 +105,11 @@ function normalizeHighlightedPlans(plans: LandingPageProviderBlueprint['plans'])
   return plans.map((plan, index) => ({ ...plan, highlighted: index === selectedIndex }))
 }
 
-function navigationLinks(labels: string[]): { text: string; href: string }[] {
-  const targets = ['#features', '#pricing', '#testimonials', '#faq', '#start']
-  return labels.map((text, index) => ({ text, href: targets[index] ?? '#top' }))
+function navigationLinks(items: { text: string; target: NavigationSectionTarget }[]): { text: string; href: string }[] {
+  return items.map(item => ({
+    text: item.text,
+    href: `#${navigationSectionNodeId(item.target)}`,
+  }))
 }
 
 export function normalizeLandingPageProviderBlueprint(input: unknown): LandingPageBlueprintV2 | null {
@@ -118,7 +135,7 @@ export function normalizeLandingPageProviderBlueprint(input: unknown): LandingPa
       type: 'pricing', variant: 'contrast', eyebrow: 'Bảng giá', heading: blueprint.pricingHeading,
       paragraph: blueprint.pricingParagraph,
       plans: normalizeHighlightedPlans(blueprint.plans).map(plan => ({
-        ...plan, cta: { text: `Chọn ${plan.name}`, href: '#start' },
+        ...plan, cta: { text: `Chọn ${plan.name}`, href: '#final-cta-section' },
       })),
     },
     faq: {
@@ -126,13 +143,13 @@ export function normalizeLandingPageProviderBlueprint(input: unknown): LandingPa
     },
     'final-cta': {
       type: 'final-cta', variant: 'panel', heading: blueprint.finalCtaHeading,
-      paragraph: blueprint.finalCtaParagraph, primaryCta: { text: blueprint.finalCtaText, href: '#start' },
+      paragraph: blueprint.finalCtaParagraph, primaryCta: { text: blueprint.finalCtaText, href: '#final-cta-section' },
     },
     footer: {
       type: 'footer', variant: 'columns', tagline: blueprint.footerTagline,
       columns: [
-        { heading: 'Khám phá', links: navigationLinks(blueprint.navLabels).slice(0, 3) },
-        { heading: 'Bắt đầu', links: [{ text: blueprint.navbarCta, href: '#start' }, { text: 'Về đầu trang', href: '#top' }] },
+        { heading: 'Khám phá', links: navigationLinks(blueprint.navigation).slice(0, 3) },
+        { heading: 'Bắt đầu', links: [{ text: blueprint.navbarCta, href: '#final-cta-section' }, { text: 'Về đầu trang', href: '#top' }] },
       ],
       copyright: blueprint.copyright,
     },
@@ -155,16 +172,16 @@ export function normalizeLandingPageProviderBlueprint(input: unknown): LandingPa
     navbar: {
       variant: blueprint.navbarVariant,
       announcement: blueprint.announcement,
-      links: navigationLinks(blueprint.navLabels),
-      cta: { text: blueprint.navbarCta, href: '#start' },
+      links: blueprint.navigation,
+      cta: { text: blueprint.navbarCta, href: '#final-cta-section' },
     },
     hero: {
       variant: blueprint.heroVariant,
       badge: blueprint.heroBadge,
       heading: blueprint.heroHeading,
       paragraph: blueprint.heroParagraph,
-      primaryCta: { text: blueprint.heroPrimaryCta, href: '#start' },
-      secondaryCta: { text: blueprint.heroSecondaryCta, href: '#features' },
+      primaryCta: { text: blueprint.heroPrimaryCta, href: '#final-cta-section' },
+      secondaryCta: { text: blueprint.heroSecondaryCta, href: '#features-section' },
       proof: blueprint.heroProof,
       ...(image ? { image } : {}),
     },
