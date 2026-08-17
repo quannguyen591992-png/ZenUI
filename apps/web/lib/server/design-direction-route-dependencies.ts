@@ -41,13 +41,26 @@ function deterministicContentBlueprint(brief: WebsiteBrief): DesignDirectionCont
   const isVietnamese = /[ăâđêôơưĂÂĐÊÔƠƯ]|[àáạảãèéẹẻẽìíịỉĩòóọỏõùúụủũỳýỵỷỹ]/i.test(
     [brief.description, brief.offer, brief.audience, brief.cta].join(' '),
   )
+  const navigation = [
+    { text: isVietnamese ? 'Lợi ích' : 'Benefits', target: 'features' },
+    ...(brief.mustHaveSections.includes('trust')
+      ? [{ text: isVietnamese ? 'Kết quả' : 'Results', target: 'testimonials' }]
+      : []),
+    ...(brief.mustHaveSections.includes('pricing')
+      ? [{ text: isVietnamese ? 'Bảng giá' : 'Pricing', target: 'pricing' }]
+      : []),
+    ...(brief.mustHaveSections.includes('faq')
+      ? [{ text: isVietnamese ? 'Câu hỏi' : 'Questions', target: 'faq' }]
+      : []),
+    { text: isVietnamese ? 'Bắt đầu' : 'Get started', target: 'final-cta' },
+  ]
   return designDirectionContentBlueprintSchema.parse({
-    version: 1,
+    version: 2,
     language: isVietnamese ? 'vi' : 'en',
     pagePreset: 'saas',
     brand: brief.offer.split(/\s+/).slice(0, 3).join(' '),
     announcement: isVietnamese ? 'Một cách rõ ràng hơn để bắt đầu' : 'A clearer way to get started',
-    navLabels: isVietnamese ? ['Lợi ích', 'Kết quả', 'Câu hỏi'] : ['Benefits', 'Results', 'Questions'],
+    navigation,
     heroBadge: brief.tone,
     heroHeading: isVietnamese ? `Biến ${brief.offer.toLowerCase()} thành kết quả rõ ràng` : `Turn ${brief.offer.toLowerCase()} into a clear result`,
     heroParagraph: isVietnamese ? `${brief.offer}. Dành cho ${brief.audience.toLowerCase()}.` : `${brief.offer}. Built for ${brief.audience.toLowerCase()}.`,

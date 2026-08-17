@@ -32,12 +32,16 @@ const brief: WebsiteBrief = {
 }
 
 const blueprint: DesignDirectionContentBlueprint = {
-  version: 1,
+  version: 2,
   language: 'vi',
   pagePreset: 'saas',
   brand: 'NovaFlow',
   announcement: 'Lập kế hoạch ra mắt nhẹ nhàng hơn',
-  navLabels: ['Lợi ích', 'Kết quả', 'Câu hỏi'],
+  navigation: [
+    { text: 'Lợi ích', target: 'features' },
+    { text: 'Kết quả', target: 'testimonials' },
+    { text: 'Câu hỏi', target: 'faq' },
+  ],
   heroBadge: 'Cho nhóm sản phẩm nhỏ',
   heroHeading: 'Lập kế hoạch cho mọi lần ra mắt một cách rõ ràng',
   heroParagraph: 'Giữ mục tiêu, quyết định và cột mốc trong một kế hoạch mà cả nhóm đều hiểu.',

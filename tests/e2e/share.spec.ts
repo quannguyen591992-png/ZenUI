@@ -114,6 +114,7 @@ test('collects a managed Share lead and persists contacted status in the project
   await expect(liveForm).toContainText(
     'Dữ liệu được ZenUI lưu tối đa 90 ngày',
   )
+  await expect(liveForm).toHaveAttribute('id')
   const publicAccessibility = await new AxeBuilder({ page: visitor })
     .analyze()
   expect(publicAccessibility.violations.filter(

@@ -163,7 +163,7 @@ describe('standalone HTML compiler', () => {
 
     expect(result.success).toBe(true)
     if (!result.success) return
-    expect(result.html).toContain('<a data-node-id="link-1" data-node-type="link" href="/docs">Read docs</a>')
+    expect(result.html).toContain('<a id="link-1" data-node-id="link-1" data-node-type="link" href="/docs">Read docs</a>')
     expect(result.html).toContain('aria-label="Featured"')
     expect(result.html).toContain('<svg')
     expect(result.html).toContain('<path d=')
@@ -264,7 +264,7 @@ describe('standalone HTML compiler', () => {
     expect(compiled).toMatchObject({ success: true })
     if (!compiled.success) return
     expect(compiled.html).toContain(
-      '<form data-node-id="lead-form-1" data-node-type="lead-form" action="https://share.example.test/s/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" method="post"',
+      '<form id="lead-form-1" data-node-id="lead-form-1" data-node-type="lead-form" action="https://share.example.test/s/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" method="post"',
     )
     expect(compiled.html).toContain('name="__zenui_request_id" type="hidden" value="11111111-1111-4111-8111-111111111111"')
     expect(compiled.html).toContain('name="__zenui_form_node_id" type="hidden" value="lead-form-1"')
@@ -430,7 +430,10 @@ describe('standalone HTML compiler', () => {
     expect(compiled).toMatchObject({ success: true })
     if (!compiled.success) return
     expect(compiled.html).toContain('href="#lead-form-1"')
+    expect(compiled.html).toContain('id="lead-form-1"')
     expect(compiled.html).toContain('href="/about"')
+    expect(compiled.html).toContain('[data-node-id]{scroll-margin-top:96px}')
+    expect(compiled.html).toContain('@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}')
   })
 
   it('emits strict CSP, correct void elements and privacy-safe external assets', () => {
@@ -478,7 +481,7 @@ describe('standalone HTML compiler', () => {
     expect(result.success).toBe(true)
     if (!result.success) return
     expect(result.html).toContain('src="https://assets.example.com/a/11111111-1111-4111-8111-111111111111"')
-    expect(result.html).toContain('<a data-node-id="brand-link"')
+    expect(result.html).toContain('<a id="brand-link" data-node-id="brand-link"')
     expect(result.html).toContain('src="https://assets.example.com/a/22222222-2222-4222-8222-222222222222"')
     expect(result.html).toContain('alt="NovaFlow"')
     expect(result.csp).toContain('img-src https://assets.example.com')

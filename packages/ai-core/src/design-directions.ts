@@ -10,6 +10,8 @@ import { materializeLandingPageBlueprintV2 } from './blueprint-v2'
 import { normalizeWebsiteBrief, websiteBriefSchema, type WebsiteBrief } from './guided-brief'
 import {
   PAGE_PRESET_IDS,
+  navigationSectionNodeId,
+  navigationSectionTargetSchema,
   type BlueprintV2Section,
 } from './section-presets'
 
@@ -43,12 +45,15 @@ const mediaIntentSchema = z.object({
 }).strict()
 
 export const designDirectionContentBlueprintSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   language: z.enum(['vi', 'en']),
   pagePreset: z.enum(PAGE_PRESET_IDS),
   brand: z.string().trim().min(1).max(100),
   announcement: shortTextSchema,
-  navLabels: z.array(shortTextSchema).min(2).max(5),
+  navigation: z.array(z.object({
+    text: shortTextSchema,
+    target: navigationSectionTargetSchema,
+  }).strict()).min(2).max(5),
   heroBadge: shortTextSchema,
   heroHeading: z.string().trim().min(1).max(220),
   heroParagraph: z.string().trim().min(1).max(1200),
@@ -99,6 +104,15 @@ export const designDirectionContentBlueprintSchema = z.object({
 }).strict().superRefine((value, context) => {
   if (new Set(value.sectionOrder).size !== value.sectionOrder.length) {
     context.addIssue({ code: 'custom', path: ['sectionOrder'], message: 'duplicate_section_type' })
+  }
+  const navigationTargets = value.navigation.map(item => item.target)
+  if (new Set(navigationTargets).size !== navigationTargets.length) {
+    context.addIssue({ code: 'custom', path: ['navigation'], message: 'duplicate_navigation_target' })
+  }
+  for (const [index, item] of value.navigation.entries()) {
+    if (!value.sectionOrder.includes(item.target)) {
+      context.addIssue({ code: 'custom', path: ['navigation', index, 'target'], message: 'navigation_target_missing' })
+    }
   }
   for (const required of ['features', 'final-cta', 'footer'] as const) {
     if (!value.sectionOrder.includes(required)) {
@@ -343,18 +357,24 @@ function sectionsFor(
       heading: content.pricingHeading, paragraph: content.pricingParagraph,
       plans: content.plans.map(plan => ({
         ...plan,
-        cta: { text: brief.cta, href: '#start' },
+        cta: { text: brief.cta, href: '#final-cta-section' },
       })),
     },
     faq: { type: 'faq', variant: preset.faqVariant, heading: content.faqHeading, items: content.faqs },
     'final-cta': {
       type: 'final-cta', variant: preset.finalCtaVariant, heading: content.finalCtaHeading,
-      paragraph: content.finalCtaParagraph, primaryCta: { text: brief.cta, href: '#start' },
+      paragraph: content.finalCtaParagraph, primaryCta: { text: brief.cta, href: '#final-cta-section' },
     },
     footer: {
       type: 'footer', variant: preset.footerVariant, tagline: content.footerTagline,
       columns: preset.footerVariant === 'columns'
-        ? [{ heading: content.navLabels[0]!, links: content.navLabels.slice(1).map(text => ({ text, href: '#start' })) }]
+        ? [{
+            heading: content.navigation[0]!.text,
+            links: content.navigation.slice(1).map(item => ({
+              text: item.text,
+              href: `#${navigationSectionNodeId(item.target)}`,
+            })),
+          }]
         : [],
       copyright: content.copyright,
     },
@@ -400,16 +420,16 @@ function blueprintFor(
     navbar: {
       variant: preset.navbarVariant,
       ...(preset.navbarVariant === 'announcement' ? { announcement: content.announcement } : {}),
-      links: content.navLabels.map((text, index) => ({ text, href: index === 0 ? '#features' : '#start' })),
-      cta: { text: brief.cta, href: '#start' },
+      links: content.navigation,
+      cta: { text: brief.cta, href: '#final-cta-section' },
     },
     hero: {
       variant: preset.heroVariant,
       badge: content.heroBadge,
       heading: content.heroHeading,
       paragraph: content.heroParagraph,
-      primaryCta: { text: brief.cta, href: '#start' },
-      secondaryCta: { text: content.heroSecondaryCta, href: '#features' },
+      primaryCta: { text: brief.cta, href: '#final-cta-section' },
+      secondaryCta: { text: content.heroSecondaryCta, href: '#features-section' },
       proof: content.heroProof,
     },
     sections: sectionsFor(brief, content, preset),

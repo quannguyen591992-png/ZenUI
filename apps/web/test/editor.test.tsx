@@ -39,6 +39,23 @@ function leadFormDocument() {
   return document
 }
 
+function gapLayoutDocument() {
+  const document = createValidDesignFixture()
+  document.nodes['stack-1'] = {
+    id: 'stack-1',
+    type: 'stack',
+    parentId: 'container-1',
+    children: ['heading-1', 'paragraph-1'],
+    props: {},
+    style: { display: 'flex', flexDirection: 'column', gap: 16 },
+    responsive: {},
+  }
+  document.nodes['container-1']!.children = ['stack-1', 'image-1', 'button-1']
+  document.nodes['heading-1']!.parentId = 'stack-1'
+  document.nodes['paragraph-1']!.parentId = 'stack-1'
+  return document
+}
+
 function leadFormAtEditorLimits() {
   const document = leadFormDocument()
   document.nodes['lead-form-1']!.props = {
@@ -334,12 +351,43 @@ describe('ZenUI editor', () => {
     expect(within(canvas).getByRole('heading', { name: 'Biến ý tưởng thành website của riêng bạn' })).toHaveStyle({ fontSize: '24px' })
     await user.selectOptions(screen.getByLabelText('Thiết bị xem trước'), 'desktop')
     expect(within(canvas).getByRole('heading', { name: 'Biến ý tưởng thành website của riêng bạn' })).not.toHaveStyle({ fontSize: '24px' })
+  })
+
+  it('only offers visible child spacing for a supported multi-item layout', async () => {
+    const saveCommands = vi.fn<EditorApi['saveCommands']>((_projectId, _workspaceId, expectedVersion) => (
+      Promise.resolve({ accepted: true, version: expectedVersion + 1 })
+    ))
+    const user = userEvent.setup()
+    render(serverEditor(api({ saveCommands }), gapLayoutDocument()))
 
     await user.click(screen.getByRole('treeitem', { name: /^Khung chứa: Khung chứa/ }))
-    await user.clear(screen.getByLabelText('Khoảng cách'))
-    await user.type(screen.getByLabelText('Khoảng cách'), '32')
-    await user.tab()
-    expect(screen.getByText('Đã áp dụng thay đổi')).toBeVisible()
+    expect(screen.queryByLabelText('Khoảng cách giữa các phần tử')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('treeitem', { name: /^Tiêu đề: Build your next product/ }))
+    expect(screen.queryByLabelText('Khoảng cách giữa các phần tử')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('treeitem', { name: /^Nhóm xếp chồng: Nhóm xếp chồng/ }))
+    const spacing = screen.getByLabelText('Khoảng cách giữa các phần tử')
+    const spacingSlider = screen.getByRole('slider', { name: 'Điều chỉnh khoảng cách giữa các phần tử' })
+    const stack = screen.getByLabelText('Khung thiết kế').querySelector<HTMLElement>('[data-node-id="stack-1"] .node-visual > [data-node-type="stack"]')
+    expect(stack).not.toBeNull()
+    expect(stack).toHaveStyle({ gap: '16px' })
+
+    fireEvent.change(spacingSlider, { target: { value: '48' } })
+    expect(spacing).toHaveValue('48')
+    expect(stack).toHaveStyle({ gap: '48px' })
+    expect(screen.getByRole('button', { name: 'Hoàn tác' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Hoàn tác' }))
+    expect(stack).toHaveStyle({ gap: '16px' })
+    await user.click(screen.getByRole('button', { name: 'Làm lại' }))
+    expect(stack).toHaveStyle({ gap: '48px' })
+
+    await user.selectOptions(screen.getByLabelText('Thiết bị xem trước'), 'mobile')
+    fireEvent.change(screen.getByRole('slider', { name: 'Điều chỉnh khoảng cách giữa các phần tử' }), { target: { value: '24' } })
+    expect(stack).toHaveStyle({ gap: '24px' })
+    await waitFor(() => expect(saveCommands.mock.calls.flatMap(call => call[3])).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'UPDATE_STYLE', nodeId: 'stack-1', patch: { gap: 48 } }),
+      expect.objectContaining({ type: 'UPDATE_RESPONSIVE_STYLE', breakpoint: 'mobile', nodeId: 'stack-1', patch: { gap: 24 } }),
+    ])))
   })
 
   it('rejects invalid Inspector input without changing document history', async () => {
@@ -442,6 +490,13 @@ describe('ZenUI editor', () => {
 
     await user.click(screen.getByRole('treeitem', { name: /^Biểu mẫu khách hàng: Request a consultation/ }))
     expect(screen.getByRole('heading', { name: 'Biểu mẫu khách hàng' })).toBeVisible()
+    const builder = screen.getByRole('region', { name: 'Trình tạo biểu mẫu khách hàng' })
+    expect(within(builder).getByRole('region', { name: 'Nội dung biểu mẫu' })).toBeVisible()
+    expect(within(builder).getByRole('region', { name: 'Các trường thông tin' })).toBeVisible()
+    expect(within(builder).getByRole('region', { name: 'Đồng ý liên hệ' })).toBeVisible()
+    expect(within(builder).getByRole('group', { name: 'Hành động biểu mẫu' })).toContainElement(
+      within(builder).getByRole('button', { name: 'Lưu biểu mẫu' }),
+    )
     await user.clear(screen.getByLabelText('Tiêu đề biểu mẫu'))
     await user.type(screen.getByLabelText('Tiêu đề biểu mẫu'), 'Đăng ký tư vấn')
     await user.click(screen.getByRole('button', { name: 'Thêm trường' }))

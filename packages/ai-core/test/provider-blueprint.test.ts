@@ -20,7 +20,12 @@ const providerBlueprint = {
   featuresVariant: 'bento' as const,
   sectionOrder: ['logo-cloud', 'stats', 'features', 'testimonials', 'pricing', 'faq', 'final-cta', 'footer'] as const,
   announcement: 'NovaFlow AI 2.0 is now available',
-  navLabels: ['Tính năng', 'Bảng giá', 'Khách hàng', 'FAQ'],
+  navigation: [
+    { text: 'Tính năng', target: 'features' as const },
+    { text: 'Bảng giá', target: 'pricing' as const },
+    { text: 'Khách hàng', target: 'testimonials' as const },
+    { text: 'FAQ', target: 'faq' as const },
+  ],
   navbarCta: 'Dùng thử miễn phí',
   heroBadge: 'AI customer care',
   heroHeading: 'Tự động hóa chăm sóc khách hàng với NovaFlow AI',
@@ -108,6 +113,8 @@ describe('Gemini-compatible Blueprint v2 provider DTO', () => {
 
     const schema = JSON.stringify(landingPageProviderBlueprintJsonSchema)
     expect(schema).toContain('conversionIntent')
+    expect(schema).toContain('navigation')
+    expect(schema).toContain('target')
     expect(schema).not.toMatch(/recipient|endpoint|publication|secret|formNodeId|nodeId|fields/i)
   })
 
@@ -146,6 +153,13 @@ describe('Gemini-compatible Blueprint v2 provider DTO', () => {
     expect(result.document.nodes['pricing-name-3']?.props).toMatchObject({ text: 'Enterprise' })
     expect(result.document.nodes['pricing-card-1']?.style.shadow).toBe('md')
     expect(result.document.nodes['pricing-card-2']?.style.shadow).toBe('md')
+    expect(['navbar-link-1', 'navbar-link-2', 'navbar-link-3', 'navbar-link-4'].map(id => {
+      const props = result.document.nodes[id]?.props
+      return props && 'href' in props ? props.href : null
+    })).toEqual([
+      '#features-section', '#pricing-section', '#testimonials-section', '#faq-section',
+    ])
+    expect(JSON.stringify(result.document)).not.toContain('#start')
     expect(Object.keys(result.document.nodes).length).toBeGreaterThan(90)
   })
 
@@ -170,19 +184,41 @@ describe('Gemini-compatible Blueprint v2 provider DTO', () => {
     expect(result.document.nodes['features-heading']?.style.fontSize).toBe(40)
   })
 
-  it('repairs required section order deterministically without another model call', () => {
+  it('repairs required section order deterministically while rejecting unavailable navigation targets', () => {
+    expect(normalizeLandingPageProviderBlueprint({
+      ...providerBlueprint,
+      sectionOrder: ['stats', 'testimonials', 'faq', 'footer'],
+    })).toBeNull()
+
     const normalized = normalizeLandingPageProviderBlueprint({
       ...providerBlueprint,
       sectionOrder: ['stats', 'testimonials', 'faq', 'footer'],
+      navigation: [
+        { text: 'Khách hàng', target: 'testimonials' },
+        { text: 'FAQ', target: 'faq' },
+      ],
     })
-
     expect(normalized?.sections.map(section => section.type)).toEqual([
       'features', 'stats', 'testimonials', 'faq', 'final-cta', 'footer',
     ])
   })
 
-  it('rejects malformed provider content and mismatched image metadata', () => {
+  it('rejects malformed provider content, forged navigation and mismatched image metadata', () => {
     expect(normalizeLandingPageProviderBlueprint({ ...providerBlueprint, nodes: {} })).toBeNull()
     expect(normalizeLandingPageProviderBlueprint({ ...providerBlueprint, heroImageAlt: undefined })).toBeNull()
+    expect(normalizeLandingPageProviderBlueprint({
+      ...providerBlueprint,
+      navigation: [
+        { text: 'Tính năng', target: 'features' },
+        { text: 'Lặp lại', target: 'features' },
+      ],
+    })).toBeNull()
+    expect(normalizeLandingPageProviderBlueprint({
+      ...providerBlueprint,
+      navigation: [
+        { text: 'Giả mạo', target: 'features-section' },
+        { text: 'FAQ', target: 'faq' },
+      ],
+    })).toBeNull()
   })
 })

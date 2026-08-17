@@ -152,12 +152,16 @@ describe('AI worker boundary', () => {
       mustHaveSections: ['introduction', 'benefits', 'trust', 'faq', 'contact'],
     } as const
     const contentBlueprint = {
-      version: 1 as const,
+      version: 2 as const,
       language: 'en' as const,
       pagePreset: 'saas' as const,
       brand: 'NovaFlow',
       announcement: 'Plan product launches with clarity',
-      navLabels: ['Benefits', 'Results', 'Questions'],
+      navigation: [
+        { text: 'Benefits', target: 'features' as const },
+        { text: 'Results', target: 'testimonials' as const },
+        { text: 'Questions', target: 'faq' as const },
+      ],
       heroBadge: 'For small product teams',
       heroHeading: 'Plan every product launch with clarity',
       heroParagraph: 'Keep goals, decisions, and milestones in one shared plan.',

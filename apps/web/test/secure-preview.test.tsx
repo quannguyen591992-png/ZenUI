@@ -27,6 +27,7 @@ describe('secure preview', () => {
       document={createValidDesignFixture()}
       viewport="desktop"
       selectedNodeId={null}
+      interactionMode="presentation"
       onSelect={vi.fn()}
     />)
 
@@ -44,6 +45,7 @@ describe('secure preview', () => {
       route="/about"
       viewport="desktop"
       selectedNodeId={null}
+      interactionMode="presentation"
       onSelect={vi.fn()}
       frameWindow={{ postMessage } as unknown as Window}
     />)
@@ -57,6 +59,31 @@ describe('secure preview', () => {
     expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'SET_DOCUMENT' }), previewOrigin)
     expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'SET_ROUTE', payload: { route: '/about' } }), previewOrigin)
     expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'SET_VIEWPORT' }), previewOrigin)
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'SET_MODE', payload: { mode: 'presentation' },
+    }), previewOrigin)
+  })
+
+  it('sends inspect mode only when the embedding surface requests inspection', async () => {
+    const postMessage = vi.fn()
+    render(<SecurePreview
+      previewOrigin={previewOrigin}
+      editorOrigin="http://localhost:3000"
+      channelId={channelId}
+      document={createValidDesignFixture()}
+      viewport="desktop"
+      selectedNodeId={null}
+      interactionMode="inspect"
+      onSelect={vi.fn()}
+      frameWindow={{ postMessage } as unknown as Window}
+    />)
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Mở xem trước' }))
+    fireEvent.load(screen.getByTitle('Bản xem trước trang an toàn'))
+
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'SET_MODE', payload: { mode: 'inspect' },
+    }), previewOrigin)
   })
 
   it('constrains the iframe to the selected responsive viewport', async () => {
@@ -66,6 +93,7 @@ describe('secure preview', () => {
       channelId,
       document: createValidDesignFixture(),
       selectedNodeId: null,
+      interactionMode: 'presentation' as const,
       onSelect: vi.fn(),
     }
     const { rerender } = render(<SecurePreview {...props} viewport="tablet" />)
@@ -87,6 +115,7 @@ describe('secure preview', () => {
       document={createValidDesignFixture()}
       viewport="desktop"
       selectedNodeId={null}
+      interactionMode="presentation"
       onSelect={onSelect}
       frameWindow={frameWindow}
     />)

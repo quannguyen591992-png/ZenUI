@@ -26,6 +26,7 @@ describe('Design Document renderer', () => {
     }
 
     const { container } = render(<DesignDocumentRenderer document={document} viewport="mobile" />)
+    expect(container.querySelector('#section-1')).toHaveAttribute('data-node-id', 'section-1')
     expect(screen.getByRole('heading', { name: 'Build your next product' })).toBeVisible()
     expect(screen.getByRole('img', { name: 'Product preview' })).toHaveAttribute('referrerpolicy', 'no-referrer')
     expect(screen.getByRole('link', { name: 'Read docs' })).toHaveAttribute('href', '/docs')
@@ -60,6 +61,7 @@ describe('Design Document renderer', () => {
 
     const { container } = render(<DesignDocumentRenderer document={document} viewport="desktop" />)
     const form = screen.getByRole('form', { name: 'Request a consultation' })
+    expect(form).toHaveAttribute('id', 'lead-form-1')
     expect(screen.getByLabelText('Work email')).toHaveAttribute('id', 'lead-form-1-email')
     expect(screen.getByLabelText('Work email')).toHaveAttribute('name', 'email')
     expect(screen.getByLabelText('Work email')).toBeRequired()

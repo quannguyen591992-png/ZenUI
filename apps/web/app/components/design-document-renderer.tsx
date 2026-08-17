@@ -40,6 +40,7 @@ function LeadForm({ node, viewport }: { node: DesignNode; viewport: RenderViewpo
 
   return (
     <form
+      id={node.id}
       style={nodeToBrowserStyle(node, viewport)}
       data-node-type="lead-form"
       data-node-id={node.id}
@@ -88,7 +89,9 @@ function RenderNode({ document, nodeId, viewport, assetOrigin }: {
   if (isNodeHidden(node)) return null
   if (node.type === 'lead-form') return <LeadForm node={node} viewport={viewport} />
   const attributes: Record<string, unknown> = {
+    id: node.id,
     style: nodeToBrowserStyle(node, viewport),
+    'data-node-id': node.id,
     'data-node-type': node.type,
   }
   if (node.type === 'image' && 'alt' in node.props) {

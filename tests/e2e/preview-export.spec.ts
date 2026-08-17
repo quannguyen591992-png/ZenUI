@@ -7,7 +7,7 @@ test.beforeEach(async ({ page, request }) => {
   await signIn(page)
 })
 
-test('renders an isolated preview and synchronizes selected nodes', async ({ page }) => {
+test('renders an isolated presentation preview without changing editor selection', async ({ page }) => {
   const projectId = await createProject(page, 'Secure preview')
   const previewRequests: { cookie?: string }[] = []
   page.on('request', request => {
@@ -19,7 +19,7 @@ test('renders an isolated preview and synchronizes selected nodes', async ({ pag
   const frame = page.frameLocator('iframe[title="Bản xem trước trang an toàn"]')
   await expect(frame.getByRole('heading', { name: 'Biến ý tưởng thành website của riêng bạn' })).toBeVisible()
   await frame.getByRole('heading', { name: 'Biến ý tưởng thành website của riêng bạn' }).click()
-  await expect(page.getByRole('treeitem', { name: /^Tiêu đề: Biến ý tưởng thành website của riêng bạn/ })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('treeitem', { name: /^Tiêu đề: Biến ý tưởng thành website của riêng bạn/ })).toHaveAttribute('aria-selected', 'false')
 
   const iframe = page.locator('iframe[title="Bản xem trước trang an toàn"]')
   await expect(iframe).toHaveAttribute('sandbox', 'allow-scripts allow-same-origin')

@@ -19,6 +19,7 @@ import {
   blueprintV2SectionSchema,
   heroPresetSchema,
   navbarPresetSchema,
+  navigationSectionNodeId,
   type BlueprintV2Section,
 } from './section-presets'
 
@@ -58,6 +59,11 @@ export const landingPageBlueprintV2Schema = z.object({
   }
   if (value.sections.at(-1)?.type !== 'footer') {
     context.addIssue({ code: 'custom', path: ['sections'], message: 'footer_must_be_last' })
+  }
+  for (const [index, link] of value.navbar.links.entries()) {
+    if (!seen.has(link.target)) {
+      context.addIssue({ code: 'custom', path: ['navbar', 'links', index, 'target'], message: 'navigation_target_missing' })
+    }
   }
 })
 
@@ -228,15 +234,27 @@ class DocumentBuilder {
 const pagePadding = { paddingLeft: 32, paddingRight: 32 }
 const mobilePadding = { paddingLeft: 20, paddingRight: 20 }
 
+const generatedFragmentAliases: Record<string, string> = {
+  '#features': '#features-section',
+  '#pricing': '#pricing-section',
+  '#testimonials': '#testimonials-section',
+  '#faq': '#faq-section',
+  '#start': '#final-cta-section',
+  '#top': '#page-root',
+}
+
+function canonicalGeneratedLink<T extends { text: string; href: string }>(link: T): T {
+  return { ...link, href: generatedFragmentAliases[link.href] ?? link.href }
+}
+
 function primaryCtaProps(
   cta: { text: string; href: string },
   conversionGoal: ConversionGoal | undefined,
 ): Record<string, unknown> {
-  if (!conversionGoal) return cta
-  const action = conversionGoal.type === 'lead_form'
-    ? { type: 'lead_form' as const, formNodeId: 'lead-form-1' }
-    : { type: 'internal_page' as const, pageId: 'home' }
-  return { text: cta.text, action }
+  if (conversionGoal?.type === 'lead_form') {
+    return { text: cta.text, action: { type: 'lead_form' as const, formNodeId: 'lead-form-1' } }
+  }
+  return { text: cta.text, href: '#final-cta-section' }
 }
 
 function addContainer(builder: DocumentBuilder, parentId: string, key: string): DesignNode {
@@ -290,7 +308,10 @@ function renderNavbar(builder: DocumentBuilder, blueprint: LandingPageBlueprintV
   const actions = builder.create('stack', 'navbar-actions', container.id, {}, {
     display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: blueprint.navbar.variant === 'centered' ? 'center' : 'end', gap: 22,
   }, { mobile: { gap: 10 } })
-  blueprint.navbar.links.forEach((link, index) => builder.create('link', `navbar-link-${index + 1}`, actions.id, link, {
+  blueprint.navbar.links.forEach((link, index) => builder.create('link', `navbar-link-${index + 1}`, actions.id, {
+    text: link.text,
+    href: `#${navigationSectionNodeId(link.target)}`,
+  }, {
     fontSize: 15, fontWeight: '600', color: theme.muted,
   }, { mobile: { display: 'none' } }))
   builder.create('button', 'navbar-cta', actions.id, primaryCtaProps(blueprint.navbar.cta, blueprint.conversionGoal), {
@@ -402,7 +423,7 @@ function renderHero(
   builder.create('button', 'hero-primary-cta', actions.id, primaryCtaProps(blueprint.hero.primaryCta, blueprint.conversionGoal), {
     backgroundColor: theme.primary, color: theme.onPrimary, borderRadius: 200, shadow: 'md', fontSize: 16,
   }, { mobile: { width: 'full' } })
-  if (blueprint.hero.secondaryCta) builder.create('button', 'hero-secondary-cta', actions.id, blueprint.hero.secondaryCta, {
+  if (blueprint.hero.secondaryCta) builder.create('button', 'hero-secondary-cta', actions.id, canonicalGeneratedLink(blueprint.hero.secondaryCta), {
     backgroundColor: theme.background, color: theme.text, borderColor: theme.border, borderWidth: 1, borderRadius: 200, fontSize: 16,
   }, { mobile: { width: 'full' } })
   if (blueprint.hero.proof) builder.create('paragraph', 'hero-proof', copy.id, { text: blueprint.hero.proof }, {
@@ -630,7 +651,7 @@ function renderPricing(builder: DocumentBuilder, section: Extract<BlueprintV2Sec
         fontSize: 14, color: plan.highlighted ? theme.onPrimary : theme.text,
       })
     })
-    builder.create('button', `pricing-cta-${planIndex + 1}`, card.id, plan.cta, {
+    builder.create('button', `pricing-cta-${planIndex + 1}`, card.id, canonicalGeneratedLink(plan.cta), {
       width: 'full', backgroundColor: plan.highlighted ? theme.onPrimary : theme.primary,
       color: plan.highlighted ? theme.primaryDark : theme.onPrimary, borderRadius: 200, fontSize: 15, marginTop: 8,
     })
@@ -695,7 +716,7 @@ function renderFinalCta(
   builder.create('button', 'final-primary-cta', actions.id, primaryCtaProps(section.primaryCta, conversionGoal), {
     backgroundColor: theme.onPrimary, color: theme.primaryDark, borderRadius: 200, shadow: 'md', fontSize: 16,
   }, { mobile: { width: 'full' } })
-  if (section.secondaryCta) builder.create('button', 'final-secondary-cta', actions.id, section.secondaryCta, {
+  if (section.secondaryCta) builder.create('button', 'final-secondary-cta', actions.id, canonicalGeneratedLink(section.secondaryCta), {
     backgroundColor: theme.primaryDark, color: theme.onPrimary, borderColor: theme.onPrimary, borderWidth: 1, borderRadius: 200, fontSize: 16,
   }, { mobile: { width: 'full' } })
 }
@@ -719,7 +740,7 @@ function renderFooter(builder: DocumentBuilder, section: Extract<BlueprintV2Sect
     builder.create('heading', `footer-column-heading-${columnIndex + 1}`, group.id, { text: column.heading, level: 3 }, {
       fontFamily: theme.headingFont, fontSize: 15, fontWeight: '800', color: theme.text,
     })
-    column.links.forEach((link, linkIndex) => builder.create('link', `footer-link-${columnIndex + 1}-${linkIndex + 1}`, group.id, link, {
+    column.links.forEach((link, linkIndex) => builder.create('link', `footer-link-${columnIndex + 1}-${linkIndex + 1}`, group.id, canonicalGeneratedLink(link), {
       fontSize: 14, color: theme.muted,
     }))
   })
