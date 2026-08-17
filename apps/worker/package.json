@@ -21,6 +21,7 @@
     "@zenui/deployment-core": "workspace:*",
     "@zenui/design-schema": "workspace:*",
     "@zenui/export-core": "workspace:*",
+    "@zenui/font-library": "workspace:*",
     "@zenui/html-compiler": "workspace:*",
     "@zenui/operations-core": "workspace:*",
     "bullmq": "^5.63.2",

@@ -67,6 +67,15 @@ import { VercelProviderError } from '@zenui/deployment-core/server'
 import { collectAssetReferences, parseDesignDocument } from '@zenui/design-schema'
 import { EXPORT_CONTENT_TYPE, createDeterministicSiteArchive, exportJobSchema } from '@zenui/export-core'
 import {
+  collectHostedFontFamilies,
+  FONT_SUBSETS,
+  fontCatalog,
+  type FontId,
+  type FontSubset,
+  type FontSubsetPaths,
+} from '@zenui/font-library'
+import { loadFontSubset, MAX_FONT_SUBSET_BYTES } from '@zenui/font-library/server'
+import {
   compileStaticSite,
   type LiveLeadFormOptions,
 } from '@zenui/html-compiler'
@@ -1020,6 +1029,15 @@ interface PublicationFile {
   content: string | Uint8Array
 }
 
+interface PublicationFontValue {
+  bytes: Uint8Array
+  checksum: string
+}
+
+interface PublicationFontLoader {
+  (fontId: FontId, subset: FontSubset): Promise<PublicationFontValue>
+}
+
 async function preparePublication(
   document: DesignDocument,
   context: AuthContext,
@@ -1030,6 +1048,7 @@ async function preparePublication(
     imagePolicy?: RemoteImagePolicy
     maxArtifactBytes?: number
     liveLeadForms?: LiveLeadFormOptions
+    loadFont: PublicationFontLoader
   },
 ): Promise<{ success: true; files: PublicationFile[]; routeCount: number } | { success: false; code: 'invalid_artifact' | 'artifact_too_large' | 'storage_unavailable' }> {
   const parsed = parseDesignDocument(document, {
@@ -1066,26 +1085,59 @@ async function preparePublication(
     assetBytes += bytes.byteLength
     assetFiles.push({ path: `assets/${asset.id}.webp`, content: bytes })
   }
+  const fontFiles: PublicationFile[] = []
+  const portableFontPaths: Record<string, FontSubsetPaths> = {}
+  let fontBytes = 0
+  for (const family of collectHostedFontFamilies(parsed.data.theme)) {
+    const entry = fontCatalog[family]
+    const paths = {} as FontSubsetPaths
+    for (const subset of FONT_SUBSETS) {
+      let loaded: PublicationFontValue
+      try {
+        loaded = await dependencies.loadFont(entry.id, subset)
+      } catch {
+        return { success: false, code: 'invalid_artifact' }
+      }
+      const checksum = createHash('sha256').update(loaded.bytes).digest('hex')
+      if (
+        loaded.bytes.byteLength < 1
+        || loaded.bytes.byteLength > MAX_FONT_SUBSET_BYTES
+        || checksum !== loaded.checksum
+      ) {
+        return { success: false, code: 'invalid_artifact' }
+      }
+      const path = `fonts/${entry.id}-${subset}.woff2`
+      paths[subset] = path
+      fontBytes += loaded.bytes.byteLength
+      fontFiles.push({ path, content: loaded.bytes })
+    }
+    portableFontPaths[entry.id] = paths
+  }
   const maxArtifactBytes = dependencies.maxArtifactBytes
-  if (maxArtifactBytes !== undefined && assetBytes > maxArtifactBytes) {
+  const publicationBytes = assetBytes + fontBytes
+  if (maxArtifactBytes !== undefined && publicationBytes > maxArtifactBytes) {
     return { success: false, code: 'artifact_too_large' }
   }
   const compiled = compileStaticSite(parsed.data, {
     ...(dependencies.imagePolicy ? { imagePolicy: dependencies.imagePolicy } : {}),
     portableAssetPaths: Object.fromEntries(assetIds.map(id => [id, `assets/${id}.webp`])),
+    ...(Object.keys(portableFontPaths).length > 0 ? { portableFontPaths } : {}),
     ...(dependencies.liveLeadForms
       ? { liveLeadForms: dependencies.liveLeadForms }
       : {}),
-    ...(maxArtifactBytes ? { maxSiteBytes: maxArtifactBytes - assetBytes } : {}),
+    ...(maxArtifactBytes ? { maxSiteBytes: maxArtifactBytes - publicationBytes } : {}),
   })
   if (!compiled.success) {
     return { success: false, code: compiled.code === 'artifact_too_large' ? compiled.code : 'invalid_artifact' }
   }
-  if (compiled.files.length + assetFiles.length > 20) return { success: false, code: 'artifact_too_large' }
+  if (compiled.files.length + assetFiles.length + fontFiles.length > 20) {
+    return { success: false, code: 'artifact_too_large' }
+  }
   return {
     success: true,
     files: [
       ...assetFiles,
+      ...fontFiles,
       ...compiled.files.map(file => ({ path: file.path, content: file.html })),
     ],
     routeCount: compiled.routeCount,
@@ -1109,6 +1161,7 @@ export function createExportProcessor(dependencies: {
   assetStore?: PublicationAssetStore
   imagePolicy?: RemoteImagePolicy
   maxArtifactBytes?: number
+  loadFont?: PublicationFontLoader
 }) {
   return async function process(job: WorkerJob<ExportJob>): Promise<ExportRunRecord> {
     const parsed = exportJobSchema.safeParse(job.data)
@@ -1123,6 +1176,7 @@ export function createExportProcessor(dependencies: {
       assetStore: dependencies.assetStore ?? { get: () => Promise.resolve(null) },
       ...(dependencies.imagePolicy ? { imagePolicy: dependencies.imagePolicy } : {}),
       ...(dependencies.maxArtifactBytes ? { maxArtifactBytes: dependencies.maxArtifactBytes } : {}),
+      loadFont: dependencies.loadFont ?? loadFontSubset,
     })
     if (!prepared.success) {
       const code: ExportErrorCode = prepared.code === 'invalid_artifact' ? 'invalid_document' : prepared.code
@@ -1238,6 +1292,7 @@ export function createDeploymentProcessor(dependencies: {
   leadIntakeOrigin?: string
   imagePolicy?: RemoteImagePolicy
   maxArtifactBytes?: number
+  loadFont?: PublicationFontLoader
   pollIntervalMs?: number
   maxPollAttempts?: number
 }) {
@@ -1265,6 +1320,7 @@ export function createDeploymentProcessor(dependencies: {
             ),
           }
         : {}),
+      loadFont: dependencies.loadFont ?? loadFontSubset,
     })
     if (!prepared.success) {
       return await dependencies.repository.fail(context, input.id, prepared.code) ?? claimed

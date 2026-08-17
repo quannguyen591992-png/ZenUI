@@ -203,6 +203,48 @@ describe('Design Document v1', () => {
     }
   })
 
+  it('accepts only allowlisted Vietnamese-capable and system font families', () => {
+    for (const family of [
+      'Manrope', 'Be Vietnam Pro', 'Inter', 'Noto Sans', 'Noto Serif',
+      'Arial', 'Georgia', 'system-ui',
+    ]) {
+      const document = createValidDesignFixture()
+      document.theme.fonts.heading = family as never
+      document.theme.fonts.body = family as never
+      expect(validateDesignDocument(document).success).toBe(true)
+    }
+
+    const forged = createValidDesignFixture()
+    forged.theme.fonts.heading = 'https://fonts.example.com/custom.woff2' as never
+    expect(validateDesignDocument(forged).success).toBe(false)
+  })
+
+  it('accepts only server-owned presentation and elevation tokens', () => {
+    expect(styleSchema.safeParse({ shadow: 'xs' }).success).toBe(true)
+    expect(styleSchema.safeParse({ shadow: 'xl' }).success).toBe(true)
+    expect(styleSchema.safeParse({ shadow: 'custom-shadow' }).success).toBe(false)
+
+    const document = createValidDesignFixture()
+    ;(document.theme as unknown as Record<string, unknown>).presentation = {
+      version: 1,
+      profile: 'dynamic',
+      language: 'vi',
+    }
+    expect(validateDesignDocument(document).success).toBe(true)
+
+    for (const presentation of [
+      { version: 1, profile: 'unbounded', language: 'vi' },
+      { version: 1, profile: 'refined', language: 'vi', rawCss: '*{display:none}' },
+      { version: 1, profile: 'refined', language: 'vi', javascript: 'alert(1)' },
+      { version: 1, profile: 'refined', language: 'vi', selector: 'body' },
+      { version: 1, profile: 'refined', language: 'vi', keyframe: 'spin' },
+    ]) {
+      const forged = createValidDesignFixture()
+      ;(forged.theme as unknown as Record<string, unknown>).presentation = presentation
+      expect(validateDesignDocument(forged).success).toBe(false)
+    }
+  })
+
   it('accepts bounded composition and image treatment tokens', () => {
     const node = {
       id: 'image-visual', type: 'image' as const, parentId: 'container-1', children: [],
@@ -501,7 +543,7 @@ describe('Design Document v2 multi-page contract', () => {
   })
 
   it.each([
-    '../admin', '/a/private', '/API', '/about//team', '/about/%2fteam', '/about/%2eteam',
+    '../admin', '/a/private', '/f/manrope', '/API', '/about//team', '/about/%2fteam', '/about/%2eteam',
     '/about\\team', '/about?x=1', '/about#x', '/favicon.ico', '/one/two/three/four/five',
   ])('rejects unsafe or reserved slug %s', input => {
     expect(normalizePageSlug(input)).toMatchObject({ success: false })

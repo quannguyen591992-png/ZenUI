@@ -776,6 +776,7 @@ export function materializeLandingPageBlueprintV2(input: {
   heroImage?: OwnedImageProps
   ownedMedia?: OwnedMediaMap
   designSystem?: GuidedDesignSystem
+  language?: 'vi' | 'en'
 }): { accepted: true; document: DesignDocument } | { accepted: false; issues: string[] } {
   const parsed = landingPageBlueprintV2Schema.safeParse(input.blueprint)
   if (!parsed.success) return { accepted: false, issues: ['invalid_blueprint'] }
@@ -791,6 +792,13 @@ export function materializeLandingPageBlueprintV2(input: {
   const theme = input.designSystem?.mode === 'custom'
     ? resolveCustomDesignSystem(input.designSystem)
     : resolveTheme(blueprint.theme, blueprint.pagePreset)
+  const presentationProfile = input.designSystem?.mode === 'custom'
+    ? input.designSystem.typography === 'expressive' ? 'dynamic' : 'refined'
+    : blueprint.theme.mood === 'editorial'
+      ? 'editorial'
+      : blueprint.theme.mood === 'bold'
+        ? 'dynamic'
+        : 'refined'
   const builder = new DocumentBuilder()
   builder.create('page', 'page-root', null, {}, { width: 'full', backgroundColor: theme.background })
   renderNavbar(builder, blueprint, theme)
@@ -830,6 +838,11 @@ export function materializeLandingPageBlueprintV2(input: {
       colors: { primary: theme.primary, background: theme.background, text: theme.text },
       fonts: { heading: theme.headingFont, body: theme.bodyFont },
       radius: theme.radius,
+      presentation: {
+        version: 1,
+        profile: presentationProfile,
+        language: input.language ?? 'en',
+      },
     },
     pages: [{ id: 'home', name: blueprint.brand, slug: '/', rootNodeId: 'page-root' }],
     nodes: builder.nodes,

@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@zenui/component-registry": "workspace:*",
-    "@zenui/design-schema": "workspace:*"
+    "@zenui/design-schema": "workspace:*",
+    "@zenui/font-library": "workspace:*"
   }
 }

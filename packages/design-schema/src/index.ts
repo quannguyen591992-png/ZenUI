@@ -24,7 +24,7 @@ export const DESIGN_LIMITS = {
 } as const
 
 const RESERVED_PAGE_SEGMENTS = new Set([
-  'api', '_next', 'a', 's', 'projects', 'integrations',
+  'api', '_next', 'a', 'f', 's', 'projects', 'integrations',
   'favicon.ico', 'robots.txt', 'sitemap.xml',
 ])
 
@@ -91,7 +91,11 @@ export const COMPONENT_TYPES = [
   'lead-form',
 ] as const
 
-export const FONT_ALLOWLIST = ['Arial', 'Georgia', 'Manrope', 'system-ui'] as const
+export const FONT_ALLOWLIST = [
+  'Arial', 'Georgia', 'Manrope', 'Be Vietnam Pro', 'Inter', 'Noto Sans', 'Noto Serif', 'system-ui',
+] as const
+export const PRESENTATION_PROFILES = ['refined', 'dynamic', 'editorial'] as const
+export const PRESENTATION_LANGUAGES = ['vi', 'en'] as const
 export const ICON_ALLOWLIST = [
   'arrow-right', 'check', 'menu', 'star',
   'shield', 'sparkles', 'clock', 'chart', 'users', 'mail', 'phone', 'play',
@@ -234,7 +238,7 @@ export const styleSchema = z.object({
   borderColor: hexColorSchema.optional(),
   borderWidth: z.number().int().min(0).max(20).optional(),
   borderRadius: z.number().int().min(0).max(200).optional(),
-  shadow: z.enum(['sm', 'md', 'lg']).optional(),
+  shadow: z.enum(['xs', 'sm', 'md', 'lg', 'xl']).optional(),
   opacity: z.number().min(0).max(1).optional(),
 }).strict()
 
@@ -433,6 +437,12 @@ export const designNodeSchema = z.discriminatedUnion('type', nodeSchemas as [
   ...Array<typeof nodeSchemas[number]>,
 ])
 
+const presentationSchema = z.object({
+  version: z.literal(1),
+  profile: z.enum(PRESENTATION_PROFILES),
+  language: z.enum(PRESENTATION_LANGUAGES),
+}).strict()
+
 const themeSchema = z.object({
   colors: z.object({
     primary: hexColorSchema,
@@ -448,6 +458,7 @@ const themeSchema = z.object({
     md: z.number().int().min(0).max(100),
     lg: z.number().int().min(0).max(100),
   }).strict(),
+  presentation: presentationSchema.optional(),
 }).strict()
 
 const pageV1Schema = z.object({

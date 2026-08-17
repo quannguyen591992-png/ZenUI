@@ -35,6 +35,44 @@ describe('Design Document renderer', () => {
     expect(container.querySelector('hr')).toBeInTheDocument()
   })
 
+  it('reuses the bounded visual profile CSS in the React renderer', () => {
+    const document = createValidDesignFixture()
+    ;(document.theme as unknown as Record<string, unknown>).presentation = {
+      version: 1,
+      profile: 'dynamic',
+      language: 'vi',
+    }
+
+    const { container } = render(<DesignDocumentRenderer document={document} viewport="desktop" />)
+
+    const root = container.querySelector('[data-zenui-render-root]')
+    expect(root).toHaveAttribute('data-visual-profile', 'dynamic')
+    const css = container.querySelector('style[data-zenui-render-style]')?.textContent ?? ''
+    expect(css).toContain('@media(hover:hover) and (pointer:fine)')
+    expect(css).toContain('@media(prefers-reduced-motion:reduce)')
+    expect(css).toContain('@keyframes zenui-dynamic-float')
+  })
+
+  it('loads only allowlisted Vietnamese fonts from the configured public asset origin', () => {
+    const document = createValidDesignFixture()
+    document.theme.fonts.heading = 'Noto Serif'
+    document.theme.fonts.body = 'Be Vietnam Pro'
+
+    const { container } = render(
+      <DesignDocumentRenderer
+        document={document}
+        viewport="desktop"
+        assetOrigin="https://assets.example.com"
+      />,
+    )
+
+    const css = container.querySelector('style[data-zenui-render-style]')?.textContent ?? ''
+    expect(css).toContain("@font-face{font-family:'Noto Serif';font-style:normal;font-weight:400")
+    expect(css).toContain("url('https://assets.example.com/f/noto-serif/vietnamese.woff2')")
+    expect(css).toContain("font-family:'Be Vietnam Pro',sans-serif")
+    expect(css).not.toMatch(/fonts\.google|@import|javascript:/)
+  })
+
   it('renders an accessible visual-only Lead Form and prevents submission', () => {
     const document = createValidDesignFixture()
     document.nodes['lead-form-1'] = {

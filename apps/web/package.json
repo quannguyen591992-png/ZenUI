@@ -25,6 +25,7 @@
     "@zenui/design-schema": "workspace:*",
     "@zenui/editor-core": "workspace:*",
     "@zenui/export-core": "workspace:*",
+    "@zenui/font-library": "workspace:*",
     "@zenui/html-compiler": "workspace:*",
     "@zenui/lead-core": "workspace:*",
     "@zenui/operations-core": "workspace:*",
