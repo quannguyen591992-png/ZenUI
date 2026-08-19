@@ -882,7 +882,9 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
   const [proposalPrompt, setProposalPrompt] = useState('')
   const [proposalIntent, setProposalIntent] = useState<'standard' | 'remix-section'>('standard')
   const [activeProposal, setActiveProposal] = useState<AiProposalSummary | null>(null)
+  const [storyNavigationTargetId, setStoryNavigationTargetId] = useState<string | null>(null)
   const assetPanelRef = useRef<HTMLElement | null>(null)
+  const centerScrollRef = useRef<HTMLDivElement | null>(null)
   const sheetOpenerRef = useRef<HTMLButtonElement | null>(null)
   const sheetCloseRef = useRef<HTMLButtonElement | null>(null)
   const closeSheet = (): void => {
@@ -1001,9 +1003,39 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
     if (sheet) sheetCloseRef.current?.focus()
   }, [sheet])
 
+  useEffect(() => {
+    if (!storyNavigationTargetId || state.selectedNodeId !== storyNavigationTargetId) return
+    const centerScroll = centerScrollRef.current
+    const target = centerScroll
+      ? Array.from(centerScroll.querySelectorAll<HTMLElement>('[data-node-id]'))
+          .find(element => element.dataset.nodeId === storyNavigationTargetId)
+      : undefined
+    const behavior: ScrollBehavior = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      ? 'auto'
+      : 'smooth'
+    if (centerScroll && target) {
+      const centerOverflowY = globalThis.getComputedStyle(centerScroll).overflowY
+      if (centerOverflowY === 'auto' || centerOverflowY === 'scroll') {
+        const centerBounds = centerScroll.getBoundingClientRect()
+        const targetBounds = target.getBoundingClientRect()
+        centerScroll.scrollTo?.({
+          behavior,
+          top: centerScroll.scrollTop + targetBounds.top - centerBounds.top,
+        })
+      } else {
+        target.scrollIntoView?.({ behavior, block: 'start' })
+      }
+    }
+    setStoryNavigationTargetId(null)
+  }, [state.selectedNodeId, storyNavigationTargetId])
+
   const setState = (next: EditorState): void => dispatch({ type: 'set', state: next })
   const selectEditorNode = (nodeId: string): void => {
     setState(selectNode(stateRef.current, nodeId))
+  }
+  const navigateToStorySection = (nodeId: string): void => {
+    selectEditorNode(nodeId)
+    setStoryNavigationTargetId(nodeId)
   }
   const resetLocalDraft = (): void => {
     window.localStorage.removeItem(isFixture ? DRAFT_STORAGE_KEY : recoveryKey)
@@ -1547,7 +1579,7 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
                     className={`story-layer-item ${selectedSectionId === item.nodeId ? 'active' : ''}`}
                     aria-label={`Chọn ${item.label} — ${item.purpose}`}
                     aria-current={selectedSectionId === item.nodeId ? 'true' : undefined}
-                    onClick={() => selectSection(item.nodeId)}
+                    onClick={() => navigateToStorySection(item.nodeId)}
                   >
                     <div className="layer-icon">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
@@ -1652,7 +1684,7 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
             >Thêm thao tác</button>
           </div>
         )}
-        <div className="editor-center-scroll">
+        <div ref={centerScrollRef} className="editor-center-scroll">
           <section className="canvas-panel" aria-label="Khung thiết kế" data-viewport={viewport}>
             <div className="canvas-viewport" style={{ width: canvasViewportWidths[viewport] }}>
               <CanvasNode
@@ -1818,7 +1850,7 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
                 <ol>
                   {story.map(item => (
                     <li key={item.nodeId}>
-                      <button type="button" onClick={() => { selectSection(item.nodeId); setSheet(null) }}>
+                      <button type="button" onClick={() => { navigateToStorySection(item.nodeId); setSheet(null) }}>
                         {item.label} — {item.purpose}{item.hidden ? ' — Đã ẩn' : ''}
                       </button>
                     </li>

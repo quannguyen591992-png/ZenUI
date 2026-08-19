@@ -481,6 +481,84 @@ describe('Stage 6 section-first editor', () => {
     expect(screen.getByRole('complementary', { name: 'Chỉnh sửa section' })).not.toBe(centerScroll)
   })
 
+  it('scrolls the exact Canvas section inside the desktop center without moving another region', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false }))
+    const user = userEvent.setup()
+    renderSimple()
+
+    const canvas = await screen.findByLabelText('Khung thiết kế')
+    const centerScroll = canvas.closest<HTMLElement>('.editor-center-scroll')
+    const firstSection = canvas.querySelector<HTMLElement>('[data-node-id="section-1"]')
+    const targetSection = canvas.querySelector<HTMLElement>('[data-node-id="cta-section"]')
+    expect(centerScroll).not.toBeNull()
+    expect(firstSection).not.toBeNull()
+    expect(targetSection).not.toBeNull()
+    centerScroll!.style.overflowY = 'auto'
+    Object.defineProperties(centerScroll!, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollHeight: { configurable: true, value: 1_800 },
+      scrollTop: { configurable: true, value: 120, writable: true },
+    })
+    centerScroll!.getBoundingClientRect = vi.fn().mockReturnValue({ top: 100 })
+    targetSection!.getBoundingClientRect = vi.fn().mockReturnValue({ top: 500 })
+    const centerScrollTo = vi.fn()
+    const centerScrollIntoView = vi.fn()
+    const firstScrollIntoView = vi.fn()
+    const targetScrollIntoView = vi.fn()
+    centerScroll!.scrollTo = centerScrollTo
+    centerScroll!.scrollIntoView = centerScrollIntoView
+    firstSection!.scrollIntoView = firstScrollIntoView
+    targetSection!.scrollIntoView = targetScrollIntoView
+
+    const story = screen.getByRole('navigation', { name: 'Câu chuyện trang' })
+    const targetButton = within(story).getByRole('button', {
+      name: 'Chọn Start today — Mời hành động',
+    })
+    await user.click(targetButton)
+
+    await waitFor(() => expect(centerScrollTo).toHaveBeenCalledWith({
+      behavior: 'smooth',
+      top: 520,
+    }))
+    expect(targetButton).toHaveAttribute('aria-current', 'true')
+    expect(targetSection).toHaveClass('is-selected')
+    expect(targetScrollIntoView).not.toHaveBeenCalled()
+    expect(firstScrollIntoView).not.toHaveBeenCalled()
+    expect(centerScrollIntoView).not.toHaveBeenCalled()
+  })
+
+  it('respects reduced motion while navigating inside the desktop center', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }))
+    const user = userEvent.setup()
+    renderSimple()
+
+    const canvas = await screen.findByLabelText('Khung thiết kế')
+    const centerScroll = canvas.closest<HTMLElement>('.editor-center-scroll')
+    const targetSection = canvas.querySelector<HTMLElement>('[data-node-id="cta-section"]')
+    expect(centerScroll).not.toBeNull()
+    expect(targetSection).not.toBeNull()
+    centerScroll!.style.overflowY = 'auto'
+    Object.defineProperties(centerScroll!, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollHeight: { configurable: true, value: 1_800 },
+      scrollTop: { configurable: true, value: 0, writable: true },
+    })
+    centerScroll!.getBoundingClientRect = vi.fn().mockReturnValue({ top: 100 })
+    targetSection!.getBoundingClientRect = vi.fn().mockReturnValue({ top: 500 })
+    const scrollTo = vi.fn()
+    centerScroll!.scrollTo = scrollTo
+
+    const story = screen.getByRole('navigation', { name: 'Câu chuyện trang' })
+    await user.click(within(story).getByRole('button', {
+      name: 'Chọn Start today — Mời hành động',
+    }))
+
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({
+      behavior: 'auto',
+      top: 400,
+    }))
+  })
+
   it('auto-grows the ordinary content textarea without changing its command flow', async () => {
     const scrollHeight = vi.spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get')
       .mockReturnValue(120)
@@ -1198,6 +1276,37 @@ describe('Stage 6 section-first editor', () => {
     await user.click(screen.getByRole('button', { name: 'Thêm thao tác' }))
     expect(screen.getByRole('dialog', { name: 'Thêm thao tác' })).toBeVisible()
     expect(screen.queryByRole('dialog', { name: 'Câu chuyện trang' })).toBeNull()
+  })
+
+  it('closes the narrow Page Story sheet and scrolls to its selected Canvas section', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false }))
+    const user = userEvent.setup()
+    renderSimple()
+
+    const canvas = await screen.findByLabelText('Khung thiết kế')
+    const centerScroll = canvas.closest<HTMLElement>('.editor-center-scroll')
+    const targetSection = canvas.querySelector<HTMLElement>('[data-node-id="cta-section"]')
+    expect(centerScroll).not.toBeNull()
+    expect(targetSection).not.toBeNull()
+    centerScroll!.style.overflowY = 'visible'
+    const centerScrollTo = vi.fn()
+    const scrollIntoView = vi.fn()
+    centerScroll!.scrollTo = centerScrollTo
+    targetSection!.scrollIntoView = scrollIntoView
+
+    await user.click(screen.getByRole('button', { name: 'Câu chuyện' }))
+    const dialog = screen.getByRole('dialog', { name: 'Câu chuyện trang' })
+    await user.click(within(dialog).getByRole('button', {
+      name: 'Start today — Mời hành động',
+    }))
+
+    expect(screen.queryByRole('dialog', { name: 'Câu chuyện trang' })).toBeNull()
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: 'smooth',
+      block: 'start',
+    }))
+    expect(centerScrollTo).not.toHaveBeenCalled()
+    expect(targetSection).toHaveClass('is-selected')
   })
 
   it('confirms deletion, protects the last section and keeps viewers read-only', async () => {
