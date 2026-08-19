@@ -136,26 +136,27 @@ describe('production project onboarding integration', () => {
     expect(screen.queryByRole('heading', { name: 'Guided Brief production' })).not.toBeInTheDocument()
   })
 
-  it('shows an owner/editor Leads tab and updates its new-customer badge', async () => {
+  it('links owner/editor to the Dashboard Leads inbox and keeps its new-customer badge', async () => {
     stubProject('accepted')
     render(<ProjectEditor projectId={projectId} editorOrigin="http://localhost" previewOrigin="http://127.0.0.1:3001" assetOrigin="http://127.0.0.1:3002" remoteImageHostAllowlist="images.example.com" deploymentEnabled={false} />)
 
-    expect(await screen.findByRole('tab', { name: 'Thiết kế' })).toHaveAttribute('aria-selected', 'true')
-    const leadsTab = await screen.findByRole('tab', { name: /Khách hàng/ })
-    expect(leadsTab).toHaveTextContent('2')
-    await userEvent.setup().click(leadsTab)
-    expect(await screen.findByRole('heading', { name: 'Hộp thư khách hàng production' })).toBeVisible()
-
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Đánh dấu mô phỏng' }))
-    expect(leadsTab).toHaveTextContent('1')
+    const leadsLink = await screen.findByRole('link', { name: /Khách hàng/ })
+    expect(leadsLink).toHaveAttribute(
+      'href',
+      `/dashboard/customers?projectId=${projectId}`,
+    )
+    await waitFor(() => expect(leadsLink).toHaveTextContent('2'))
+    expect(screen.queryByRole('heading', {
+      name: 'Hộp thư khách hàng production',
+    })).not.toBeInTheDocument()
   })
 
-  it('hides the Leads surface from viewers', async () => {
+  it('hides the Leads shortcut from viewers', async () => {
     stubProject('accepted', 'viewer')
     render(<ProjectEditor projectId={projectId} editorOrigin="http://localhost" previewOrigin="http://127.0.0.1:3001" assetOrigin="http://127.0.0.1:3002" remoteImageHostAllowlist="images.example.com" deploymentEnabled={false} />)
 
     expect(await screen.findByRole('heading', { name: 'Trình chỉnh sửa production' })).toBeVisible()
-    expect(screen.queryByRole('tab', { name: /Khách hàng/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Khách hàng/ })).not.toBeInTheDocument()
   })
 
   it('polls count only while visible and refreshes immediately on focus', async () => {
@@ -179,17 +180,17 @@ describe('production project onboarding integration', () => {
     stubProject('accepted', 'owner', [1, 2, 3])
     render(<ProjectEditor projectId={projectId} editorOrigin="http://localhost" previewOrigin="http://127.0.0.1:3001" assetOrigin="http://127.0.0.1:3002" remoteImageHostAllowlist="images.example.com" deploymentEnabled={false} />)
 
-    const tab = await screen.findByRole('tab', { name: /Khách hàng/ })
-    await waitFor(() => expect(tab).toHaveTextContent('1'))
+    const link = await screen.findByRole('link', { name: /Khách hàng/ })
+    await waitFor(() => expect(link).toHaveTextContent('1'))
     act(() => { intervalCallback?.() })
-    await waitFor(() => expect(tab).toHaveTextContent('2'))
+    await waitFor(() => expect(link).toHaveTextContent('2'))
 
     visible = false
     act(() => { intervalCallback?.() })
-    expect(tab).toHaveTextContent('2')
+    expect(link).toHaveTextContent('2')
 
     visible = true
     act(() => { window.dispatchEvent(new Event('focus')) })
-    await waitFor(() => expect(tab).toHaveTextContent('3'))
+    await waitFor(() => expect(link).toHaveTextContent('3'))
   })
 })

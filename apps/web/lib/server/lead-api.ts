@@ -3,6 +3,9 @@ import {
   leadDetailSchema,
   leadMarkContactedRequestSchema,
   leadSummarySchema,
+  workspaceLeadListQuerySchema,
+  workspaceLeadListResponseSchema,
+  workspaceLeadSummarySchema,
 } from '@zenui/lead-core'
 import { z } from 'zod'
 
@@ -14,12 +17,14 @@ import {
 } from './api'
 import {
   authorizeWorkspaceOperation,
+  hasWorkspacePermission,
   type WorkspaceAccessLookup,
 } from './authorization'
 
 import type {
   AuthContext,
   LeadSummaryRecord,
+  WorkspaceLeadSummaryRecord,
 } from '@zenui/database'
 import type {
   EncryptedLeadPayload,
@@ -56,6 +61,21 @@ export interface LeadApiDependencies {
       projectId: string,
       limit?: number,
     ): Promise<LeadSummaryRecord[]>
+    listWorkspace(
+      context: AuthContext,
+      input: {
+        projectId?: string | undefined
+        status?: 'new' | 'contacted' | undefined
+        page: number
+        pageSize: number
+      },
+    ): Promise<{
+      items: WorkspaceLeadSummaryRecord[]
+      page: number
+      pageSize: number
+      total: number
+      totalPages: number
+    }>
     countNew(
       context: AuthContext,
       projectId: string,
@@ -75,6 +95,10 @@ export interface LeadApiDependencies {
       | { accepted: false; code: 'not_found' | 'conflict' }
     >
   }
+}
+
+type WorkspaceRoute = {
+  params: Promise<{ workspaceId: string }>
 }
 
 type ProjectRoute = {
@@ -140,6 +164,32 @@ function requireTrustedOrigin(
   }
 }
 
+async function authorizeWorkspace(
+  deps: LeadApiDependencies,
+  workspaceId: string,
+  permission: 'readLeads' | 'manageLeads',
+): Promise<AuthContext> {
+  const session = await deps.getSession()
+  if (!session) {
+    throw new ApiError(
+      'unauthorized',
+      'Authentication required',
+      401,
+    )
+  }
+  const membership = await deps.access.findMembership(
+    session.userId,
+    workspaceId,
+  )
+  if (!membership) {
+    throw new ApiError('not_found', 'Resource not found', 404)
+  }
+  if (!hasWorkspacePermission(membership.role, permission)) {
+    throw new ApiError('forbidden', 'Forbidden', 403)
+  }
+  return { userId: session.userId, workspaceId }
+}
+
 async function authorize(
   deps: LeadApiDependencies,
   workspaceId: string,
@@ -176,8 +226,66 @@ function safeSummary(record: LeadSummaryRecord) {
   })
 }
 
+function safeWorkspaceSummary(record: WorkspaceLeadSummaryRecord) {
+  return workspaceLeadSummarySchema.parse({
+    ...safeSummary(record),
+    projectId: record.projectId,
+    projectName: record.projectName,
+  })
+}
+
 export function createLeadHandlers(deps: LeadApiDependencies) {
   return {
+    async GET_WORKSPACE(request: Request, route: WorkspaceRoute) {
+      try {
+        const { workspaceId } = await route.params
+        const parsedWorkspaceId = z.string().uuid().safeParse(workspaceId)
+        if (!parsedWorkspaceId.success) {
+          throw new ApiError(
+            'validation_error',
+            'Request validation failed',
+            422,
+          )
+        }
+        const queryParameters = Object.fromEntries(
+          new URL(request.url).searchParams.entries(),
+        )
+        const query = workspaceLeadListQuerySchema.safeParse(
+          queryParameters,
+        )
+        if (!query.success) {
+          throw new ApiError(
+            'validation_error',
+            'Request validation failed',
+            422,
+          )
+        }
+        const context = await authorizeWorkspace(
+          deps,
+          parsedWorkspaceId.data,
+          'readLeads',
+        )
+        if (
+          query.data.projectId
+          && !await deps.access.projectBelongsToWorkspace(
+            query.data.projectId,
+            context.workspaceId,
+          )
+        ) {
+          throw new ApiError('not_found', 'Resource not found', 404)
+        }
+        const result = await deps.leads.listWorkspace(
+          context,
+          query.data,
+        )
+        return successResponse(workspaceLeadListResponseSchema.parse({
+          ...result,
+          items: result.items.map(safeWorkspaceSummary),
+        }))
+      } catch (error) {
+        return errorResponse(error)
+      }
+    },
     async GET_LIST(request: Request, route: ProjectRoute) {
       try {
         const { projectId } = await route.params

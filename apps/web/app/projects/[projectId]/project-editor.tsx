@@ -8,7 +8,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { EditorApp } from '../../editor/editor-app'
 
-import { CustomerLeadsInbox } from './customer-leads-inbox'
 import { GuidedOnboarding } from './onboarding/guided-onboarding'
 
 interface ProjectEditorProps {
@@ -53,7 +52,6 @@ export function ProjectEditor({ projectId, editorOrigin, previewOrigin, assetOri
   const [loaded, setLoaded] = useState<LoadedProject | null>(null)
   const [error, setError] = useState('')
   const [attempt, setAttempt] = useState(0)
-  const [surface, setSurface] = useState<'design' | 'leads'>('design')
   const [newLeadCount, setNewLeadCount] = useState(0)
   const [leadAnnouncement, setLeadAnnouncement] = useState('')
   const previousLeadCount = useRef<number | null>(null)
@@ -196,56 +194,21 @@ export function ProjectEditor({ projectId, editorOrigin, previewOrigin, assetOri
 
   return (
     <div className="project-workspace-shell">
-      <nav className="project-surface-tabs" role="tablist" aria-label="Khu vực dự án">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={surface === 'design'}
-          aria-controls="project-design-panel"
-          onClick={() => setSurface('design')}
-        >
-          Thiết kế
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={surface === 'leads'}
-          aria-controls="project-leads-panel"
-          onClick={() => setSurface('leads')}
-        >
+      <nav className="project-surface-tabs" aria-label="Khu vực dự án">
+        <span aria-current="page">Thiết kế</span>
+        <Link href={`/dashboard/customers?projectId=${projectId}`}>
           Khách hàng
           {newLeadCount > 0 && (
             <span className="project-lead-badge" aria-label={`${newLeadCount} khách hàng mới`}>
               {newLeadCount}
             </span>
           )}
-        </button>
+        </Link>
       </nav>
       <p className="project-lead-announcement" aria-live="polite">
         {leadAnnouncement}
       </p>
-      <section
-        id="project-design-panel"
-        role="tabpanel"
-        hidden={surface !== 'design'}
-      >
-        {editor}
-      </section>
-      <section
-        id="project-leads-panel"
-        role="tabpanel"
-        hidden={surface !== 'leads'}
-      >
-        {surface === 'leads' && (
-          <CustomerLeadsInbox
-            projectId={projectId}
-            workspaceId={loaded.workspaceId}
-            onLeadContacted={() => {
-              setNewLeadCount(count => Math.max(0, count - 1))
-            }}
-          />
-        )}
-      </section>
+      {editor}
     </div>
   )
 }

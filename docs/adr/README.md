@@ -21,3 +21,5 @@
 | [0017](0017-guided-design-system-before-generation.md) | Guided Design System before direction generation | accepted | 2026-08-06 |
 | [0018](0018-server-owned-richer-design-directions.md) | Server-owned richer Design Directions | accepted | 2026-08-10 |
 | [0019](0019-bounded-gemini-design-direction-planner.md) | Bounded Gemini Design Direction planning | accepted | 2026-08-10 |
+| [0020](0020-metadata-only-langsmith-ai-observability.md) | Metadata-only LangSmith AI observability | accepted | 2026-08-17 |
+| [0021](0021-immutable-multimodal-usage-accounting.md) | Immutable multimodal AI usage accounting | accepted | 2026-08-19 |

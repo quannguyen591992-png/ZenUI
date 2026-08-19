@@ -22,6 +22,13 @@ import {
   workerBoundary,
 } from '../src/index.js'
 
+import type {
+  AiObservability,
+  AiProviderInput,
+  AiRunFinish,
+  AiRunInput,
+} from '../src/ai-observability.js'
+
 const job = {
   generationRunId: '11111111-1111-4111-8111-111111111111',
   projectId: '22222222-2222-4222-8222-222222222222',
@@ -33,6 +40,36 @@ const job = {
 }
 
 const context = { userId: job.userId, workspaceId: job.workspaceId }
+
+function recordingObservability() {
+  const runs: Array<{
+    input: AiRunInput
+    events: unknown[]
+    finishes: AiRunFinish[]
+  }> = []
+  const providers: Array<{
+    input: AiProviderInput
+    usage: unknown
+  }> = []
+  const observability: AiObservability = {
+    async run(input, execute) {
+      const run = { input, events: [] as unknown[], finishes: [] as AiRunFinish[] }
+      runs.push(run)
+      return execute({
+        event: event => run.events.push(event),
+        finish: result => run.finishes.push(result),
+      })
+    },
+    async provider(input, execute) {
+      const result = await execute()
+      providers.push({ input, usage: result.usage })
+      return result.value
+    },
+    flush: () => Promise.resolve(),
+    shutdown: () => Promise.resolve(),
+  }
+  return { observability, providers, runs }
+}
 
 const blueprint = {
   version: 1 as const,
@@ -111,6 +148,44 @@ describe('AI worker boundary', () => {
     expect(projectedSchema).toContain('"footerTagline"')
     expect(JSON.stringify(generateContent.mock.calls[0]?.[0])).not.toContain('additionalProperties')
     expect(JSON.stringify(generateContent.mock.calls[0]?.[0]).length).toBeLessThan(50_000)
+  })
+
+  it('parents Gemini metadata calls through the active AI observability adapter', async () => {
+    const tracing = recordingObservability()
+    const generateContent = vi.fn().mockResolvedValue({
+      text: JSON.stringify(blueprint),
+      usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 5, totalTokenCount: 13 },
+      privateProviderBody: 'must never be exported',
+    })
+    const provider = createGeminiProvider({
+      model: 'gemini-test',
+      generateContent,
+      observability: tracing.observability,
+    })
+
+    const result = await provider.generateLandingPageBlueprint({
+      promptVersion: AI_PROMPT_VERSION,
+      prompt: 'private user request',
+      context: {
+        mode: 'generate', request: 'private user request', registry: [],
+        theme: createValidDesignFixture().theme,
+      },
+      signal: new AbortController().signal,
+    })
+
+    expect(result.usage).toEqual({ inputTokens: 8, outputTokens: 5, totalTokens: 13 })
+    expect(tracing.providers).toEqual([{
+      input: {
+        operation: 'landing_blueprint',
+        provider: 'google-gemini',
+        model: 'gemini-test',
+      },
+      usage: { inputTokens: 8, outputTokens: 5, totalTokens: 13 },
+    }])
+    const exportedMetadata = JSON.stringify(tracing.providers)
+    expect(exportedMetadata).not.toContain('private user request')
+    expect(exportedMetadata).not.toContain('must never be exported')
+    expect(exportedMetadata).not.toContain(JSON.stringify(blueprint))
   })
 
   it('uses zero token fallbacks and bounded image-host guidance for sparse Gemini responses', async () => {
@@ -245,13 +320,31 @@ describe('AI worker boundary', () => {
       'shared-feature-2': '77777777-7777-4777-8777-777777777777',
       'shared-feature-3': '88888888-8888-4888-8888-888888888888',
     } as const
-    const resolveMedia = vi.fn().mockImplementation(({ intent }: {
+    const imageUsage = {
+      provider: 'google-gemini' as const,
+      model: 'gemini-3.1-flash-image',
+      imageSize: '1K' as const,
+      imageCount: 1,
+      inputTokens: 100,
+      outputTokens: 1_120,
+      totalTokens: 1_220,
+      tokenSource: 'provider_metadata' as const,
+    }
+    const resolveMedia = vi.fn().mockImplementation(({ intent, collectImageUsage }: {
       intent: { key: keyof typeof mediaAssets; alt: string }
-    }) => Promise.resolve({
-      assetId: mediaAssets[intent.key],
-      alt: intent.alt,
-      decorative: false as const,
-    }))
+      collectImageUsage?: (usage: typeof imageUsage) => void
+    }) => {
+      const mediaSource = intent.key === 'shared-feature-3'
+        ? 'pexels' as const
+        : 'generated' as const
+      if (mediaSource === 'generated') collectImageUsage?.(imageUsage)
+      return Promise.resolve({
+        assetId: mediaAssets[intent.key],
+        alt: intent.alt,
+        decorative: false as const,
+        mediaSource,
+      })
+    })
     const processor = createDesignDirectionProcessor({ provider, repository, resolveMedia })
 
     await expect(processor({ data: {
@@ -304,6 +397,10 @@ describe('AI worker boundary', () => {
       })]),
       usage: { inputTokens: 20, outputTokens: 30, totalTokens: 50 },
     }))
+    expect(repository.complete.mock.calls[0]?.[2]?.mediaUsage).toEqual({
+      generated: [imageUsage, imageUsage, imageUsage],
+      stockCount: 1,
+    })
     expect(repository.claim).toHaveBeenCalledWith(context, job.generationRunId, expect.objectContaining({
       promptVersion: 'directions-v2',
     }))
@@ -318,6 +415,78 @@ describe('AI worker boundary', () => {
     expect(providerRequest.plannerCatalog).toHaveLength(12)
     expect(providerRequest.excludedPresetIds).toEqual([])
     expect(JSON.stringify(generateContent.mock.calls[0]?.[0])).not.toMatch(/providerResultId|assetId/i)
+  })
+
+  it('records metadata-only Design Direction root outcomes and media counts', async () => {
+    const tracing = recordingObservability()
+    const privateBrief = {
+      description: 'private direction request',
+      offer: 'Private offer',
+      audience: 'Private audience',
+      primaryGoal: 'Collect requests',
+      cta: 'Register',
+      tone: 'Clear',
+      brandDetails: '',
+      mustHaveSections: ['introduction', 'benefits', 'contact'],
+    } as const
+    const repository = {
+      getWorkerInput: vi.fn().mockResolvedValue({
+        id: job.generationRunId,
+        projectId: job.projectId,
+        workspaceId: job.workspaceId,
+        createdBy: job.userId,
+        expectedVersion: 1,
+        round: 1,
+        brief: privateBrief,
+        document: createValidDesignFixture(),
+        previousDirectionIds: [],
+      }),
+      claim: vi.fn().mockResolvedValue({ status: 'running' }),
+      complete: vi.fn().mockResolvedValue({ accepted: true, run: { status: 'completed' } }),
+      fail: vi.fn(),
+    }
+    const provider = {
+      name: 'mock-directions',
+      model: 'mock-directions-v2',
+      generateContentBlueprint: vi.fn().mockRejectedValue(
+        Object.assign(new Error('raw provider response'), { code: 'provider_timeout' }),
+      ),
+    }
+    const processor = createDesignDirectionProcessor({
+      provider,
+      repository,
+      observability: tracing.observability,
+    })
+
+    await expect(processor({ data: {
+      designDirectionRunId: job.generationRunId,
+      projectId: job.projectId,
+      workspaceId: job.workspaceId,
+      userId: job.userId,
+    } })).resolves.toMatchObject({ status: 'running' })
+
+    expect(tracing.runs).toEqual([expect.objectContaining({
+      input: {
+        operation: 'design_directions',
+        runId: job.generationRunId,
+        provider: 'mock-directions',
+        model: 'mock-directions-v2',
+        promptVersion: 'directions-v2',
+        round: 1,
+      },
+      finishes: [{
+        outcome: 'rejected',
+        errorCode: 'provider_timeout',
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        mediaCount: 0,
+      }],
+    })])
+    const serialized = JSON.stringify(tracing.runs)
+    expect(serialized).not.toContain(privateBrief.description)
+    expect(serialized).not.toContain(job.workspaceId)
+    expect(serialized).not.toContain(job.projectId)
+    expect(serialized).not.toContain(job.userId)
+    expect(serialized).not.toContain('raw provider response')
   })
 
   it('uses enforced Gemini schemas for visual briefs and batch candidate judgments', async () => {
@@ -408,6 +577,11 @@ describe('AI worker boundary', () => {
       candidates: [{ content: { parts: [{ inlineData: {
         data: Buffer.from('generated-image').toString('base64'), mimeType: 'image/png',
       } }] } }],
+      usageMetadata: {
+        promptTokenCount: 100,
+        candidatesTokenCount: 1_120,
+        totalTokenCount: 1_220,
+      },
     })
     const generator = createGeminiImageGenerator({ model: 'gemini-image-test', generateContent })
     await expect(generator.generate({
@@ -417,8 +591,19 @@ describe('AI worker boundary', () => {
     })).resolves.toEqual({
       bytes: new Uint8Array(Buffer.from('generated-image')),
       mimeType: 'image/png',
-      provider: 'google',
+      provider: 'google-gemini',
       model: 'gemini-image-test',
+      imageSize: '1K',
+      usage: {
+        provider: 'google-gemini',
+        model: 'gemini-image-test',
+        imageSize: '1K',
+        imageCount: 1,
+        inputTokens: 100,
+        outputTokens: 1_120,
+        totalTokens: 1_220,
+        tokenSource: 'provider_metadata',
+      },
     })
     expect(generateContent).toHaveBeenCalledWith({
       model: 'gemini-image-test',
@@ -430,11 +615,55 @@ describe('AI worker boundary', () => {
     }, expect.any(AbortSignal))
     expect(JSON.stringify(generateContent.mock.calls[0]?.[0])).not.toMatch(/numberOfImages|addWatermark|enhancePrompt/)
 
+    const fallbackGenerator = createGeminiImageGenerator({
+      model: 'gemini-3.1-flash-image',
+      generateContent: vi.fn().mockResolvedValue({
+        candidates: [{ content: { parts: [{ inlineData: {
+          data: Buffer.from('fallback-image').toString('base64'), mimeType: 'image/png',
+        } }] } }],
+      }),
+    })
+    await expect(fallbackGenerator.generate({
+      prompt: 'A bounded website image', aspectRatio: '4:3', signal: new AbortController().signal,
+    })).resolves.toMatchObject({
+      usage: {
+        provider: 'google-gemini',
+        model: 'gemini-3.1-flash-image',
+        imageSize: '1K',
+        imageCount: 1,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        tokenSource: 'documented_fallback',
+      },
+    })
+
+    const missingOutputMetadataGenerator = createGeminiImageGenerator({
+      model: 'gemini-3.1-flash-image',
+      generateContent: vi.fn().mockResolvedValue({
+        candidates: [{ content: { parts: [{ inlineData: {
+          data: Buffer.from('partial-metadata-image').toString('base64'), mimeType: 'image/png',
+        } }] } }],
+        usageMetadata: { promptTokenCount: 100, totalTokenCount: 100 },
+      }),
+    })
+    await expect(missingOutputMetadataGenerator.generate({
+      prompt: 'A bounded website image', aspectRatio: '4:3', signal: new AbortController().signal,
+    })).resolves.toMatchObject({
+      usage: {
+        inputTokens: 100,
+        outputTokens: 0,
+        totalTokens: 100,
+        tokenSource: 'documented_fallback',
+      },
+    })
+
     const generated = vi.fn().mockRejectedValue(Object.assign(new Error('safety detail'), { code: 'image_safety' }))
     const pexels = vi.fn().mockResolvedValue({ assetId: '55555555-5555-4555-8555-555555555555', alt: 'Fallback', decorative: false })
     const resolver = createHybridMediaResolver({ generateOwned: generated, resolvePexels: pexels })
     await expect(resolver({ key: 'shared-hero', slot: 'hero', query: 'product team planning', alt: 'Fallback' })).resolves.toMatchObject({
       assetId: '55555555-5555-4555-8555-555555555555',
+      mediaSource: 'pexels',
     })
     expect(generated).toHaveBeenCalledOnce()
     expect(pexels).toHaveBeenCalledOnce()
@@ -442,6 +671,7 @@ describe('AI worker boundary', () => {
     generated.mockResolvedValueOnce({ assetId: '66666666-6666-4666-8666-666666666666', alt: 'Generated', decorative: false })
     await expect(resolver({ key: 'shared-feature-1', slot: 'feature-1', query: 'launch roadmap', alt: 'Generated' })).resolves.toMatchObject({
       assetId: '66666666-6666-4666-8666-666666666666',
+      mediaSource: 'generated',
     })
     expect(pexels).toHaveBeenCalledOnce()
   })
@@ -1208,10 +1438,34 @@ describe('AI worker boundary', () => {
     }
     const provider = createMockWorkerProvider([])
     const generateOperations = vi.spyOn(provider, 'generateOperations')
-    const resolveProposalMedia = vi.fn().mockResolvedValue({
-      assetId: '66666666-6666-4666-8666-666666666666',
-      alt: 'Updated product view matching the page content',
-      decorative: false as const,
+    const resolveProposalMedia = vi.fn().mockImplementation((input: {
+      collectImageUsage?: (usage: {
+        provider: string
+        model: string
+        imageSize: '1K'
+        imageCount: number
+        inputTokens: number
+        outputTokens: number
+        totalTokens: number
+        tokenSource: 'provider_metadata'
+      }) => void
+    }) => {
+      input.collectImageUsage?.({
+        provider: 'google-gemini',
+        model: 'gemini-3.1-flash-image',
+        imageSize: '1K',
+        imageCount: 1,
+        inputTokens: 100,
+        outputTokens: 1_120,
+        totalTokens: 1_220,
+        tokenSource: 'provider_metadata',
+      })
+      return Promise.resolve({
+        assetId: '66666666-6666-4666-8666-666666666666',
+        alt: 'Updated product view matching the page content',
+        decorative: false as const,
+        mediaSource: 'generated' as const,
+      })
     })
     const processor = createGenerationProcessor({ provider, repository, resolveProposalMedia })
 
@@ -1229,6 +1483,19 @@ describe('AI worker boundary', () => {
         patch: expect.objectContaining({ assetId: '66666666-6666-4666-8666-666666666666' }),
       })],
       proposedDocument: expect.objectContaining({ version: 2 }),
+      mediaUsage: {
+        generated: [{
+          provider: 'google-gemini',
+          model: 'gemini-3.1-flash-image',
+          imageSize: '1K',
+          imageCount: 1,
+          inputTokens: 100,
+          outputTokens: 1_120,
+          totalTokens: 1_220,
+          tokenSource: 'provider_metadata',
+        }],
+        stockCount: 0,
+      },
     }))
     expect(repository.complete).not.toHaveBeenCalled()
   })
@@ -1639,6 +1906,146 @@ describe('AI worker boundary', () => {
     expect(judge.evaluateBatch).toHaveBeenCalledOnce()
   })
 
+  it('collects every successful generated image before import or semantic rejection', async () => {
+    const document = createValidDesignFixture()
+    document.nodes['image-1']!.props = {
+      assetId: '55555555-5555-4555-8555-555555555555', alt: 'Current view', decorative: false,
+    }
+    const brief: VisualBrief = {
+      version: 'visual-brief-v1', subject: 'Product development workflow', message: 'Five stages',
+      representation: 'process-diagram', composition: 'Five columns linked by arrows',
+      mustInclude: ['five stages'], mustAvoid: ['people'], peoplePolicy: 'forbidden',
+      textPolicy: 'symbolic-only', style: 'editorial diagram', palette: ['#2563eb'],
+      aspectRatio: 'wide', focalArea: 'center',
+      generationPrompt: 'Five stage product process diagram without people or readable text',
+      searchQuery: null, alt: 'Five-stage product development process diagram',
+    }
+    const generatedUsages = [{
+      provider: 'google-gemini' as const,
+      model: 'gemini-3.1-flash-image',
+      imageSize: '1K' as const,
+      imageCount: 1,
+      inputTokens: 100,
+      outputTokens: 1_120,
+      totalTokens: 1_220,
+      tokenSource: 'provider_metadata' as const,
+    }, {
+      provider: 'google-gemini' as const,
+      model: 'gemini-3.1-flash-image',
+      imageSize: '1K' as const,
+      imageCount: 1,
+      inputTokens: 110,
+      outputTokens: 1_120,
+      totalTokens: 1_230,
+      tokenSource: 'provider_metadata' as const,
+    }]
+    const collectImageUsage = vi.fn()
+    const resolver = createMediaProposalV2Resolver({
+      planner: { planVisualBrief: vi.fn().mockResolvedValue({
+        output: brief, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      }) },
+      generator: { generate: vi.fn()
+        .mockResolvedValueOnce({
+          bytes: new Uint8Array([1]), mimeType: 'image/png', provider: 'google-gemini',
+          model: 'gemini-3.1-flash-image', imageSize: '1K', usage: generatedUsages[0],
+        })
+        .mockResolvedValueOnce({
+          bytes: new Uint8Array([2]), mimeType: 'image/png', provider: 'google-gemini',
+          model: 'gemini-3.1-flash-image', imageSize: '1K', usage: generatedUsages[1],
+        }) },
+      judge: { evaluateBatch: vi.fn().mockResolvedValue({
+        output: [{
+          candidateId: 'candidate-0', semanticRelevance: 0.2, representationMatch: 0.1,
+          mustIncludeCoverage: 0.1, compositionFit: 0.2, websiteUsability: 0.3,
+          confidence: 0.9, violations: ['wrong_representation'], safeReason: 'Wrong representation.',
+        }],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      }) },
+      importCandidate: vi.fn()
+        .mockRejectedValueOnce(new Error('import failed'))
+        .mockResolvedValueOnce({
+          assetId: '66666666-6666-4666-8666-666666666666', bytes: new Uint8Array([22]), source: 'generated',
+        }),
+      maxImagesPerRun: 2,
+      multiCandidateEnabled: true,
+    })
+
+    await expect(resolver({
+      context, projectId: job.projectId, runId: job.generationRunId,
+      targetNodeId: 'image-1', prompt: 'Tạo bảng quy trình năm bước, không có người', document,
+      collectImageUsage,
+    })).resolves.toBeNull()
+    expect(collectImageUsage.mock.calls).toEqual([
+      [generatedUsages[0]],
+      [generatedUsages[1]],
+    ])
+  })
+
+  it('keeps image usage isolated between concurrent media runs', async () => {
+    const document = createValidDesignFixture()
+    document.nodes['image-1']!.props = {
+      assetId: '55555555-5555-4555-8555-555555555555', alt: 'Current view', decorative: false,
+    }
+    const brief: VisualBrief = {
+      version: 'visual-brief-v1', subject: 'Product team', message: 'Planning',
+      representation: 'photo', composition: 'Editorial team scene', mustInclude: [], mustAvoid: [],
+      peoplePolicy: 'allowed', textPolicy: 'none', style: 'editorial', palette: [],
+      aspectRatio: 'wide', focalArea: 'center', generationPrompt: 'Editorial product team scene',
+      searchQuery: 'product team', alt: 'Product team planning',
+    }
+    const usageByRun = (model: string) => ({
+      provider: 'google-gemini' as const, model, imageSize: '1K' as const, imageCount: 1,
+      inputTokens: 1, outputTokens: 1_120, totalTokens: 1_121,
+      tokenSource: 'provider_metadata' as const,
+    })
+    let call = 0
+    const resolver = createMediaProposalV2Resolver({
+      planner: { planVisualBrief: vi.fn().mockResolvedValue({
+        output: brief, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      }) },
+      generator: { generate: vi.fn().mockImplementation(async () => {
+        const current = call
+        call += 1
+        await Promise.resolve()
+        return {
+          bytes: new Uint8Array([current + 1]), mimeType: 'image/png', provider: 'google-gemini',
+          model: `image-model-${current}`, imageSize: '1K', usage: usageByRun(`image-model-${current}`),
+        }
+      }) },
+      judge: { evaluateBatch: vi.fn().mockImplementation(input => Promise.resolve({
+        output: [{
+          candidateId: input.candidates[0]!.candidateId, semanticRelevance: 0.95,
+          representationMatch: 0.95, mustIncludeCoverage: 0.95, compositionFit: 0.95,
+          websiteUsability: 0.95, confidence: 0.95, violations: [], safeReason: 'Relevant.',
+        }],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      })) },
+      importCandidate: vi.fn().mockImplementation(input => Promise.resolve({
+        assetId: input.runId,
+        bytes: input.bytes,
+        source: 'generated' as const,
+      })),
+      maxImagesPerRun: 1,
+    })
+    const first = vi.fn()
+    const second = vi.fn()
+
+    await Promise.all([
+      resolver({
+        context, projectId: job.projectId, runId: '66666666-6666-4666-8666-666666666666',
+        targetNodeId: 'image-1', prompt: 'First run', document, collectImageUsage: first,
+      }),
+      resolver({
+        context, projectId: job.projectId, runId: '77777777-7777-4777-8777-777777777777',
+        targetNodeId: 'image-1', prompt: 'Second run', document, collectImageUsage: second,
+      }),
+    ])
+
+    expect(first).toHaveBeenCalledOnce()
+    expect(second).toHaveBeenCalledOnce()
+    expect(first.mock.calls[0]?.[0]).not.toEqual(second.mock.calls[0]?.[0])
+  })
+
   it('reports bounded media accounting without resource identifiers or user content', async () => {
     const document = createValidDesignFixture()
     document.nodes['image-1']!.props = {
@@ -1818,6 +2225,7 @@ describe('AI worker boundary', () => {
       errorCode: 'stale_document_version',
       usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
       repairCount: 0,
+      mediaUsage: { generated: [], stockCount: 0 },
     })
     expect(repository.completeProposal).not.toHaveBeenCalled()
   })
@@ -2019,7 +2427,10 @@ describe('AI worker boundary', () => {
       }),
       fail: vi.fn(),
     }
-    const observe = vi.fn()
+    const tracing = recordingObservability()
+    const observe = vi.fn(() => {
+      throw new Error('metrics observer failure')
+    })
     const processor = createGenerationProcessor({
       provider: createMockWorkerProvider([]), repository,
       assistantStyleV2Enabled: true,
@@ -2028,6 +2439,7 @@ describe('AI worker boundary', () => {
         usage: { inputTokens: 7, outputTokens: 5, totalTokens: 12 },
       }),
       observe,
+      observability: tracing.observability,
     })
 
     await processor({ data: {
@@ -2035,13 +2447,39 @@ describe('AI worker boundary', () => {
       workspaceId: job.workspaceId, userId: job.userId,
     } })
 
-    expect(observe.mock.calls).toEqual([
-      [{ lane: 'style', stage: 'proposal', outcome: 'started', count: 1 }],
-      [{ lane: 'style', stage: 'text_tokens', outcome: 'completed', count: 12 }],
-      [{ lane: 'style', stage: 'proposal', outcome: 'accepted', count: 1 }],
-    ])
-    expect(JSON.stringify(observe.mock.calls)).not.toContain(job.generationRunId)
-    expect(JSON.stringify(observe.mock.calls)).not.toContain(job.workspaceId)
+    expect(observe).toHaveBeenCalledTimes(3)
+    expect(tracing.runs).toEqual([expect.objectContaining({
+      input: {
+        operation: 'proposal',
+        runId: job.generationRunId,
+        provider: 'mock',
+        model: 'mock-structured-v1',
+        promptVersion: AI_PROMPT_VERSION,
+        mode: 'edit-selection',
+        delivery: 'proposal',
+        lane: 'style',
+      },
+      events: [
+        { lane: 'style', stage: 'proposal', outcome: 'started', count: 1 },
+        { lane: 'style', stage: 'text_tokens', outcome: 'completed', count: 12 },
+        { lane: 'style', stage: 'proposal', outcome: 'accepted', count: 1 },
+      ],
+      finishes: [{
+        outcome: 'accepted',
+        usage: { inputTokens: 7, outputTokens: 5, totalTokens: 12 },
+        repairCount: 0,
+      }],
+    })])
+    const exportedMetadata = JSON.stringify(tracing.runs.map(run => ({
+      input: { ...run.input, runId: undefined },
+      events: run.events,
+      finishes: run.finishes,
+    })))
+    expect(exportedMetadata).not.toContain(proposalRun.prompt)
+    expect(exportedMetadata).not.toContain(job.generationRunId)
+    expect(exportedMetadata).not.toContain(job.workspaceId)
+    expect(exportedMetadata).not.toContain(job.projectId)
+    expect(exportedMetadata).not.toContain(job.userId)
   })
 
   it('preserves proposal completion failure semantics', async () => {

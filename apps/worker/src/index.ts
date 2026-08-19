@@ -79,8 +79,19 @@ import {
   compileStaticSite,
   type LiveLeadFormOptions,
 } from '@zenui/html-compiler'
+import {
+  imageGenerationUsageSchema,
+  type ImageGenerationUsage,
+} from '@zenui/usage-core'
 import { z } from 'zod'
 
+import type {
+  AiObservability,
+  AiProviderOperation,
+  AiRunInput,
+  AiRunTrace,
+  AiSafeErrorCode,
+} from './ai-observability.js'
 import type {
   AuthContext,
   DeploymentRecord,
@@ -126,6 +137,29 @@ export interface GeminiProviderDependencies {
   generateContent(input: GeminiGenerateParameters, signal?: AbortSignal): Promise<GeminiResponseLike>
   generateMaxOutputTokens?: number
   editMaxOutputTokens?: number
+  observability?: AiObservability
+}
+
+async function observeProviderCall<T>(
+  observability: AiObservability | undefined,
+  operation: AiProviderOperation,
+  model: string,
+  execute: () => Promise<T>,
+  usage: (response: T) => LlmUsage = () => ({
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  }),
+): Promise<T> {
+  if (!observability) return execute()
+  return observability.provider({
+    operation,
+    provider: 'google-gemini',
+    model,
+  }, async () => {
+    const response = await execute()
+    return { value: response, usage: usage(response) }
+  })
 }
 
 function safeProviderCode(error: unknown): GenerationErrorCode {
@@ -213,21 +247,32 @@ function geminiResponseSchema(input: unknown): unknown {
 }
 
 export function createGeminiProvider(dependencies: GeminiProviderDependencies): LLMProvider & DesignDirectionProvider {
-  const call = async (input: ProviderRequest, schema: unknown, maxOutputTokens: number): Promise<ProviderResponse> => {
+  const call = async (
+    operation: 'landing_blueprint' | 'edit_operations',
+    input: ProviderRequest,
+    schema: unknown,
+    maxOutputTokens: number,
+  ): Promise<ProviderResponse> => {
     let response: GeminiResponseLike
     const responseJsonSchema = geminiResponseSchema(schema)
     try {
-      response = await dependencies.generateContent({
-        model: dependencies.model,
-        contents: geminiContents(input),
-        config: {
-          systemInstruction: systemPolicy,
-          temperature: 0.2,
-          maxOutputTokens,
-          responseMimeType: 'application/json',
-          responseJsonSchema,
-        },
-      }, input.signal)
+      response = await observeProviderCall(
+        dependencies.observability,
+        operation,
+        dependencies.model,
+        () => dependencies.generateContent({
+          model: dependencies.model,
+          contents: geminiContents(input),
+          config: {
+            systemInstruction: systemPolicy,
+            temperature: 0.2,
+            maxOutputTokens,
+            responseMimeType: 'application/json',
+            responseJsonSchema,
+          },
+        }, input.signal),
+        toUsage,
+      )
     } catch (error) {
       throw providerFailure(error)
     }
@@ -242,12 +287,14 @@ export function createGeminiProvider(dependencies: GeminiProviderDependencies): 
     name: 'google-gemini',
     model: dependencies.model,
     generateLandingPageBlueprint: input => call(
+      'landing_blueprint',
       input,
       landingPageProviderBlueprintJsonSchema,
       dependencies.generateMaxOutputTokens ?? 4096,
     ),
     async generateOperations(input) {
       const response = await call(
+        'edit_operations',
         input,
         buildAiOperationsResponseJsonSchema(input.context),
         dependencies.editMaxOutputTokens ?? 2048,
@@ -260,24 +307,30 @@ export function createGeminiProvider(dependencies: GeminiProviderDependencies): 
     async generateContentBlueprint(input: DesignDirectionProviderRequest) {
       let response: GeminiResponseLike
       try {
-        response = await dependencies.generateContent({
-          model: dependencies.model,
-          contents: JSON.stringify({
-            promptVersion: input.promptVersion,
-            brief: input.brief,
-            round: input.round,
-            excludedPresetIds: input.excludedPresetIds,
-            plannerCatalog: designDirectionPlannerCatalog,
-            outputContract: 'Return design-directions-v2 with one shared content blueprint and exactly three directions. Each direction chooses one presetId from plannerCatalog and contains no media fields. The shared content navigation contains 2 to 5 unique items; each item has display text plus a semantic target chosen only from logo-cloud, stats, features, testimonials, pricing, faq, or final-cta, and every target must appear in sectionOrder. Semantic targets are allowlisted section types, never fragment strings or node IDs. The shared content contains one shared Hero image intent and exactly three shared feature images using feature-1, feature-2, and feature-3. Every image intent contains only a concise search query and descriptive alt text; never return a URL, provider result ID, asset ID, credential, visual values, style, HTML, CSS, JavaScript, node, ID, mutation, revision, or publication instruction.',
-          }),
-          config: {
-            systemInstruction: systemPolicy,
-            temperature: 0.2,
-            maxOutputTokens: dependencies.generateMaxOutputTokens ?? 4096,
-            responseMimeType: 'application/json',
-            responseJsonSchema: geminiResponseSchema(designDirectionGenerationPlanJsonSchema),
-          },
-        }, input.signal)
+        response = await observeProviderCall(
+          dependencies.observability,
+          'design_direction_plan',
+          dependencies.model,
+          () => dependencies.generateContent({
+            model: dependencies.model,
+            contents: JSON.stringify({
+              promptVersion: input.promptVersion,
+              brief: input.brief,
+              round: input.round,
+              excludedPresetIds: input.excludedPresetIds,
+              plannerCatalog: designDirectionPlannerCatalog,
+              outputContract: 'Return design-directions-v2 with one shared content blueprint and exactly three directions. Each direction chooses one presetId from plannerCatalog and contains no media fields. The shared content navigation contains 2 to 5 unique items; each item has display text plus a semantic target chosen only from logo-cloud, stats, features, testimonials, pricing, faq, or final-cta, and every target must appear in sectionOrder. Semantic targets are allowlisted section types, never fragment strings or node IDs. The shared content contains one shared Hero image intent and exactly three shared feature images using feature-1, feature-2, and feature-3. Every image intent contains only a concise search query and descriptive alt text; never return a URL, provider result ID, asset ID, credential, visual values, style, HTML, CSS, JavaScript, node, ID, mutation, revision, or publication instruction.',
+            }),
+            config: {
+              systemInstruction: systemPolicy,
+              temperature: 0.2,
+              maxOutputTokens: dependencies.generateMaxOutputTokens ?? 4096,
+              responseMimeType: 'application/json',
+              responseJsonSchema: geminiResponseSchema(designDirectionGenerationPlanJsonSchema),
+            },
+          }, input.signal),
+          toUsage,
+        )
       } catch (error) {
         throw providerFailure(error)
       }
@@ -300,30 +353,38 @@ export function createGeminiMediaIntelligenceProvider(dependencies: {
   model: string
   generateContent(input: GeminiMediaGenerateParameters, signal?: AbortSignal): Promise<GeminiResponseLike>
   maxOutputTokens?: number
+  observability?: AiObservability
 }): AssistantPlannerProvider & LayoutRecipePlannerProvider & SectionCompositionPlannerProvider & StyleEditPlannerProvider & VisualBriefPlannerProvider & MediaCandidateJudge {
   const call = async (input: {
+    operation: Exclude<AiProviderOperation, 'landing_blueprint' | 'edit_operations' | 'design_direction_plan' | 'image_generation'>
     contents: unknown
     schema: unknown
     signal: AbortSignal
   }): Promise<{ output: unknown; usage: LlmUsage }> => {
     let response: GeminiResponseLike
     try {
-      response = await dependencies.generateContent({
-        model: dependencies.model,
-        contents: input.contents,
-        config: {
-          systemInstruction: [
-            systemPolicy,
-            'Plan only within the exact server-authorized target and scope in the context.',
-            'For media, match the requested representation and people policy; never silently substitute a stock photo.',
-            'Judge normalized candidate bytes only against the supplied visual brief.',
-          ].join(' '),
-          temperature: 0.1,
-          maxOutputTokens: dependencies.maxOutputTokens ?? 2048,
-          responseMimeType: 'application/json',
-          responseJsonSchema: geminiResponseSchema(input.schema),
-        },
-      }, input.signal)
+      response = await observeProviderCall(
+        dependencies.observability,
+        input.operation,
+        dependencies.model,
+        () => dependencies.generateContent({
+          model: dependencies.model,
+          contents: input.contents,
+          config: {
+            systemInstruction: [
+              systemPolicy,
+              'Plan only within the exact server-authorized target and scope in the context.',
+              'For media, match the requested representation and people policy; never silently substitute a stock photo.',
+              'Judge normalized candidate bytes only against the supplied visual brief.',
+            ].join(' '),
+            temperature: 0.1,
+            maxOutputTokens: dependencies.maxOutputTokens ?? 2048,
+            responseMimeType: 'application/json',
+            responseJsonSchema: geminiResponseSchema(input.schema),
+          },
+        }, input.signal),
+        toUsage,
+      )
     } catch (error) {
       throw providerFailure(error)
     }
@@ -336,6 +397,7 @@ export function createGeminiMediaIntelligenceProvider(dependencies: {
 
   return {
     plan: input => call({
+      operation: 'assistant_plan',
       contents: JSON.stringify({
         contractVersion: 'assistant-plan-v2',
         context: input.context,
@@ -345,6 +407,7 @@ export function createGeminiMediaIntelligenceProvider(dependencies: {
       signal: input.signal,
     }),
     planLayoutRecipe: input => call({
+      operation: 'layout_recipe',
       contents: JSON.stringify({
         contractVersion: 'layout-recipe-selection-v1',
         context: input.context,
@@ -354,6 +417,7 @@ export function createGeminiMediaIntelligenceProvider(dependencies: {
       signal: input.signal,
     }),
     planSectionComposition: input => call({
+      operation: 'section_composition',
       contents: JSON.stringify({
         contractVersion: 'section-composition-spec-v1',
         context: input.context,
@@ -363,6 +427,7 @@ export function createGeminiMediaIntelligenceProvider(dependencies: {
       signal: input.signal,
     }),
     planStyleEdit: input => call({
+      operation: 'style_edit',
       contents: JSON.stringify({
         contractVersion: 'style-edit-spec-v1',
         context: input.context,
@@ -372,6 +437,7 @@ export function createGeminiMediaIntelligenceProvider(dependencies: {
       signal: input.signal,
     }),
     planVisualBrief: input => call({
+      operation: 'visual_brief',
       contents: JSON.stringify({
         contractVersion: 'visual-brief-v1',
         context: input.context,
@@ -381,6 +447,7 @@ export function createGeminiMediaIntelligenceProvider(dependencies: {
       signal: input.signal,
     }),
     evaluateBatch: input => call({
+      operation: 'media_judge',
       contents: [
         JSON.stringify({
           contractVersion: 'media-candidate-evaluation-v1',
@@ -421,8 +488,10 @@ export interface ImageGenerationInput {
 export interface GeneratedImageResult {
   bytes: Uint8Array
   mimeType: 'image/png' | 'image/jpeg' | 'image/webp'
-  provider: 'google'
+  provider: 'google-gemini'
   model: string
+  imageSize: '1K'
+  usage: ImageGenerationUsage
 }
 
 interface GeminiGeneratedImageResponse {
@@ -433,6 +502,34 @@ interface GeminiGeneratedImageResponse {
       }>
     }
   }>
+  usageMetadata?: {
+    promptTokenCount?: number | undefined
+    candidatesTokenCount?: number | undefined
+    totalTokenCount?: number | undefined
+  } | undefined
+}
+
+function toImageUsage(
+  response: GeminiGeneratedImageResponse,
+  model: string,
+): ImageGenerationUsage {
+  const inputTokens = response.usageMetadata?.promptTokenCount ?? 0
+  const outputTokens = response.usageMetadata?.candidatesTokenCount ?? 0
+  const hasProviderMetadata = response.usageMetadata?.candidatesTokenCount
+    !== undefined
+  return imageGenerationUsageSchema.parse({
+    provider: 'google-gemini',
+    model,
+    imageSize: '1K',
+    imageCount: 1,
+    inputTokens,
+    outputTokens,
+    totalTokens: response.usageMetadata?.totalTokenCount
+      ?? inputTokens + outputTokens,
+    tokenSource: hasProviderMetadata
+      ? 'provider_metadata'
+      : 'documented_fallback',
+  })
 }
 
 function generatedImageCode(error: unknown): GeneratedImageErrorCode {
@@ -452,6 +549,7 @@ function generatedImageCode(error: unknown): GeneratedImageErrorCode {
 
 export function createGeminiImageGenerator(dependencies: {
   model: string
+  observability?: AiObservability
   generateContent(input: {
     model: string
     contents: string
@@ -468,17 +566,23 @@ export function createGeminiImageGenerator(dependencies: {
     async generate(input: ImageGenerationInput): Promise<GeneratedImageResult> {
       let response: GeminiGeneratedImageResponse
       try {
-        response = await dependencies.generateContent({
-          model: dependencies.model,
-          contents: input.prompt,
-          config: {
-            responseModalities: ['IMAGE'],
-            imageConfig: {
-              aspectRatio: input.aspectRatio,
-              imageSize: '1K',
+        response = await observeProviderCall(
+          dependencies.observability,
+          'image_generation',
+          dependencies.model,
+          () => dependencies.generateContent({
+            model: dependencies.model,
+            contents: input.prompt,
+            config: {
+              responseModalities: ['IMAGE'],
+              imageConfig: {
+                aspectRatio: input.aspectRatio,
+                imageSize: '1K',
+              },
             },
-          },
-        }, input.signal)
+          }, input.signal),
+          response => toImageUsage(response, dependencies.model),
+        )
       } catch (error) {
         const code = generatedImageCode(error)
         throw Object.assign(new Error(code), { code })
@@ -502,7 +606,14 @@ export function createGeminiImageGenerator(dependencies: {
       if (bytes.byteLength < 1 || bytes.byteLength > 20 * 1024 * 1024) {
         throw Object.assign(new Error('image_invalid'), { code: 'image_invalid' satisfies GeneratedImageErrorCode })
       }
-      return { bytes, mimeType, provider: 'google', model: dependencies.model }
+      return {
+        bytes,
+        mimeType,
+        provider: 'google-gemini',
+        model: dependencies.model,
+        imageSize: '1K',
+        usage: toImageUsage(response, dependencies.model),
+      }
     },
   }
 }
@@ -513,6 +624,23 @@ function addUsage(left: LlmUsage, right: LlmUsage): LlmUsage {
     outputTokens: left.outputTokens + right.outputTokens,
     totalTokens: left.totalTokens + right.totalTokens,
   }
+}
+
+export interface MediaUsageSummary {
+  generated: ImageGenerationUsage[]
+  stockCount: number
+}
+
+function emptyMediaUsage(): MediaUsageSummary {
+  return { generated: [], stockCount: 0 }
+}
+
+function collectMediaUsage(
+  summary: MediaUsageSummary,
+  usage: ImageGenerationUsage,
+): void {
+  if (summary.generated.length >= 100) return
+  summary.generated.push(imageGenerationUsageSchema.parse(usage))
 }
 
 function candidatePrompt(prompt: string, candidateIndex: number): string {
@@ -557,7 +685,54 @@ interface AssistantRefinementContext {
 }
 
 function observeAssistant(observer: AssistantObserver | undefined, observation: AssistantObservation): void {
-  observer?.(observation)
+  try {
+    observer?.(observation)
+  } catch {
+    // Observability is fail-open and never changes AI business outcomes.
+  }
+}
+
+function aiSafeErrorCode(code: string): AiSafeErrorCode {
+  return [
+    'invalid_model_output',
+    'provider_auth',
+    'provider_bad_request',
+    'provider_error',
+    'provider_rate_limit',
+    'provider_timeout',
+    'provider_transient',
+    'scope_violation',
+    'stale_document_version',
+    'token_budget_exceeded',
+  ].includes(code)
+    ? code as AiSafeErrorCode
+    : 'worker_error'
+}
+
+async function observeAiRun<T>(
+  observability: AiObservability | undefined,
+  input: AiRunInput,
+  execute: (trace: AiRunTrace) => Promise<T>,
+): Promise<T> {
+  if (observability) return observability.run(input, execute)
+  return execute({
+    event: () => undefined,
+    finish: () => undefined,
+  })
+}
+
+function composeAssistantObserver(
+  observer: AssistantObserver | undefined,
+  runTrace: AiRunTrace,
+): AssistantObserver {
+  return observation => {
+    observeAssistant(observer, observation)
+    try {
+      runTrace.event(observation)
+    } catch {
+      // Observability is fail-open and never changes AI business outcomes.
+    }
+  }
 }
 
 export function createLayoutProposalV2Resolver(dependencies: {
@@ -755,6 +930,7 @@ export function createMediaProposalV2Resolver(dependencies: {
     targetNodeId: string
     prompt: string
     document: DesignDocument
+    collectImageUsage?: (usage: ImageGenerationUsage) => void
   }): Promise<(DesignDirectionOwnedImage & { usage: LlmUsage; mediaReview: MediaProposalReview }) | null> {
     let planned: Awaited<ReturnType<typeof planVisualBrief>>
     try {
@@ -785,6 +961,11 @@ export function createMediaProposalV2Resolver(dependencies: {
           signal: new AbortController().signal,
         })
         observeAssistant(dependencies.observe, { stage: 'image_generation', outcome: 'completed', count: 1 })
+        try {
+          input.collectImageUsage?.(image.usage)
+        } catch {
+          // Accounting collection is fail-open and never changes the media outcome.
+        }
         const candidate = await dependencies.importCandidate({
           context: input.context,
           projectId: input.projectId,
@@ -886,19 +1067,24 @@ export function createMediaProposalV2Resolver(dependencies: {
   }
 }
 
+export type ResolvedOwnedMedia = DesignDirectionOwnedImage & {
+  mediaSource: 'generated' | 'pexels'
+}
+
 export function createHybridMediaResolver(dependencies: {
   generateOwned(intent: DesignDirectionImageIntent): Promise<DesignDirectionOwnedImage | null>
   resolvePexels(intent: DesignDirectionImageIntent): Promise<DesignDirectionOwnedImage | null>
 }) {
-  return async (intent: DesignDirectionImageIntent): Promise<DesignDirectionOwnedImage | null> => {
+  return async (intent: DesignDirectionImageIntent): Promise<ResolvedOwnedMedia | null> => {
     try {
       const generated = await dependencies.generateOwned(intent)
-      if (generated) return generated
+      if (generated) return { ...generated, mediaSource: 'generated' }
     } catch {
       // Generated media is optional; the fixed-provider resolver is the bounded fallback.
     }
     try {
-      return await dependencies.resolvePexels(intent)
+      const pexels = await dependencies.resolvePexels(intent)
+      return pexels ? { ...pexels, mediaSource: 'pexels' } : null
     } catch {
       return null
     }
@@ -1407,7 +1593,13 @@ export interface GenerationWorkerRepository {
   complete(
     context: AuthContext,
     runId: string,
-    input: { document: unknown; summary: string; usage: LlmUsage; repairCount: number },
+    input: {
+      document: unknown
+      summary: string
+      usage: LlmUsage
+      repairCount: number
+      mediaUsage?: MediaUsageSummary
+    },
   ): Promise<
     | { accepted: true; run: GenerationRunRecord }
     | { accepted: false; code: 'not_found' | 'stale_document_version' | 'invalid_design_document' }
@@ -1422,6 +1614,7 @@ export interface GenerationWorkerRepository {
       usage: LlmUsage
       repairCount: number
       mediaReview?: MediaProposalReview
+      mediaUsage?: MediaUsageSummary
     },
   ): Promise<
     | { accepted: true; run: GenerationRunRecord }
@@ -1430,7 +1623,12 @@ export interface GenerationWorkerRepository {
   fail(
     context: AuthContext,
     runId: string,
-    input: { errorCode: string; usage: LlmUsage; repairCount: number },
+    input: {
+      errorCode: string
+      usage: LlmUsage
+      repairCount: number
+      mediaUsage?: MediaUsageSummary
+    },
   ): Promise<GenerationRunRecord | null>
 }
 
@@ -1452,7 +1650,12 @@ export interface DesignDirectionWorkerRepository {
   complete(
     context: AuthContext,
     runId: string,
-    input: { blueprint: unknown; directions: unknown; usage: LlmUsage },
+    input: {
+      blueprint: unknown
+      directions: unknown
+      usage: LlmUsage
+      mediaUsage?: MediaUsageSummary
+    },
   ): Promise<
     | { accepted: true; run: DesignDirectionRunRecord }
     | { accepted: false; code: 'not_found' | 'invalid_output' | 'stale_document_version' }
@@ -1460,25 +1663,36 @@ export interface DesignDirectionWorkerRepository {
   fail(
     context: AuthContext,
     runId: string,
-    input: { errorCode: string; usage: LlmUsage },
+    input: {
+      errorCode: string
+      usage: LlmUsage
+      mediaUsage?: MediaUsageSummary
+    },
   ): Promise<DesignDirectionRunRecord | null>
 }
 
 export function createDesignDirectionProcessor(dependencies: {
   provider: DesignDirectionProvider
   repository: DesignDirectionWorkerRepository
+  observability?: AiObservability
   resolveHeroImage?: (input: {
     context: AuthContext
     projectId: string
     runId: string
     intent: DesignDirectionImageIntent
-  }) => Promise<DesignDirectionOwnedImage | null>
+    collectImageUsage?: (usage: ImageGenerationUsage) => void
+  }) => Promise<(DesignDirectionOwnedImage & {
+    mediaSource?: 'generated' | 'pexels'
+  }) | null>
   resolveMedia?: (input: {
     context: AuthContext
     projectId: string
     runId: string
     intent: DesignDirectionImageIntent
-  }) => Promise<DesignDirectionOwnedImage | null>
+    collectImageUsage?: (usage: ImageGenerationUsage) => void
+  }) => Promise<(DesignDirectionOwnedImage & {
+    mediaSource?: 'generated' | 'pexels'
+  }) | null>
   timeoutMs?: number
   maxMediaPerRun?: number
   imagePolicy?: RemoteImagePolicy
@@ -1495,55 +1709,125 @@ export function createDesignDirectionProcessor(dependencies: {
       promptVersion: 'directions-v2',
     })
     if (!claimed) throw new Error('design_direction_run_not_claimed')
-    const result = await runDesignDirectionGeneration({
-      provider: dependencies.provider,
-      brief: run.brief,
-      current: run.document,
+    return observeAiRun(dependencies.observability, {
+      operation: 'design_directions',
+      runId: run.id,
+      provider: dependencies.provider.name,
+      model: dependencies.provider.model,
+      promptVersion: 'directions-v2',
       round: run.round,
-      excludedPresetIds: run.previousDirectionIds,
-      ...(dependencies.maxMediaPerRun !== undefined ? { maxMediaPerRun: dependencies.maxMediaPerRun } : {}),
-      ...(dependencies.resolveMedia ? {
-        resolveMedia: intent => dependencies.resolveMedia!({
-          context,
-          projectId: run.projectId,
-          runId: run.id,
-          intent,
-        }),
-      } : dependencies.resolveHeroImage ? {
-        resolveHeroImage: intent => dependencies.resolveHeroImage!({
-          context,
-          projectId: run.projectId,
-          runId: run.id,
-          intent,
-        }),
-      } : {}),
-      ...(dependencies.timeoutMs ? { timeoutMs: dependencies.timeoutMs } : {}),
-      ...(dependencies.imagePolicy ? { imagePolicy: dependencies.imagePolicy } : {}),
-    })
-    if (!result.accepted) {
-      return await dependencies.repository.fail(context, run.id, {
-        errorCode: result.code satisfies DesignDirectionRunErrorCode,
+    }, async runTrace => {
+      let mediaCount = 0
+      const mediaUsage = emptyMediaUsage()
+      const collectImageUsage = (usage: ImageGenerationUsage) => {
+        collectMediaUsage(mediaUsage, usage)
+      }
+      const result = await runDesignDirectionGeneration({
+        provider: dependencies.provider,
+        brief: run.brief,
+        current: run.document,
+        round: run.round,
+        excludedPresetIds: run.previousDirectionIds,
+        ...(dependencies.maxMediaPerRun !== undefined ? { maxMediaPerRun: dependencies.maxMediaPerRun } : {}),
+        ...(dependencies.resolveMedia ? {
+          resolveMedia: async intent => {
+            const image = await dependencies.resolveMedia!({
+              context,
+              projectId: run.projectId,
+              runId: run.id,
+              intent,
+              collectImageUsage,
+            })
+            if (image) {
+              mediaCount += 1
+              if (image.mediaSource === 'pexels') {
+                mediaUsage.stockCount += 1
+              }
+            }
+            return image
+              ? {
+                  assetId: image.assetId,
+                  alt: image.alt,
+                  decorative: image.decorative,
+                }
+              : null
+          },
+        } : dependencies.resolveHeroImage ? {
+          resolveHeroImage: async intent => {
+            const image = await dependencies.resolveHeroImage!({
+              context,
+              projectId: run.projectId,
+              runId: run.id,
+              intent,
+              collectImageUsage,
+            })
+            if (image) {
+              mediaCount += 1
+              if (image.mediaSource === 'pexels') {
+                mediaUsage.stockCount += 1
+              }
+            }
+            return image
+              ? {
+                  assetId: image.assetId,
+                  alt: image.alt,
+                  decorative: image.decorative,
+                }
+              : null
+          },
+        } : {}),
+        ...(dependencies.timeoutMs ? { timeoutMs: dependencies.timeoutMs } : {}),
+        ...(dependencies.imagePolicy ? { imagePolicy: dependencies.imagePolicy } : {}),
+      })
+      if (!result.accepted) {
+        runTrace.finish({
+          outcome: 'rejected',
+          errorCode: aiSafeErrorCode(result.code),
+          usage: result.usage,
+          mediaCount,
+        })
+        return await dependencies.repository.fail(context, run.id, {
+          errorCode: result.code satisfies DesignDirectionRunErrorCode,
+          usage: result.usage,
+          mediaUsage,
+        }) ?? claimed
+      }
+      const completed = await dependencies.repository.complete(context, run.id, {
+        blueprint: result.blueprint,
+        directions: result.directions,
         usage: result.usage,
-      }) ?? claimed
-    }
-    const completed = await dependencies.repository.complete(context, run.id, {
-      blueprint: result.blueprint,
-      directions: result.directions,
-      usage: result.usage,
-    })
-    if (!completed.accepted) {
-      return await dependencies.repository.fail(context, run.id, {
-        errorCode: completed.code === 'stale_document_version' ? completed.code : 'invalid_model_output',
+        mediaUsage,
+      })
+      if (!completed.accepted) {
+        const errorCode = completed.code === 'stale_document_version'
+          ? completed.code
+          : 'invalid_model_output'
+        runTrace.finish({
+          outcome: 'rejected',
+          errorCode: aiSafeErrorCode(errorCode),
+          usage: result.usage,
+          mediaCount,
+        })
+        return await dependencies.repository.fail(context, run.id, {
+          errorCode,
+          usage: result.usage,
+          mediaUsage,
+        }) ?? claimed
+      }
+      runTrace.finish({
+        outcome: 'accepted',
         usage: result.usage,
-      }) ?? claimed
-    }
-    return completed.run
+        mediaCount,
+      })
+      return completed.run
+    })
   }
 }
 
 export function createGenerationProcessor(dependencies: {
   provider: LLMProvider
   repository: GenerationWorkerRepository
+  observability?: AiObservability
   resolveProposalMedia?: (input: {
     context: AuthContext
     projectId: string
@@ -1552,7 +1836,10 @@ export function createGenerationProcessor(dependencies: {
     prompt: string
     document: DesignDocument
     refinement?: AssistantRefinementContext
-  }) => Promise<DesignDirectionOwnedImage | null>
+    collectImageUsage?: (usage: ImageGenerationUsage) => void
+  }) => Promise<(DesignDirectionOwnedImage & {
+    mediaSource?: 'generated' | 'pexels'
+  }) | null>
   resolveProposalMediaV2?: (input: {
     context: AuthContext
     projectId: string
@@ -1561,7 +1848,12 @@ export function createGenerationProcessor(dependencies: {
     prompt: string
     document: DesignDocument
     refinement?: AssistantRefinementContext
-  }) => Promise<(DesignDirectionOwnedImage & { usage: LlmUsage; mediaReview: MediaProposalReview }) | null>
+    collectImageUsage?: (usage: ImageGenerationUsage) => void
+  }) => Promise<(DesignDirectionOwnedImage & {
+    usage: LlmUsage
+    mediaReview: MediaProposalReview
+    mediaSource?: 'generated' | 'pexels'
+  }) | null>
   resolveStyleProposalV2?: (input: {
     context: AuthContext
     projectId: string
@@ -1642,11 +1934,24 @@ export function createGenerationProcessor(dependencies: {
               ? 'composition' as const
               : 'copy' as const
       : null
-    if (assistantLane) {
-      observeAssistant(dependencies.observe, {
-        lane: assistantLane, stage: 'proposal', outcome: 'started', count: 1,
-      })
-    }
+
+    return observeAiRun(dependencies.observability, {
+      operation: run.delivery === 'proposal' ? 'proposal' : 'generation',
+      runId: run.id,
+      provider: dependencies.provider.name,
+      model: dependencies.provider.model,
+      promptVersion: AI_PROMPT_VERSION,
+      mode: run.mode,
+      delivery: run.delivery,
+      ...(assistantLane ? { lane: assistantLane } : {}),
+    }, async runTrace => {
+      const observe = composeAssistantObserver(dependencies.observe, runTrace)
+      const mediaUsage = emptyMediaUsage()
+      if (assistantLane) {
+        observeAssistant(observe, {
+          lane: assistantLane, stage: 'proposal', outcome: 'started', count: 1,
+        })
+      }
     if (run.delivery === 'proposal' && run.selectedNodeId && dependencies.runAssistantShadow) {
       try {
         await dependencies.runAssistantShadow({
@@ -1859,7 +2164,14 @@ export function createGenerationProcessor(dependencies: {
             prompt: run.prompt,
             document: run.document,
             ...(refinement ? { refinement } : {}),
+            collectImageUsage: usage => collectMediaUsage(
+              mediaUsage,
+              usage,
+            ),
           })
+          if (owned?.mediaSource === 'pexels') {
+            mediaUsage.stockCount += 1
+          }
           const mediaV2 = owned && dependencies.assistantMediaV2Enabled
             ? owned as DesignDirectionOwnedImage & { usage: LlmUsage; mediaReview: MediaProposalReview }
             : null
@@ -1923,25 +2235,32 @@ export function createGenerationProcessor(dependencies: {
           onRepairAttempt: attempt => dependencies.repository.markRepairing(context, run.id, attempt).then(() => undefined),
         })
     if (assistantLane && result.usage.totalTokens > 0) {
-      observeAssistant(dependencies.observe, {
+      observeAssistant(observe, {
         lane: assistantLane, stage: 'text_tokens', outcome: 'completed', count: result.usage.totalTokens,
       })
     }
     if (assistantLane && result.repairAttempts > 0) {
-      observeAssistant(dependencies.observe, {
+      observeAssistant(observe, {
         lane: assistantLane, stage: 'repair', outcome: 'completed', count: result.repairAttempts,
       })
     }
     if (!result.accepted) {
       if (assistantLane) {
-        observeAssistant(dependencies.observe, {
+        observeAssistant(observe, {
           lane: assistantLane, stage: 'proposal', outcome: 'rejected', count: 1,
         })
       }
+      runTrace.finish({
+        outcome: 'rejected',
+        errorCode: aiSafeErrorCode(result.code),
+        usage: result.usage,
+        repairCount: result.repairAttempts,
+      })
       return await dependencies.repository.fail(context, run.id, {
         errorCode: result.code,
         usage: result.usage,
         repairCount: result.repairAttempts,
+        mediaUsage,
       }) ?? claimed
     }
     const completed = run.delivery === 'proposal' && dependencies.repository.completeProposal
@@ -1951,6 +2270,7 @@ export function createGenerationProcessor(dependencies: {
           summary: result.summary,
           usage: result.usage,
           repairCount: result.repairAttempts,
+          mediaUsage,
           ...('mediaReview' in result && result.mediaReview
             ? { mediaReview: result.mediaReview as MediaProposalReview }
             : {}),
@@ -1960,6 +2280,7 @@ export function createGenerationProcessor(dependencies: {
           summary: result.summary,
           usage: result.usage,
           repairCount: result.repairAttempts,
+          mediaUsage,
         })
     if (!completed.accepted) {
       const errorCode: GenerationErrorCode = completed.code === 'stale_document_version'
@@ -1968,21 +2289,34 @@ export function createGenerationProcessor(dependencies: {
           ? completed.code
           : 'invalid_model_output'
       if (assistantLane) {
-        observeAssistant(dependencies.observe, {
+        observeAssistant(observe, {
           lane: assistantLane, stage: 'proposal', outcome: 'rejected', count: 1,
         })
       }
+      runTrace.finish({
+        outcome: 'rejected',
+        errorCode: aiSafeErrorCode(errorCode),
+        usage: result.usage,
+        repairCount: result.repairAttempts,
+      })
       return await dependencies.repository.fail(context, run.id, {
         errorCode,
         usage: result.usage,
         repairCount: result.repairAttempts,
+        mediaUsage,
       }) ?? claimed
     }
     if (assistantLane) {
-      observeAssistant(dependencies.observe, {
+      observeAssistant(observe, {
         lane: assistantLane, stage: 'proposal', outcome: 'accepted', count: 1,
       })
     }
+    runTrace.finish({
+      outcome: 'accepted',
+      usage: result.usage,
+      repairCount: result.repairAttempts,
+    })
     return completed.run
+    })
   }
 }

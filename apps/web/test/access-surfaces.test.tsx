@@ -30,6 +30,12 @@ describe('public access surfaces', () => {
     render(<HomePage />)
 
     expect(screen.getByRole('heading', { name: /Từ ý tưởng đến website/i })).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Trang chủ ZenUI' }))
+      .toHaveAttribute('href', '/')
+    expect(screen.getByRole('link', { name: 'Trang chủ ZenUI' }))
+      .toHaveClass('zenui-brand-gradient')
+    expect(screen.getByText('ZenUI', { selector: '.footer-brand strong' }))
+      .toHaveClass('zenui-brand-gradient')
     expect(screen.getByRole('link', { name: 'Đăng nhập' })).toHaveAttribute('href', '/login')
     expect(screen.getByRole('link', { name: 'Mở bảng điều khiển' })).toHaveAttribute('href', '/dashboard')
     expect(screen.getAllByRole('link', { name: 'Yêu cầu quyền Beta' })[0]).toHaveAttribute('href', '/beta')
@@ -54,6 +60,10 @@ describe('public access surfaces', () => {
     render(await LoginPage({ searchParams: Promise.resolve({ callbackUrl: '/dashboard' }) }))
 
     expect(screen.getByRole('heading', { name: 'Đăng nhập ZenUI' })).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Về trang chủ ZenUI' }))
+      .toHaveClass('zenui-brand-gradient')
+    expect(screen.getByRole('link', { name: 'Về trang chủ ZenUI' }))
+      .toHaveAttribute('href', '/')
     expect(screen.getByRole('button', { name: 'Tiếp tục với GitHub' })).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Tiếp tục với tài khoản local' })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Yêu cầu quyền truy cập beta' })).toHaveAttribute('href', '/beta')

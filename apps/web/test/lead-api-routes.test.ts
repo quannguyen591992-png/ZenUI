@@ -10,6 +10,7 @@ const routeDependencies = vi.hoisted(() => ({
   keyring: { decrypt: vi.fn() },
   leads: {
     list: vi.fn(),
+    listWorkspace: vi.fn(),
     countNew: vi.fn(),
     findEncryptedById: vi.fn(),
     markContacted: vi.fn(),
@@ -26,6 +27,7 @@ import {
 } from '../app/api/v1/projects/[projectId]/leads/[leadId]/route'
 import { GET as getLeadCount } from '../app/api/v1/projects/[projectId]/leads/count/route'
 import { GET as getLeads } from '../app/api/v1/projects/[projectId]/leads/route'
+import { GET as getWorkspaceLeads } from '../app/api/v1/workspaces/[workspaceId]/leads/route'
 
 const projectId = '11111111-1111-4111-8111-111111111111'
 const workspaceId = '22222222-2222-4222-8222-222222222222'
@@ -51,6 +53,17 @@ beforeEach(() => {
   })
   routeDependencies.access.projectBelongsToWorkspace.mockResolvedValue(true)
   routeDependencies.leads.list.mockResolvedValue([summary])
+  routeDependencies.leads.listWorkspace.mockResolvedValue({
+    items: [{
+      ...summary,
+      projectId,
+      projectName: 'Landing page',
+    }],
+    page: 1,
+    pageSize: 25,
+    total: 1,
+    totalPages: 1,
+  })
   routeDependencies.leads.countNew.mockResolvedValue({ newCount: 1 })
   routeDependencies.leads.findEncryptedById.mockResolvedValue({
     summary,
@@ -90,6 +103,18 @@ beforeEach(() => {
 })
 
 describe('Customer Leads routes', () => {
+  it('wires the workspace Inbox route to the workspace handler', async () => {
+    const response = await getWorkspaceLeads(new Request(
+      `http://localhost:3000/api/v1/workspaces/${workspaceId}/leads`,
+    ), { params: Promise.resolve({ workspaceId }) })
+
+    expect(response.status).toBe(200)
+    expect(routeDependencies.leads.listWorkspace).toHaveBeenCalledWith(
+      { userId, workspaceId },
+      { page: 1, pageSize: 25 },
+    )
+  })
+
   it('wires project list and count routes to their handlers', async () => {
     const query = `?workspaceId=${workspaceId}`
     const context = { params: Promise.resolve({ projectId }) }

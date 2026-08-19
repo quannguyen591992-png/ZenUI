@@ -22,7 +22,7 @@ export default async function LoginPage({ searchParams }: {
       <section className="auth-card-pro glass-panel" aria-labelledby="login-heading">
         <div className="auth-card-content">
           <div className="auth-brand-wrapper">
-            <Link className="auth-brand-pro" href="/" aria-label="Về trang chủ ZenUI">
+            <Link className="auth-brand-pro zenui-brand-gradient" href="/" aria-label="Về trang chủ ZenUI">
               <span className="logo-icon"></span>
               ZenUI
             </Link>

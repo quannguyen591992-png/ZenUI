@@ -25,7 +25,7 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      command: 'pnpm --filter @zenui/web dev',
+      command: 'pnpm --filter @zenui/web exec next dev --webpack',
       env: {
         APP_ORIGIN: 'http://localhost:3000',
         PREVIEW_ORIGIN: 'http://127.0.0.1:3001',

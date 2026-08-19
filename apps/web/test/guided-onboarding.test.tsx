@@ -107,6 +107,8 @@ describe('production Guided Brief and Design Direction Gallery', () => {
     render(<GuidedOnboarding projectId={projectId} workspaceId={workspaceId} expectedVersion={1} assetOrigin="http://127.0.0.1:3002" api={api()} onAccepted={vi.fn()} />)
     const user = userEvent.setup()
     await screen.findByRole('heading', { name: 'Hãy cho chúng tôi biết website bạn muốn tạo' })
+    expect(screen.getByText('ZenUI', { selector: '.logo-badge' }))
+      .toHaveClass('zenui-brand-gradient')
 
     await user.type(screen.getByLabelText('Mô tả doanh nghiệp hoặc ý tưởng'), 'NovaFlow giúp nhóm sản phẩm nhỏ lên kế hoạch ra mắt. Mục tiêu là nhận lịch tư vấn. Hành động chính: Đặt lịch tư vấn.')
     await user.click(screen.getByRole('button', { name: 'Tạo tự động' }))
@@ -349,6 +351,8 @@ describe('production Guided Brief and Design Direction Gallery', () => {
     await user.click(screen.getByRole('button', { name: 'Tạo 3 hướng thiết kế' }))
 
     const cards = await screen.findAllByTestId('production-direction-card')
+    expect(screen.getByText('ZenUI', { selector: '.logo-badge' }))
+      .toHaveClass('zenui-brand-gradient')
     expect(cards).toHaveLength(3)
     expect(cards[0]!.querySelector('.design-document-renderer')).toHaveTextContent('Lập kế hoạch rõ ràng')
     expect(cards[1]!.querySelector('.design-document-renderer')).toHaveTextContent('Một kế hoạch đáng tin')

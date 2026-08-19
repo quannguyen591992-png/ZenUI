@@ -26,6 +26,7 @@
     "@zenui/export-core": "workspace:*",
     "@zenui/lead-core": "workspace:*",
     "@zenui/share-core": "workspace:*",
+    "@zenui/usage-core": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "pg": "^8.22.0",
     "zod": "^4.3.5"

@@ -10,9 +10,23 @@ import { Pool } from 'pg'
 import { E2E_IDENTITIES, isE2eRuntimeEnabled } from './e2e-runtime'
 
 let pool: Pool | undefined
-let e2eClient: PGlite | undefined
-let e2eDatabase: ReturnType<typeof drizzlePglite<typeof schema>> | undefined
-let e2eReady: Promise<void> | undefined
+
+type E2eDatabaseState = {
+  client?: PGlite
+  database?: ReturnType<
+    typeof drizzlePglite<typeof schema>
+  >
+  ready?: Promise<void>
+}
+
+const runtimeGlobal = globalThis as typeof globalThis & {
+  __zenuiE2eDatabase?: E2eDatabaseState
+}
+
+function getE2eDatabaseState(): E2eDatabaseState {
+  runtimeGlobal.__zenuiE2eDatabase ??= {}
+  return runtimeGlobal.__zenuiE2eDatabase
+}
 
 async function initializeE2eDatabase(client: PGlite): Promise<void> {
   const migrationDirectory = resolve(process.cwd(), '../../packages/database/migrations')
@@ -40,10 +54,16 @@ async function initializeE2eDatabase(client: PGlite): Promise<void> {
 
 export function getDatabase() {
   if (isE2eRuntimeEnabled()) {
-    e2eClient ??= new PGlite()
-    e2eDatabase ??= drizzlePglite(e2eClient, { schema })
-    e2eReady ??= initializeE2eDatabase(e2eClient)
-    return e2eDatabase
+    const state = getE2eDatabaseState()
+    state.client ??= new PGlite()
+    state.database ??= drizzlePglite(
+      state.client,
+      { schema },
+    )
+    state.ready ??= initializeE2eDatabase(
+      state.client,
+    )
+    return state.database
   }
   const databaseUrl = process.env.DATABASE_URL
   if (!databaseUrl) throw new Error('DATABASE_URL is required')
@@ -53,13 +73,15 @@ export function getDatabase() {
 
 export async function waitForDatabase(): Promise<void> {
   getDatabase()
-  if (e2eReady) await e2eReady
+  const ready = getE2eDatabaseState().ready
+  if (ready) await ready
 }
 
 export async function probeDatabase(): Promise<boolean> {
   await waitForDatabase()
-  if (e2eClient) {
-    await e2eClient.query('SELECT 1')
+  if (isE2eRuntimeEnabled()) {
+    await getE2eDatabaseState().client!
+      .query('SELECT 1')
     return true
   }
   await pool!.query('SELECT 1')
@@ -69,5 +91,5 @@ export async function probeDatabase(): Promise<boolean> {
 export async function resetE2eDatabase(): Promise<void> {
   if (!isE2eRuntimeEnabled()) throw new Error('e2e_runtime_disabled')
   await waitForDatabase()
-  await e2eClient!.exec('TRUNCATE usage_records, deployments, provider_connections, lead_submissions, lead_form_bindings, share_links, export_runs, revisions, generation_runs, brand_kits, assets, design_documents, projects RESTART IDENTITY CASCADE;')
+  await getE2eDatabaseState().client!.exec('TRUNCATE usage_records, deployments, provider_connections, lead_submissions, lead_form_bindings, share_links, export_runs, revisions, generation_runs, brand_kits, assets, design_documents, projects RESTART IDENTITY CASCADE;')
 }

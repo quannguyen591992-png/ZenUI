@@ -40,6 +40,17 @@ function summary(
 function dependencies(overrides: Record<string, unknown> = {}) {
   const leads = {
     list: vi.fn().mockResolvedValue([summary()]),
+    listWorkspace: vi.fn().mockResolvedValue({
+      items: [{
+        ...summary(),
+        projectId,
+        projectName: 'Landing page',
+      }],
+      page: 1,
+      pageSize: 25,
+      total: 1,
+      totalPages: 1,
+    }),
     countNew: vi.fn().mockResolvedValue({ newCount: 1 }),
     findEncryptedById: vi.fn().mockResolvedValue({
       summary: summary(),
@@ -251,6 +262,68 @@ describe('Customer Leads route dependencies', () => {
 })
 
 describe('Customer Leads API', () => {
+  it('lists a redacted workspace inbox with bounded filters and pagination', async () => {
+    const deps = dependencies()
+    const response = await createLeadHandlers(deps).GET_WORKSPACE(
+      new Request(
+        `http://localhost:3000/api/v1/workspaces/${workspaceId}/leads?projectId=${projectId}&status=new&page=1&pageSize=25`,
+      ),
+      { params: Promise.resolve({ workspaceId }) },
+    )
+
+    expect(response.status).toBe(200)
+    expect(deps.leads.listWorkspace).toHaveBeenCalledWith(
+      { userId, workspaceId },
+      { projectId, status: 'new', page: 1, pageSize: 25 },
+    )
+    const body = await response.json()
+    expect(body).toEqual({ data: {
+      items: [{
+        id: leadId,
+        projectId,
+        projectName: 'Landing page',
+        status: 'new',
+        version: 1,
+        formTitle: 'Nhận tư vấn',
+        receivedAt: receivedAt.toISOString(),
+        expiresAt: expiresAt.toISOString(),
+        contactedAt: null,
+      }],
+      page: 1,
+      pageSize: 25,
+      total: 1,
+      totalPages: 1,
+    } })
+    expect(body).not.toHaveProperty('data.items.0.ciphertext')
+  })
+
+  it('denies viewers and invalid workspace list queries before repository access', async () => {
+    const viewer = dependencies({
+      access: {
+        findMembership: () => Promise.resolve({
+          userId,
+          workspaceId,
+          role: 'viewer' as const,
+        }),
+        projectBelongsToWorkspace: () => Promise.resolve(true),
+      },
+    })
+    const denied = await createLeadHandlers(viewer).GET_WORKSPACE(
+      new Request(`http://localhost:3000/api/v1/workspaces/${workspaceId}/leads`),
+      { params: Promise.resolve({ workspaceId }) },
+    )
+    expect(denied.status).toBe(403)
+    expect(viewer.leads.listWorkspace).not.toHaveBeenCalled()
+
+    const deps = dependencies()
+    const invalid = await createLeadHandlers(deps).GET_WORKSPACE(
+      new Request(`http://localhost:3000/api/v1/workspaces/${workspaceId}/leads?pageSize=101`),
+      { params: Promise.resolve({ workspaceId }) },
+    )
+    expect(invalid.status).toBe(422)
+    expect(deps.leads.listWorkspace).not.toHaveBeenCalled()
+  })
+
   it('lists redacted summaries and returns a lightweight new count', async () => {
     const handlers = createLeadHandlers(dependencies())
     const listed = await handlers.GET_LIST(getRequest(), projectRoute)

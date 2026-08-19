@@ -4,8 +4,6 @@ import { parseDesignDocument, type DesignDocument } from '@zenui/design-schema'
 import Link from 'next/link'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 
-import { roleLabel } from '../lib/ui-copy'
-
 import { DesignDocumentRenderer } from './components/design-document-renderer'
 
 type Role = 'owner' | 'editor' | 'viewer'
@@ -26,11 +24,6 @@ interface ProjectSummary {
 
 interface SuccessEnvelope<T> { data: T }
 interface ErrorEnvelope { error: { code: string; message: string } }
-
-interface DashboardProps {
-  localAuth?: boolean
-  signOutAction?: () => Promise<void>
-}
 
 type LoadState = 'loading' | 'ready' | 'error'
 
@@ -92,7 +85,7 @@ function ProjectThumbnail({ projectId, workspaceId }: { projectId: string; works
   )
 }
 
-export function Dashboard({ localAuth = false, signOutAction }: DashboardProps = {}) {
+export function Dashboard() {
   const [session, setSession] = useState<SessionContext | null>(null)
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [loadState, setLoadState] = useState<LoadState>('loading')
@@ -193,10 +186,16 @@ export function Dashboard({ localAuth = false, signOutAction }: DashboardProps =
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  if (loadState === 'loading') return <main className="dashboard-state dashboard-pro-layout" role="status"><div className="loader">Đang tải dự án...</div></main>
+  if (loadState === 'loading') {
+    return (
+      <main className="dashboard-state" role="status">
+        <div className="loader">Đang tải dự án...</div>
+      </main>
+    )
+  }
   if (loadState === 'error') {
     return (
-      <main className="dashboard-state dashboard-pro-layout">
+      <main className="dashboard-state">
         <div className="error-card">
           <p role="alert">{error}</p>
           {error === 'Vui lòng đăng nhập để tiếp tục.' ? (
@@ -220,57 +219,7 @@ export function Dashboard({ localAuth = false, signOutAction }: DashboardProps =
 
 
   return (
-    <div className="dashboard-pro-layout">
-      {/* Sidebar Navigation */}
-      <aside className="dashboard-sidebar">
-        <div className="sidebar-brand">
-          <Link href="/">ZenUI</Link>
-        </div>
-        <nav className="sidebar-nav">
-          <a href="#" className="active">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
-            Dự án
-          </a>
-          <a href="#" className="disabled">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
-            Mẫu (Templates) <span className="badge-soon">Soon</span>
-          </a>
-          <a href="#" className="disabled">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
-            Tài nguyên <span className="badge-soon">Soon</span>
-          </a>
-          <a href="#" className="disabled">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-            Nhóm <span className="badge-soon">Soon</span>
-          </a>
-          <a href="#" className="disabled">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-            Cài đặt <span className="badge-soon">Soon</span>
-          </a>
-        </nav>
-
-        <div className="sidebar-footer">
-          <div className="account-info">
-            <div className="avatar">{session?.role.charAt(0).toUpperCase()}</div>
-            <div className="details">
-              <span className="role">{session ? roleLabel(session.role) : 'Guest'}</span>
-              <span className="workspace">Không gian làm việc</span>
-            </div>
-          </div>
-          {localAuth ? (
-            <form action="/api/local/session/logout" method="post">
-              <button type="submit" className="btn-logout">Đăng xuất</button>
-            </form>
-          ) : signOutAction ? (
-            <form action={signOutAction}>
-              <button type="submit" className="btn-logout">Đăng xuất</button>
-            </form>
-          ) : null}
-        </div>
-      </aside>
-
-      {/* Main Content */}
-      <main className="dashboard-main">
+    <main className="dashboard-main">
         {/* Top Header */}
         <header className="main-header">
           <div className="search-bar">
@@ -400,7 +349,6 @@ export function Dashboard({ localAuth = false, signOutAction }: DashboardProps =
             </>
           )}
         </div>
-      </main>
-    </div>
+    </main>
   )
 }

@@ -381,6 +381,77 @@ describe('worker runtime configuration', () => {
     })
   })
 
+  it('keeps LangSmith tracing disabled without requiring third-party credentials', () => {
+    process.env = {
+      ...previous,
+      ...environment,
+      LANGSMITH_API_KEY: '',
+      LANGSMITH_PROJECT: '',
+      LANGSMITH_CORRELATION_SECRET: '',
+    }
+
+    expect(loadWorkerRuntimeConfig().aiObservability).toEqual({ enabled: false })
+  })
+
+  it('loads strict bounded LangSmith tracing configuration when explicitly enabled', () => {
+    process.env = {
+      ...previous,
+      ...environment,
+      LANGSMITH_TRACING_ENABLED: 'true',
+      LANGSMITH_API_KEY: 'lsv2_test_private_key',
+      LANGSMITH_PROJECT: 'zenui-private-beta',
+      LANGSMITH_CORRELATION_SECRET: 'correlation-secret-at-least-32-bytes-long',
+      LANGSMITH_OTLP_ENDPOINT: 'https://telemetry.example.test/otel/v1/traces',
+      LANGSMITH_TRACE_SAMPLE_RATIO: '0.25',
+      LANGSMITH_EXPORT_TIMEOUT_MS: '2500',
+      LANGSMITH_BATCH_DELAY_MS: '500',
+      LANGSMITH_MAX_QUEUE_SIZE: '256',
+      LANGSMITH_SHUTDOWN_TIMEOUT_MS: '1500',
+    }
+
+    expect(loadWorkerRuntimeConfig().aiObservability).toEqual({
+      enabled: true,
+      apiKey: 'lsv2_test_private_key',
+      project: 'zenui-private-beta',
+      correlationSecret: 'correlation-secret-at-least-32-bytes-long',
+      endpoint: 'https://telemetry.example.test/otel/v1/traces',
+      sampleRatio: 0.25,
+      exportTimeoutMs: 2500,
+      batchDelayMs: 500,
+      maxQueueSize: 256,
+      shutdownTimeoutMs: 1500,
+    })
+  })
+
+  it('rejects unsafe or incomplete LangSmith configuration', () => {
+    const enabled = {
+      ...previous,
+      ...environment,
+      LANGSMITH_TRACING_ENABLED: 'true',
+      LANGSMITH_API_KEY: 'lsv2_test_private_key',
+      LANGSMITH_PROJECT: 'zenui-private-beta',
+      LANGSMITH_CORRELATION_SECRET: 'correlation-secret-at-least-32-bytes-long',
+    }
+
+    for (const [override, message] of [
+      [{ LANGSMITH_API_KEY: '' }, 'LANGSMITH_API_KEY is required'],
+      [{ LANGSMITH_API_KEY: 'replace-with-langsmith-key' }, 'LANGSMITH_API_KEY is not configured'],
+      [{ LANGSMITH_PROJECT: '' }, 'LANGSMITH_PROJECT is required'],
+      [{ LANGSMITH_CORRELATION_SECRET: 'too-short' }, 'LANGSMITH_CORRELATION_SECRET is invalid'],
+      [{ LANGSMITH_OTLP_ENDPOINT: 'http://api.smith.langchain.com/otel/v1/traces' }, 'LANGSMITH_OTLP_ENDPOINT is invalid'],
+      [{ LANGSMITH_OTLP_ENDPOINT: 'https://user:pass@example.test/otel/v1/traces' }, 'LANGSMITH_OTLP_ENDPOINT is invalid'],
+      [{ LANGSMITH_OTLP_ENDPOINT: 'https://example.test/otel/v1/traces?token=secret' }, 'LANGSMITH_OTLP_ENDPOINT is invalid'],
+      [{ LANGSMITH_TRACE_SAMPLE_RATIO: '1.1' }, 'LANGSMITH_TRACE_SAMPLE_RATIO is invalid'],
+      [{ LANGSMITH_EXPORT_TIMEOUT_MS: '99' }, 'LANGSMITH_EXPORT_TIMEOUT_MS is invalid'],
+      [{ LANGSMITH_BATCH_DELAY_MS: '10001' }, 'LANGSMITH_BATCH_DELAY_MS is invalid'],
+      [{ LANGSMITH_MAX_QUEUE_SIZE: '0' }, 'LANGSMITH_MAX_QUEUE_SIZE is invalid'],
+      [{ LANGSMITH_SHUTDOWN_TIMEOUT_MS: '99' }, 'LANGSMITH_SHUTDOWN_TIMEOUT_MS is invalid'],
+    ] as const) {
+      process.env = { ...enabled, ...override }
+      expect(() => loadWorkerRuntimeConfig()).toThrow(message)
+    }
+  })
+
   it('emits bounded failure events without durable resource identifiers', () => {
     const event = createSafeWorkerFailureEvent('generation')
     expect(event).toEqual({

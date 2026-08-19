@@ -35,7 +35,7 @@ export default function HomePage() {
       </div>
 
       <header className="landing-header">
-        <Link className="landing-brand" href="/" aria-label="Trang chủ ZenUI">ZenUI</Link>
+        <Link className="landing-brand zenui-brand-gradient" href="/" aria-label="Trang chủ ZenUI">ZenUI</Link>
         <nav aria-label="Điều hướng chính" className="landing-nav-links">
           <a href="#quy-trinh">Quy trình</a>
           <a href="#tinh-nang">Tính năng</a>
@@ -165,7 +165,7 @@ export default function HomePage() {
       <footer className="landing-footer">
         <div className="footer-content">
           <div className="footer-brand">
-            <strong className="text-gradient">ZenUI</strong>
+            <strong className="zenui-brand-gradient">ZenUI</strong>
             <p>Nền tảng đồng thiết kế web ứng dụng AI tạo sinh.</p>
           </div>
           <nav aria-label="Điều hướng cuối trang" className="footer-nav">

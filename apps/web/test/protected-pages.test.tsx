@@ -1,34 +1,68 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import DashboardLayout from '../app/dashboard/layout'
 import DashboardPage from '../app/dashboard/page'
 import ProjectPage, { isAssistantOptInEnabled } from '../app/projects/[projectId]/page'
 
-const { redirectMock, getRuntimeSessionMock, projectEditorMock } = vi.hoisted(() => ({
+const {
+  databaseLimitMock,
+  getRuntimeSessionMock,
+  projectEditorMock,
+  redirectMock,
+} = vi.hoisted(() => ({
+  databaseLimitMock: vi.fn(),
   redirectMock: vi.fn((path: string): never => { throw new Error(`REDIRECT:${path}`) }),
   getRuntimeSessionMock: vi.fn(),
   projectEditorMock: vi.fn(() => <main><h1>Trình chỉnh sửa được bảo vệ</h1></main>),
 }))
 
-vi.mock('next/navigation', () => ({ redirect: redirectMock }))
+vi.mock('next/navigation', () => ({
+  redirect: redirectMock,
+  usePathname: () => '/dashboard',
+}))
 vi.mock('../lib/server/runtime-session', () => ({ getRuntimeSession: getRuntimeSessionMock }))
 vi.mock('../lib/server/configured-auth', () => ({
   createConfiguredAuth: vi.fn(() => ({ signOut: vi.fn() })),
 }))
+vi.mock('../lib/server/database', () => ({
+  waitForDatabase: vi.fn(),
+  getDatabase: () => ({
+    select: () => ({
+      from: () => ({
+        where: () => ({ limit: databaseLimitMock }),
+      }),
+    }),
+  }),
+}))
+vi.mock('../lib/server/e2e-runtime', () => ({
+  isE2eRuntimeEnabled: () => false,
+  isLocalAuthRuntimeEnabled: () => true,
+}))
 vi.mock('../app/dashboard', () => ({ Dashboard: () => <main><h1>Bảng điều khiển dự án</h1></main> }))
 vi.mock('../app/projects/[projectId]/project-editor', () => ({ ProjectEditor: projectEditorMock }))
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  databaseLimitMock.mockResolvedValue([{
+    userId: 'owner',
+    workspaceId: '22222222-2222-4222-8222-222222222222',
+    role: 'owner',
+  }])
+})
 
 describe('protected pages', () => {
   it('redirects an unauthenticated dashboard visitor to login', async () => {
     getRuntimeSessionMock.mockResolvedValueOnce(null)
 
-    await expect(DashboardPage()).rejects.toThrow('REDIRECT:/login?callbackUrl=%2Fdashboard')
+    await expect(DashboardLayout({ children: <DashboardPage /> }))
+      .rejects.toThrow('REDIRECT:/login?callbackUrl=%2Fdashboard')
   })
 
   it('renders the dashboard after guarded authentication', async () => {
     getRuntimeSessionMock.mockResolvedValueOnce({ userId: 'owner' })
 
-    render(await DashboardPage())
+    render(await DashboardLayout({ children: <DashboardPage /> }))
     expect(screen.getByRole('heading', { name: 'Bảng điều khiển dự án' })).toBeVisible()
   })
 

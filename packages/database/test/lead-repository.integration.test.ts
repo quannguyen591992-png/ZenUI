@@ -291,6 +291,103 @@ describe('Customer Leads repository', () => {
     })
   })
 
+  it('lists workspace Leads with project metadata, filters, pagination, and tenant isolation', async () => {
+    const firstContext = await provision()
+    const projects = createProjectRepository(firstContext.db)
+    const secondProject = await projects.create(owner, {
+      name: 'Second project',
+      document: withLeadForm(),
+    })
+    const secondRevision = await projects.createRevision(
+      owner,
+      secondProject.id,
+      { source: 'manual', summary: 'Second lead form' },
+    )
+    const secondShare = await createShareLinkRepository(firstContext.db).create(
+      owner,
+      secondProject.id,
+      {
+        requestId: crypto.randomUUID(),
+        revisionId: secondRevision.id,
+        slug: 'B'.repeat(32),
+        expiresAt: null,
+      },
+    )
+    const secondBindings = await firstContext.leads.provisionBindings(
+      owner,
+      secondProject.id,
+      secondShare.link.id,
+    )
+    const firstLead = await firstContext.leads.appendEncrypted({
+      bindingId: firstContext.binding.id,
+      leadId: crypto.randomUUID(),
+      requestId: crypto.randomUUID(),
+      envelope,
+      receivedAt,
+    })
+    const secondLead = await firstContext.leads.appendEncrypted({
+      bindingId: secondBindings.bindings[0]!.id,
+      leadId: crypto.randomUUID(),
+      requestId: crypto.randomUUID(),
+      envelope,
+      receivedAt: new Date(receivedAt.getTime() + 1_000),
+    })
+    await firstContext.leads.markContacted(
+      owner,
+      secondProject.id,
+      secondLead.lead.id,
+      1,
+      new Date(receivedAt.getTime() + 2_000),
+    )
+
+    expect(await firstContext.leads.listWorkspace(owner, {
+      page: 1,
+      pageSize: 1,
+    })).toEqual({
+      items: [expect.objectContaining({
+        id: secondLead.lead.id,
+        projectId: secondProject.id,
+        projectName: 'Second project',
+        status: 'contacted',
+      })],
+      page: 1,
+      pageSize: 1,
+      total: 2,
+      totalPages: 2,
+    })
+    expect(await firstContext.leads.listWorkspace(owner, {
+      projectId: firstContext.project.id,
+      status: 'new',
+      page: 1,
+      pageSize: 25,
+    })).toEqual({
+      items: [expect.objectContaining({
+        id: firstLead.lead.id,
+        projectId: firstContext.project.id,
+        projectName: 'Customer Leads project',
+      })],
+      page: 1,
+      pageSize: 25,
+      total: 1,
+      totalPages: 1,
+    })
+    const workspaceResult = await firstContext.leads.listWorkspace(owner, {
+      page: 1,
+      pageSize: 25,
+    })
+    expect(workspaceResult.items[0]).not.toHaveProperty('ciphertext')
+    expect(await firstContext.leads.listWorkspace(outsider, {
+      page: 1,
+      pageSize: 25,
+    })).toEqual({
+      items: [],
+      page: 1,
+      pageSize: 25,
+      total: 0,
+      totalPages: 0,
+    })
+  })
+
   it('resolves and persists an active Deployment Lead in the shared Inbox', async () => {
     const db = drizzle(client, { schema })
     const projects = createProjectRepository(db)
