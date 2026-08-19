@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   createGenerationRepository,
   createProjectRepository,
+  createUsageRepository,
   migrateTestDatabase,
 } from '../src/index'
 import * as schema from '../src/schema'
@@ -15,6 +16,16 @@ const owner = { userId: '11111111-1111-4111-8111-111111111111', workspaceId: '22
 const outsider = { userId: '33333333-3333-4333-8333-333333333333', workspaceId: '44444444-4444-4444-8444-444444444444' }
 
 const usage = { inputTokens: 120, outputTokens: 80, totalTokens: 200 }
+const imageUsage = {
+  provider: 'google-gemini' as const,
+  model: 'gemini-3.1-flash-image',
+  imageSize: '1K' as const,
+  imageCount: 1,
+  inputTokens: 100,
+  outputTokens: 1_120,
+  totalTokens: 1_220,
+  tokenSource: 'provider_metadata' as const,
+}
 
 describe('workspace-scoped generation repository', () => {
   let client: PGlite
@@ -82,12 +93,14 @@ describe('workspace-scoped generation repository', () => {
     expect(await repository.markRepairing(owner, run.id, 3)).toBeNull()
   })
 
-  it('atomically saves an AI document, immutable revision, usage and completed run', async () => {
+  it('atomically saves an AI document, immutable revision, priced usage and completed run', async () => {
     const { project, repository } = await setup()
     const run = await repository.create(owner, project.id, {
       requestId: crypto.randomUUID(), mode: 'generate', prompt: 'Generate', expectedVersion: 1,
     })
-    await repository.claim(owner, run.id, { provider: 'mock', model: 'mock-v1', promptVersion: 'v1' })
+    await repository.claim(owner, run.id, {
+      provider: 'google-gemini', model: 'gemini-2.5-flash', promptVersion: 'v1',
+    })
     const document = createValidDesignFixture()
     document.nodes['heading-1']!.props = { text: 'AI generated', level: 1 }
     document.version = 2
@@ -104,10 +117,71 @@ describe('workspace-scoped generation repository', () => {
     expect(completed.run.revisionId).toBeTruthy()
     const savedProject = await createProjectRepository(drizzle(client, { schema })).findById(owner, project.id)
     expect(savedProject?.document.nodes['heading-1']?.props).toMatchObject({ text: 'AI generated' })
-    const usageRows = await client.query<{ total_tokens: number }>('SELECT total_tokens FROM usage_records WHERE generation_run_id = $1', [run.id])
-    expect(usageRows.rows[0]?.total_tokens).toBe(200)
+    const usageRows = await client.query<{
+      total_tokens: number
+      pricing_version: string | null
+      input_rate_micro_usd_per_million: number | null
+      output_rate_micro_usd_per_million: number | null
+      input_estimated_micro_usd: number | null
+      output_estimated_micro_usd: number | null
+      total_estimated_micro_usd: number | null
+      currency: string | null
+    }>(`SELECT
+      total_tokens, pricing_version,
+      input_rate_micro_usd_per_million,
+      output_rate_micro_usd_per_million,
+      input_estimated_micro_usd,
+      output_estimated_micro_usd,
+      total_estimated_micro_usd,
+      currency
+    FROM usage_records WHERE generation_run_id = $1`, [run.id])
+    expect(usageRows.rows[0]).toEqual({
+      total_tokens: 200,
+      pricing_version: 'google-gemini-2026-08-13',
+      input_rate_micro_usd_per_million: 300_000,
+      output_rate_micro_usd_per_million: 2_500_000,
+      input_estimated_micro_usd: 36,
+      output_estimated_micro_usd: 200,
+      total_estimated_micro_usd: 236,
+      currency: 'USD',
+    })
     const revisions = await client.query<{ source: string; generation_run_id: string }>('SELECT source, generation_run_id FROM revisions WHERE generation_run_id = $1', [run.id])
     expect(revisions.rows[0]).toEqual({ source: 'ai', generation_run_id: run.id })
+  })
+
+  it('persists failure usage once and leaves unknown models explicitly unpriced', async () => {
+    const { project, repository } = await setup()
+    const run = await repository.create(owner, project.id, {
+      requestId: crypto.randomUUID(), mode: 'generate', prompt: 'Fail', expectedVersion: 1,
+    })
+    await repository.claim(owner, run.id, {
+      provider: 'google-gemini', model: 'gemini-unknown', promptVersion: 'v1',
+    })
+
+    expect(await repository.fail(owner, run.id, {
+      errorCode: 'provider_error', usage, repairCount: 0,
+    })).toMatchObject({ status: 'failed' })
+    expect(await repository.fail(owner, run.id, {
+      errorCode: 'provider_error', usage, repairCount: 0,
+    })).toBeNull()
+
+    const rows = await client.query<{
+      count: number
+      total_tokens: number
+      pricing_version: string | null
+      total_estimated_micro_usd: number | null
+      currency: string | null
+    }>(`SELECT count(*) OVER ()::int AS count,
+      total_tokens, pricing_version,
+      total_estimated_micro_usd, currency
+    FROM usage_records WHERE generation_run_id = $1`, [run.id])
+    expect(rows.rows).toEqual([{
+      count: 1,
+      total_tokens: 200,
+      pricing_version: null,
+      total_estimated_micro_usd: null,
+      currency: null,
+    }])
   })
 
   it('fails stale completion without changing the document or creating a revision', async () => {
@@ -222,7 +296,9 @@ describe('workspace-scoped generation repository', () => {
       prompt: 'Thay bằng một hình khác', expectedVersion: 2,
       selectedNodeId: 'image-1', scope,
     })
-    await repository.claim(owner, run.id, { provider: 'mock', model: 'legacy-media-v1', promptVersion: 'v2' })
+    await repository.claim(owner, run.id, {
+      provider: 'google-gemini', model: 'gemini-3.1-flash-lite', promptVersion: 'v2',
+    })
     const materialized = materializeMediaProposal({
       document, targetNodeId: 'image-1',
       assetId: '77777777-7777-4777-8777-777777777777',
@@ -240,6 +316,144 @@ describe('workspace-scoped generation repository', () => {
     })).toMatchObject({
       accepted: true,
       run: { proposalStatus: 'ready', mediaReview: null },
+    })
+    expect((await client.query<{
+      pricing_version: string | null
+      total_estimated_micro_usd: number | null
+    }>(`SELECT pricing_version, total_estimated_micro_usd
+      FROM usage_records WHERE generation_run_id = $1`, [run.id])).rows[0]).toEqual({
+      pricing_version: null,
+      total_estimated_micro_usd: null,
+    })
+    await client.query(`UPDATE usage_records SET
+      pricing_version = 'legacy-text-price',
+      input_rate_micro_usd_per_million = 250000,
+      output_rate_micro_usd_per_million = 1500000,
+      input_estimated_micro_usd = 0,
+      output_estimated_micro_usd = 0,
+      total_estimated_micro_usd = 0,
+      currency = 'USD'
+      WHERE generation_run_id = $1`, [run.id])
+    const report = await createUsageRepository(drizzle(client, { schema })).report(owner, {
+      days: 1,
+      page: 1,
+      pageSize: 25,
+      timezone: 'UTC',
+    }, new Date())
+    expect(report.items[0]).toMatchObject({
+      text: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      pricing: {
+        status: 'unpriced',
+        reason: 'unsupported_media_cost',
+      },
+    })
+    expect(report.totals.unpricedCount).toBe(1)
+  })
+
+  it('persists actual Gemini image usage and combined cost for replace-media', async () => {
+    const { project, repository } = await setup()
+    project.document.nodes['image-1']!.props = {
+      assetId: '55555555-5555-4555-8555-555555555555', alt: 'Current image', decorative: false,
+    }
+    const projectRepository = createProjectRepository(drizzle(client, { schema }))
+    await projectRepository.replaceDocument(owner, project.id, 1, project.document)
+    const document = { ...project.document, version: 2 }
+    const scope = deriveProposalScope(document, 'image-1')!
+    const run = await repository.createProposal(owner, project.id, {
+      requestId: crypto.randomUUID(), action: 'request', intent: 'replace-media',
+      prompt: 'Thay bằng ảnh văn phòng sáng sủa', expectedVersion: 2,
+      selectedNodeId: 'image-1', scope,
+    })
+    await repository.claim(owner, run.id, {
+      provider: 'google-gemini', model: 'gemini-3.1-flash-lite', promptVersion: 'v2',
+    })
+    const materialized = materializeMediaProposal({
+      document, targetNodeId: 'image-1',
+      assetId: '77777777-7777-4777-8777-777777777777',
+      alt: 'Văn phòng sáng sủa', runId: run.id, expectedVersion: 2,
+      summary: 'Prepared a replacement image',
+    })
+    if (!materialized.accepted) throw new Error('expected media proposal')
+
+    expect(await repository.completeProposal(owner, run.id, {
+      commands: materialized.commands,
+      proposedDocument: materialized.proposedDocument,
+      summary: materialized.summary,
+      usage,
+      repairCount: 0,
+      mediaUsage: { generated: [imageUsage], stockCount: 0 },
+    })).toMatchObject({ accepted: true })
+
+    const rows = await client.query<{
+      image_provider: string | null
+      image_model: string | null
+      image_size: string | null
+      image_count: number | null
+      image_input_tokens: number | null
+      image_output_tokens: number | null
+      image_total_tokens: number | null
+      image_total_estimated_micro_usd: number | null
+    }>(`SELECT image_provider, image_model, image_size, image_count,
+      image_input_tokens, image_output_tokens, image_total_tokens,
+      image_total_estimated_micro_usd
+      FROM usage_records WHERE generation_run_id = $1`, [run.id])
+    expect(rows.rows).toEqual([{
+      image_provider: 'google-gemini',
+      image_model: 'gemini-3.1-flash-image',
+      image_size: '1K',
+      image_count: 1,
+      image_input_tokens: 100,
+      image_output_tokens: 1_120,
+      image_total_tokens: 1_220,
+      image_total_estimated_micro_usd: 67_250,
+    }])
+
+    const report = await createUsageRepository(drizzle(client, { schema })).report(owner, {
+      days: 1, page: 1, pageSize: 25, timezone: 'UTC',
+    }, new Date())
+    expect(report.totals).toMatchObject({
+      inputTokens: 220,
+      outputTokens: 1_200,
+      totalTokens: 1_420,
+      pricedEstimatedMicroUsd: 67_400,
+      unpricedCount: 0,
+    })
+    expect(report.items[0]).toMatchObject({
+      inputTokens: 220,
+      outputTokens: 1_200,
+      totalTokens: 1_420,
+      text: {
+        provider: 'google-gemini',
+        model: 'gemini-3.1-flash-lite',
+        inputTokens: 120,
+        outputTokens: 80,
+        totalTokens: 200,
+        pricing: {
+          status: 'priced',
+          totalEstimatedMicroUsd: 150,
+        },
+      },
+      image: {
+        provider: 'google-gemini',
+        model: 'gemini-3.1-flash-image',
+        imageSize: '1K',
+        imageCount: 1,
+        stockCount: 0,
+        inputTokens: 100,
+        outputTokens: 1_120,
+        totalTokens: 1_220,
+        pricing: {
+          status: 'priced',
+          totalEstimatedMicroUsd: 67_250,
+        },
+      },
+      pricing: {
+        status: 'priced',
+        totalEstimatedMicroUsd: 67_400,
+      },
     })
   })
 

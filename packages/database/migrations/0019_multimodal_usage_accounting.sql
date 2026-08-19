@@ -1,0 +1,17 @@
+ALTER TABLE "usage_records" ADD COLUMN "image_provider" text;
+ALTER TABLE "usage_records" ADD COLUMN "image_model" text;
+ALTER TABLE "usage_records" ADD COLUMN "image_size" text;
+ALTER TABLE "usage_records" ADD COLUMN "image_count" integer;
+ALTER TABLE "usage_records" ADD COLUMN "stock_count" integer;
+ALTER TABLE "usage_records" ADD COLUMN "image_input_tokens" integer;
+ALTER TABLE "usage_records" ADD COLUMN "image_output_tokens" integer;
+ALTER TABLE "usage_records" ADD COLUMN "image_total_tokens" integer;
+ALTER TABLE "usage_records" ADD COLUMN "image_token_source" text;
+ALTER TABLE "usage_records" ADD COLUMN "image_pricing_status" text;
+ALTER TABLE "usage_records" ADD COLUMN "image_pricing_reason" text;
+ALTER TABLE "usage_records" ADD COLUMN "image_pricing_version" text;
+ALTER TABLE "usage_records" ADD COLUMN "image_input_rate_micro_usd_per_million" integer;
+ALTER TABLE "usage_records" ADD COLUMN "image_output_rate_micro_usd_per_million" integer;
+ALTER TABLE "usage_records" ADD COLUMN "image_input_estimated_micro_usd" integer;
+ALTER TABLE "usage_records" ADD COLUMN "image_output_estimated_micro_usd" integer;
+ALTER TABLE "usage_records" ADD COLUMN "image_total_estimated_micro_usd" integer;

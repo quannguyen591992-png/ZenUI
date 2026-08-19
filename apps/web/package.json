@@ -31,6 +31,7 @@
     "@zenui/operations-core": "workspace:*",
     "@zenui/preview-bridge": "workspace:*",
     "@zenui/share-core": "workspace:*",
+    "@zenui/usage-core": "workspace:*",
     "bullmq": "^5.63.2",
     "drizzle-orm": "^0.45.2",
     "ioredis": "^5.8.2",

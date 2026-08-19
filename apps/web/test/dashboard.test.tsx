@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { Dashboard } from '../app/dashboard'
+import { DashboardShell } from '../app/dashboard/dashboard-shell'
 
 const workspaceId = '22222222-2222-4222-8222-222222222222'
 const project = {
@@ -22,6 +23,65 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('Dashboard shell', () => {
+  it('renders route-aware navigation without deferred Resources or Team items', () => {
+    render(
+      <DashboardShell
+        session={{ userId: 'owner', workspaceId, role: 'owner' }}
+        pathname="/dashboard/customers"
+        localAuth
+      >
+        <p>Dashboard content</p>
+      </DashboardShell>,
+    )
+
+    expect(screen.getByRole('link', { name: 'ZenUI' })).toHaveAttribute(
+      'href',
+      '/',
+    )
+    expect(screen.getByRole('link', { name: 'ZenUI' }))
+      .toHaveClass('zenui-brand-gradient')
+    expect(screen.getByRole('link', { name: 'Dự án' })).toHaveAttribute(
+      'href',
+      '/dashboard',
+    )
+    expect(screen.getByRole('link', { name: 'Khách hàng' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
+    expect(screen.getByRole('link', { name: 'Sử dụng AI' })).toHaveAttribute(
+      'href',
+      '/dashboard/usage',
+    )
+    expect(screen.queryByText('Tài nguyên')).not.toBeInTheDocument()
+    expect(screen.queryByText('Nhóm')).not.toBeInTheDocument()
+    expect(screen.getByText('Mẫu (Templates)')).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+    expect(screen.getByText('Cài đặt')).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+    expect(document.querySelector('form[action="/api/local/session/logout"]'))
+      .not.toBeNull()
+  })
+
+  it('hides Customer Leads from viewers while keeping own AI usage available', () => {
+    render(
+      <DashboardShell
+        session={{ userId: 'viewer', workspaceId, role: 'viewer' }}
+        pathname="/dashboard"
+      >
+        <p>Dashboard content</p>
+      </DashboardShell>,
+    )
+
+    expect(screen.queryByRole('link', { name: 'Khách hàng' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'Sử dụng AI' })).toBeVisible()
+  })
+})
+
 describe('authenticated dashboard', () => {
   it('shows loading then an empty state for the authenticated workspace', async () => {
     vi.stubGlobal('fetch', vi.fn()
@@ -30,7 +90,9 @@ describe('authenticated dashboard', () => {
 
     render(<Dashboard />)
 
-    expect(screen.getByRole('status')).toHaveTextContent('Đang tải dự án')
+    const loadingState = screen.getByRole('status')
+    expect(loadingState).toHaveTextContent('Đang tải dự án')
+    expect(loadingState).not.toHaveClass('dashboard-pro-layout')
     expect(await screen.findByRole('heading', { name: 'Chào mừng đến với ZenUI' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Tạo dự án' })).toBeVisible()
   })

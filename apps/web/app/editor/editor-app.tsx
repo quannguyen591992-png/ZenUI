@@ -42,6 +42,7 @@ import {
   type EditorState,
 } from '@zenui/editor-core'
 import { conversionActionHref, nodeToBrowserStyle, resolveNodeStyle, resolveNodeTag } from '@zenui/html-compiler'
+import Link from 'next/link'
 import {
   createElement,
   useEffect,
@@ -1431,7 +1432,13 @@ function EditorSurface({ projectId, projectName, workspaceId, role, initialDocum
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
       <main className="editor-shell">
         <header className="editor-toolbar">
-          <strong>ZenUI</strong>
+          <Link
+            className="editor-toolbar-brand zenui-brand-gradient"
+            href="/"
+            aria-label="Về trang chủ ZenUI"
+          >
+            ZenUI
+          </Link>
           {mode === 'simple' && (
             <button type="button" onClick={() => setPageManagerOpen(true)}>Quản lý trang</button>
           )}

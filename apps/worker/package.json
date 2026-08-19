@@ -15,6 +15,9 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.858.0",
     "@google/genai": "^1.30.0",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.221.0",
+    "@opentelemetry/sdk-trace-base": "^2.10.0",
     "@zenui/ai-core": "workspace:*",
     "@zenui/asset-core": "workspace:*",
     "@zenui/database": "workspace:*",
@@ -24,6 +27,7 @@
     "@zenui/font-library": "workspace:*",
     "@zenui/html-compiler": "workspace:*",
     "@zenui/operations-core": "workspace:*",
+    "@zenui/usage-core": "workspace:*",
     "bullmq": "^5.63.2",
     "drizzle-orm": "^0.45.2",
     "ioredis": "^5.8.2",

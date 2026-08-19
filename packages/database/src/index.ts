@@ -75,8 +75,39 @@ import {
   type ExportArtifact,
   type ExportErrorCode,
 } from '@zenui/export-core'
+import {
+  workspaceLeadListQuerySchema,
+  type WorkspaceLeadListQuery,
+} from '@zenui/lead-core'
 import { resolveShareStatus, shareSlugSchema, type ShareStatus, type ShareStoredStatus } from '@zenui/share-core'
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm'
+import {
+  createImagePricingSnapshot,
+  createUsageDateRange,
+  createUsagePricingSnapshot,
+  imageGenerationUsageSchema,
+  usageDateKey,
+  usageListQuerySchema,
+  usageReportSchema,
+  type ImageGenerationUsage,
+  type UsageListQuery,
+  type UsagePricingSnapshot,
+  type UsageReport,
+} from '@zenui/usage-core'
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  ilike,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  or,
+  sql,
+} from 'drizzle-orm'
 import { z } from 'zod'
 
 import {
@@ -1070,6 +1101,161 @@ const designDirectionCreateSchema = z.object({
   round: z.number().int().min(0).max(100),
 }).strict()
 
+function usagePricingValues(input: {
+  provider: string
+  model: string
+  usage: LlmUsage
+  hasUnpricedProviderOperation?: boolean
+  at?: Date
+}) {
+  const pricing = createUsagePricingSnapshot({
+    provider: input.provider,
+    model: input.model,
+    inputTokens: input.usage.inputTokens,
+    outputTokens: input.usage.outputTokens,
+    ...(input.hasUnpricedProviderOperation !== undefined
+      ? {
+          hasUnpricedProviderOperation:
+            input.hasUnpricedProviderOperation,
+        }
+      : {}),
+    at: input.at ?? new Date(),
+  })
+  return pricing.status === 'priced'
+    || pricing.status === 'partial'
+    ? {
+        pricingVersion: pricing.pricingVersion,
+        inputRateMicroUsdPerMillion:
+          pricing.inputRateMicroUsdPerMillion,
+        outputRateMicroUsdPerMillion:
+          pricing.outputRateMicroUsdPerMillion,
+        inputEstimatedMicroUsd: pricing.inputEstimatedMicroUsd,
+        outputEstimatedMicroUsd: pricing.outputEstimatedMicroUsd,
+        totalEstimatedMicroUsd: pricing.totalEstimatedMicroUsd,
+        currency: pricing.currency,
+      }
+    : {}
+}
+
+const mediaUsageSummarySchema = z.object({
+  generated: z.array(imageGenerationUsageSchema).max(100),
+  stockCount: z.number().int().min(0).max(100),
+}).strict()
+
+type MediaUsageSummary = z.infer<typeof mediaUsageSummarySchema>
+
+function aggregateImageUsage(
+  mediaUsage: MediaUsageSummary | undefined,
+) {
+  if (!mediaUsage || mediaUsage.generated.length === 0) {
+    return mediaUsage?.stockCount
+      ? { stockCount: mediaUsage.stockCount }
+      : {}
+  }
+  const [first, ...rest] = mediaUsage.generated
+  if (!first) return {}
+  const homogeneous = rest.every(item => (
+    item.provider === first.provider
+    && item.model === first.model
+    && item.imageSize === first.imageSize
+    && item.tokenSource === first.tokenSource
+  ))
+  if (!homogeneous) {
+    return {
+      imageProvider: first.provider,
+      imageModel: first.model,
+      imageSize: first.imageSize,
+      imageCount: mediaUsage.generated.reduce(
+        (sum, item) => sum + item.imageCount,
+        0,
+      ),
+      stockCount: mediaUsage.stockCount,
+      imagePricingStatus: 'unpriced',
+      imagePricingReason: 'heterogeneous_image_usage',
+    }
+  }
+  const usage: ImageGenerationUsage = {
+    ...first,
+    imageCount: mediaUsage.generated.reduce(
+      (sum, item) => sum + item.imageCount,
+      0,
+    ),
+    inputTokens: mediaUsage.generated.reduce(
+      (sum, item) => sum + item.inputTokens,
+      0,
+    ),
+    outputTokens: mediaUsage.generated.reduce(
+      (sum, item) => sum + item.outputTokens,
+      0,
+    ),
+    totalTokens: mediaUsage.generated.reduce(
+      (sum, item) => sum + item.totalTokens,
+      0,
+    ),
+  }
+  const pricing = createImagePricingSnapshot({
+    ...usage,
+    at: new Date(),
+  })
+  return {
+    imageProvider: usage.provider,
+    imageModel: usage.model,
+    imageSize: usage.imageSize,
+    imageCount: usage.imageCount,
+    stockCount: mediaUsage.stockCount,
+    imageInputTokens: pricing.inputTokens,
+    imageOutputTokens: pricing.outputTokens,
+    imageTotalTokens: pricing.totalTokens,
+    imageTokenSource: pricing.tokenSource,
+    imagePricingStatus: pricing.status,
+    ...('reason' in pricing
+      ? { imagePricingReason: pricing.reason }
+      : {}),
+    ...('pricingVersion' in pricing
+      ? {
+          imagePricingVersion: pricing.pricingVersion,
+          imageInputRateMicroUsdPerMillion:
+            pricing.inputRateMicroUsdPerMillion,
+          imageOutputRateMicroUsdPerMillion:
+            pricing.outputRateMicroUsdPerMillion,
+          imageInputEstimatedMicroUsd:
+            pricing.inputEstimatedMicroUsd,
+          imageOutputEstimatedMicroUsd:
+            pricing.outputEstimatedMicroUsd,
+          imageTotalEstimatedMicroUsd:
+            pricing.totalEstimatedMicroUsd,
+        }
+      : {}),
+  }
+}
+
+async function persistDesignDirectionUsage(
+  transaction: PgDatabase<PgQueryResultHKT, typeof schema>,
+  run: typeof designDirectionRuns.$inferSelect,
+  usage: LlmUsage,
+  mediaUsage?: MediaUsageSummary,
+) {
+  if (!run.provider || !run.model) return
+  await transaction.insert(usageRecords).values({
+    designDirectionRunId: run.id,
+    workspaceId: run.workspaceId,
+    projectId: run.projectId,
+    userId: run.createdBy,
+    provider: run.provider,
+    model: run.model,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    totalTokens: usage.totalTokens,
+    ...usagePricingValues({
+      provider: run.provider,
+      model: run.model,
+      usage,
+      hasUnpricedProviderOperation: !mediaUsage,
+    }),
+    ...aggregateImageUsage(mediaUsage),
+  }).onConflictDoNothing()
+}
+
 export function createDesignDirectionRepository(
   db: PgDatabase<PgQueryResultHKT, typeof schema>,
 ) {
@@ -1218,7 +1404,12 @@ export function createDesignDirectionRepository(
     async complete(
       context: AuthContext,
       runId: string,
-      input: { blueprint: unknown; directions: unknown; usage: LlmUsage },
+      input: {
+        blueprint: unknown
+        directions: unknown
+        usage: LlmUsage
+        mediaUsage?: MediaUsageSummary
+      },
     ): Promise<{
       accepted: true
       run: DesignDirectionRunRecord
@@ -1228,8 +1419,13 @@ export function createDesignDirectionRepository(
     }> {
       const blueprint = designDirectionGenerationPlanSchema.safeParse(input.blueprint)
       const usage = usageInputSchema.safeParse(input.usage)
+      const mediaUsage = input.mediaUsage === undefined
+        ? undefined
+        : mediaUsageSummarySchema.safeParse(input.mediaUsage)
       const directions = validDirectionSnapshots(input.directions)
-      if (!usage.success || !directions) return { accepted: false, code: 'invalid_output' }
+      if (!usage.success || mediaUsage?.success === false || !directions) {
+        return { accepted: false, code: 'invalid_output' }
+      }
       if (!blueprint.success) {
         return await selectAuthorizedRun(context, runId)
           ? { accepted: false, code: 'invalid_output' }
@@ -1259,6 +1455,12 @@ export function createDesignDirectionRepository(
             lastHeartbeatAt: null,
             updatedAt: new Date(),
           }).where(eq(designDirectionRuns.id, run.id))
+          await persistDesignDirectionUsage(
+            transaction,
+            run,
+            usage.data,
+            mediaUsage?.data,
+          )
           return { accepted: false, code: 'stale_document_version' } as const
         }
         const [updated] = await transaction.update(designDirectionRuns).set({
@@ -1274,19 +1476,12 @@ export function createDesignDirectionRepository(
           updatedAt: new Date(),
         }).where(eq(designDirectionRuns.id, run.id)).returning()
         if (!updated) return { accepted: false, code: 'not_found' } as const
-        if (run.provider && run.model) {
-          await transaction.insert(usageRecords).values({
-            designDirectionRunId: run.id,
-            workspaceId: run.workspaceId,
-            projectId: run.projectId,
-            userId: run.createdBy,
-            provider: run.provider,
-            model: run.model,
-            inputTokens: usage.data.inputTokens,
-            outputTokens: usage.data.outputTokens,
-            totalTokens: usage.data.totalTokens,
-          }).onConflictDoNothing()
-        }
+        await persistDesignDirectionUsage(
+          transaction,
+          run,
+          usage.data,
+          mediaUsage?.data,
+        )
         return { accepted: true, run: mapDesignDirectionRun(updated) } as const
       })
     },
@@ -1294,28 +1489,51 @@ export function createDesignDirectionRepository(
     async fail(
       context: AuthContext,
       runId: string,
-      input: { errorCode: string; usage: LlmUsage },
+      input: {
+        errorCode: string
+        usage: LlmUsage
+        mediaUsage?: MediaUsageSummary
+      },
     ): Promise<DesignDirectionRunRecord | null> {
       const error = designDirectionRunErrorCodeSchema.safeParse(input.errorCode)
       const usage = usageInputSchema.safeParse(input.usage)
-      if (!error.success || !usage.success) return null
-      const [updated] = await db.update(designDirectionRuns).set({
-        status: 'failed',
-        errorCode: error.data,
-        inputTokens: usage.data.inputTokens,
-        outputTokens: usage.data.outputTokens,
-        totalTokens: usage.data.totalTokens,
-        completedAt: new Date(),
-        leaseExpiresAt: null,
-        lastHeartbeatAt: null,
-        updatedAt: new Date(),
-      }).where(and(
-        eq(designDirectionRuns.id, runId),
-        eq(designDirectionRuns.workspaceId, context.workspaceId),
-        eq(designDirectionRuns.createdBy, context.userId),
-        inArray(designDirectionRuns.status, ['queued', 'running']),
-      )).returning()
-      return updated ? mapDesignDirectionRun(updated) : null
+      const mediaUsage = input.mediaUsage === undefined
+        ? undefined
+        : mediaUsageSummarySchema.safeParse(input.mediaUsage)
+      if (!error.success || !usage.success || mediaUsage?.success === false) {
+        return null
+      }
+      return db.transaction(async transaction => {
+        const [run] = await transaction.select()
+          .from(designDirectionRuns)
+          .where(and(
+            eq(designDirectionRuns.id, runId),
+            eq(designDirectionRuns.workspaceId, context.workspaceId),
+            eq(designDirectionRuns.createdBy, context.userId),
+            inArray(designDirectionRuns.status, ['queued', 'running']),
+          ))
+          .limit(1)
+        if (!run) return null
+        const now = new Date()
+        const [updated] = await transaction.update(designDirectionRuns).set({
+          status: 'failed',
+          errorCode: error.data,
+          inputTokens: usage.data.inputTokens,
+          outputTokens: usage.data.outputTokens,
+          totalTokens: usage.data.totalTokens,
+          completedAt: now,
+          leaseExpiresAt: null,
+          lastHeartbeatAt: null,
+          updatedAt: now,
+        }).where(eq(designDirectionRuns.id, run.id)).returning()
+        await persistDesignDirectionUsage(
+          transaction,
+          run,
+          usage.data,
+          mediaUsage?.data,
+        )
+        return updated ? mapDesignDirectionRun(updated) : null
+      })
     },
 
     async cancel(context: AuthContext, runId: string): Promise<DesignDirectionRunRecord | null> {
@@ -1594,6 +1812,7 @@ const proposalCompletionSchema = z.object({
   }).strict(),
   repairCount: z.number().int().min(0).max(2),
   mediaReview: mediaProposalReviewSchema.optional(),
+  mediaUsage: mediaUsageSummarySchema.optional(),
 }).strict()
 
 const usageInputSchema = z.object({
@@ -1624,6 +1843,7 @@ export function createGenerationRepository(
     transaction: PgDatabase<PgQueryResultHKT, typeof schema>,
     run: typeof generationRuns.$inferSelect,
     usage: LlmUsage,
+    mediaUsage?: MediaUsageSummary,
   ) => {
     if (!run.provider || !run.model) return
     await transaction.insert(usageRecords).values({
@@ -1636,6 +1856,14 @@ export function createGenerationRepository(
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
       totalTokens: usage.totalTokens,
+      ...usagePricingValues({
+        provider: run.provider,
+        model: run.model,
+        usage,
+        hasUnpricedProviderOperation:
+          run.proposalIntent === 'replace-media' && !mediaUsage,
+      }),
+      ...aggregateImageUsage(mediaUsage),
     }).onConflictDoNothing()
   }
 
@@ -1852,11 +2080,21 @@ export function createGenerationRepository(
     async fail(
       context: AuthContext,
       runId: string,
-      input: { errorCode: string; usage: LlmUsage; repairCount: number },
+      input: {
+        errorCode: string
+        usage: LlmUsage
+        repairCount: number
+        mediaUsage?: MediaUsageSummary
+      },
     ): Promise<GenerationRunRecord | null> {
       const error = generationErrorCodeSchema.safeParse(input.errorCode)
       const usage = usageInputSchema.safeParse(input.usage)
-      if (!error.success || !usage.success) return null
+      const mediaUsage = input.mediaUsage === undefined
+        ? undefined
+        : mediaUsageSummarySchema.safeParse(input.mediaUsage)
+      if (!error.success || !usage.success || mediaUsage?.success === false) {
+        return null
+      }
       return db.transaction(async transaction => {
         const [run] = await transaction.select().from(generationRuns).where(and(
           eq(generationRuns.id, runId),
@@ -1880,7 +2118,12 @@ export function createGenerationRepository(
           lastHeartbeatAt: null,
           updatedAt: new Date(),
         }).where(eq(generationRuns.id, run.id)).returning()
-        await persistUsage(transaction, run, usage.data)
+        await persistUsage(
+          transaction,
+          run,
+          usage.data,
+          mediaUsage?.data,
+        )
         return updated ? mapGenerationRun(updated) : null
       })
     },
@@ -1955,7 +2198,12 @@ export function createGenerationRepository(
           eq(generationRuns.proposalStatus, 'preparing'),
         )).returning()
         if (!updated) return { accepted: false, code: 'not_found' } as const
-        await persistUsage(transaction, run, parsed.data.usage)
+        await persistUsage(
+          transaction,
+          run,
+          parsed.data.usage,
+          parsed.data.mediaUsage,
+        )
         if (run.previousProposalId) {
           await transaction.update(generationRuns).set({
             proposalStatus: 'superseded', updatedAt: new Date(),
@@ -2099,14 +2347,25 @@ export function createGenerationRepository(
     async complete(
       context: AuthContext,
       runId: string,
-      input: { document: unknown; summary: string; usage: LlmUsage; repairCount: number },
+      input: {
+        document: unknown
+        summary: string
+        usage: LlmUsage
+        repairCount: number
+        mediaUsage?: MediaUsageSummary
+      },
     ): Promise<
       | { accepted: true; run: GenerationRunRecord }
       | { accepted: false; code: 'not_found' | 'stale_document_version' | 'invalid_design_document' }
     > {
       const usage = usageInputSchema.safeParse(input.usage)
       const summary = z.string().trim().min(1).max(200).safeParse(input.summary)
-      if (!usage.success || !summary.success) return { accepted: false, code: 'invalid_design_document' }
+      const mediaUsage = input.mediaUsage === undefined
+        ? undefined
+        : mediaUsageSummarySchema.safeParse(input.mediaUsage)
+      if (!usage.success || !summary.success || mediaUsage?.success === false) {
+        return { accepted: false, code: 'invalid_design_document' }
+      }
       return db.transaction(async transaction => {
         const [run] = await transaction.select().from(generationRuns).where(and(
           eq(generationRuns.id, runId),
@@ -2125,7 +2384,12 @@ export function createGenerationRepository(
             totalTokens: usage.data.totalTokens, repairCount: input.repairCount,
             completedAt: new Date(), leaseExpiresAt: null, lastHeartbeatAt: null, updatedAt: new Date(),
           }).where(eq(generationRuns.id, run.id))
-          await persistUsage(transaction, run, usage.data)
+          await persistUsage(
+            transaction,
+            run,
+            usage.data,
+            mediaUsage?.data,
+          )
           return { accepted: false, code: 'stale_document_version' } as const
         }
         let document: DesignDocument
@@ -2171,7 +2435,12 @@ export function createGenerationRepository(
           updatedAt: new Date(),
         }).where(eq(generationRuns.id, run.id)).returning()
         if (!completed) throw new Error('generation_run_complete_failed')
-        await persistUsage(transaction, run, usage.data)
+        await persistUsage(
+          transaction,
+          run,
+          usage.data,
+          mediaUsage?.data,
+        )
         return { accepted: true, run: mapGenerationRun(completed) } as const
       })
     },
@@ -2506,6 +2775,11 @@ export interface LeadSummaryRecord {
   receivedAt: Date
   expiresAt: Date
   contactedAt: Date | null
+}
+
+export interface WorkspaceLeadSummaryRecord extends LeadSummaryRecord {
+  projectId: string
+  projectName: string
 }
 
 const appendEncryptedLeadSchema = z.object({
@@ -2862,6 +3136,75 @@ export function createLeadRepository(
       return rows.map(mapLeadSummary)
     },
 
+    async listWorkspace(
+      context: AuthContext,
+      input: WorkspaceLeadListQuery,
+    ): Promise<{
+      items: WorkspaceLeadSummaryRecord[]
+      page: number
+      pageSize: number
+      total: number
+      totalPages: number
+    }> {
+      const query = workspaceLeadListQuerySchema.safeParse(input)
+      if (!query.success) throw new Error('invalid_lead_list_query')
+      const [membership] = await db.select({ id: workspaceMembers.id })
+        .from(workspaceMembers)
+        .where(and(
+          eq(workspaceMembers.workspaceId, context.workspaceId),
+          eq(workspaceMembers.userId, context.userId),
+        ))
+        .limit(1)
+      const empty = {
+        items: [],
+        page: query.data.page,
+        pageSize: query.data.pageSize,
+        total: 0,
+        totalPages: 0,
+      }
+      if (!membership) return empty
+      if (
+        query.data.projectId
+        && !await projectAuthorized(context, query.data.projectId)
+      ) return empty
+
+      const filters = and(
+        eq(leadSubmissions.workspaceId, context.workspaceId),
+        query.data.projectId
+          ? eq(leadSubmissions.projectId, query.data.projectId)
+          : undefined,
+        query.data.status
+          ? eq(leadSubmissions.status, query.data.status)
+          : undefined,
+      )
+      const [countRow] = await db.select({
+        count: sql<number>`count(*)::int`,
+      }).from(leadSubmissions).where(filters)
+      const total = Number(countRow?.count ?? 0)
+      const rows = await db.select({
+        lead: leadSubmissions,
+        projectName: projects.name,
+      }).from(leadSubmissions)
+        .innerJoin(projects, eq(projects.id, leadSubmissions.projectId))
+        .where(filters)
+        .orderBy(desc(leadSubmissions.receivedAt))
+        .limit(query.data.pageSize)
+        .offset((query.data.page - 1) * query.data.pageSize)
+      return {
+        items: rows.map(row => ({
+          ...mapLeadSummary(row.lead),
+          projectId: row.lead.projectId,
+          projectName: row.projectName,
+        })),
+        page: query.data.page,
+        pageSize: query.data.pageSize,
+        total,
+        totalPages: total === 0
+          ? 0
+          : Math.ceil(total / query.data.pageSize),
+      }
+    },
+
     async countNew(context: AuthContext, projectId: string) {
       if (!await projectAuthorized(context, projectId)) {
         return { newCount: 0 }
@@ -3010,6 +3353,404 @@ export function createLeadRepository(
         scanned: candidates.length,
         deleted: candidates.length,
       }
+    },
+  }
+}
+
+function textUsagePricingSnapshot(
+  row: typeof usageRecords.$inferSelect,
+): UsagePricingSnapshot {
+  if (row.pricingVersion
+    && row.inputRateMicroUsdPerMillion !== null
+    && row.outputRateMicroUsdPerMillion !== null
+    && row.inputEstimatedMicroUsd !== null
+    && row.outputEstimatedMicroUsd !== null
+    && row.totalEstimatedMicroUsd !== null
+    && row.currency === 'USD') {
+    return {
+      status: 'priced',
+      pricingVersion: row.pricingVersion,
+      inputRateMicroUsdPerMillion:
+        row.inputRateMicroUsdPerMillion,
+      outputRateMicroUsdPerMillion:
+        row.outputRateMicroUsdPerMillion,
+      inputEstimatedMicroUsd:
+        row.inputEstimatedMicroUsd,
+      outputEstimatedMicroUsd:
+        row.outputEstimatedMicroUsd,
+      totalEstimatedMicroUsd:
+        row.totalEstimatedMicroUsd,
+      currency: 'USD',
+    }
+  }
+  return { status: 'unpriced', reason: 'unknown_model' }
+}
+
+type UsageReportItem = UsageReport['items'][number]
+type CombinedUsagePricing = UsageReportItem['pricing']
+
+function imageUsageSnapshot(
+  row: typeof usageRecords.$inferSelect,
+): UsageReportItem['image'] {
+  if (!row.imageProvider
+    || !row.imageModel
+    || row.imageSize !== '1K'
+    || row.imageCount === null
+    || row.imageInputTokens === null
+    || row.imageOutputTokens === null
+    || row.imageTotalTokens === null
+    || (row.imageTokenSource !== 'provider_metadata'
+      && row.imageTokenSource !== 'documented_fallback')) {
+    return null
+  }
+  const usage = {
+    provider: row.imageProvider,
+    model: row.imageModel,
+    imageSize: row.imageSize,
+    imageCount: row.imageCount,
+    inputTokens: row.imageInputTokens,
+    outputTokens: row.imageOutputTokens,
+    totalTokens: row.imageTotalTokens,
+    tokenSource: row.imageTokenSource,
+  } as const
+  if (row.imagePricingStatus === 'unpriced'
+    && row.imagePricingReason === 'unknown_image_model') {
+    return {
+      ...usage,
+      stockCount: row.stockCount ?? 0,
+      pricing: {
+        status: 'unpriced',
+        reason: 'unknown_image_model',
+        ...usage,
+      },
+    }
+  }
+  if ((row.imagePricingStatus !== 'priced'
+      && row.imagePricingStatus !== 'partial')
+    || !row.imagePricingVersion
+    || row.imageInputRateMicroUsdPerMillion === null
+    || row.imageOutputRateMicroUsdPerMillion === null
+    || row.imageInputEstimatedMicroUsd === null
+    || row.imageOutputEstimatedMicroUsd === null
+    || row.imageTotalEstimatedMicroUsd === null) {
+    return null
+  }
+  const cost = {
+    pricingVersion: row.imagePricingVersion,
+    inputRateMicroUsdPerMillion:
+      row.imageInputRateMicroUsdPerMillion,
+    outputRateMicroUsdPerMillion:
+      row.imageOutputRateMicroUsdPerMillion,
+    inputEstimatedMicroUsd:
+      row.imageInputEstimatedMicroUsd,
+    outputEstimatedMicroUsd:
+      row.imageOutputEstimatedMicroUsd,
+    totalEstimatedMicroUsd:
+      row.imageTotalEstimatedMicroUsd,
+    currency: 'USD' as const,
+  }
+  const pricing = row.imagePricingStatus === 'partial'
+    ? {
+        status: 'partial' as const,
+        reason: 'missing_image_input_usage' as const,
+        ...usage,
+        ...cost,
+      }
+    : {
+        status: 'priced' as const,
+        ...usage,
+        ...cost,
+      }
+  return {
+    ...usage,
+    stockCount: row.stockCount ?? 0,
+    pricing,
+  }
+}
+
+function combinedUsagePricing(input: {
+  row: typeof usageRecords.$inferSelect
+  proposalIntent?: string | null
+  text: UsageReportItem['text']
+  textPricing: UsagePricingSnapshot
+  image: UsageReportItem['image']
+}): CombinedUsagePricing {
+  const knownTextCost = !input.text
+    || input.textPricing.status === 'unpriced'
+    ? null
+    : input.textPricing.totalEstimatedMicroUsd
+  const knownImageCost = input.image?.pricing.status === 'unpriced'
+    || !input.image
+    ? null
+    : input.image.pricing.totalEstimatedMicroUsd
+  const totalEstimatedMicroUsd = (knownTextCost ?? 0)
+    + (knownImageCost ?? 0)
+  const requiresMedia = input.proposalIntent === 'replace-media'
+    || input.row.designDirectionRunId !== null
+  const hasMediaAccounting = input.row.stockCount !== null
+    || input.row.imagePricingStatus !== null
+  const reason = input.text && input.textPricing.status === 'unpriced'
+    ? input.textPricing.reason
+    : input.row.imagePricingReason === 'heterogeneous_image_usage'
+      ? 'heterogeneous_image_usage' as const
+      : input.image?.pricing.status === 'partial'
+        ? input.image.pricing.reason
+        : input.image?.pricing.status === 'unpriced'
+          ? input.image.pricing.reason
+          : input.row.imagePricingStatus !== null && !input.image
+            ? 'unknown_image_model' as const
+            : requiresMedia && !hasMediaAccounting
+              ? 'unsupported_media_cost' as const
+              : null
+  if (!reason) {
+    return {
+      status: 'priced',
+      totalEstimatedMicroUsd,
+      currency: 'USD',
+    }
+  }
+  return totalEstimatedMicroUsd > 0
+    ? {
+        status: 'partial',
+        reason,
+        totalEstimatedMicroUsd,
+        currency: 'USD',
+      }
+    : { status: 'unpriced', reason }
+}
+
+function usageReportItem(input: {
+  usage: typeof usageRecords.$inferSelect
+  projectName: string
+  proposalIntent?: string | null
+}): UsageReportItem {
+  const textPricing = textUsagePricingSnapshot(input.usage)
+  const hasTextUsage = input.usage.inputTokens > 0
+    || input.usage.outputTokens > 0
+    || input.usage.totalTokens > 0
+  const text = hasTextUsage
+    ? {
+        provider: input.usage.provider,
+        model: input.usage.model,
+        inputTokens: input.usage.inputTokens,
+        outputTokens: input.usage.outputTokens,
+        totalTokens: input.usage.totalTokens,
+        pricing: textPricing,
+      }
+    : null
+  const image = imageUsageSnapshot(input.usage)
+  const pricing = combinedUsagePricing({
+    row: input.usage,
+    ...(input.proposalIntent === undefined
+      ? {}
+      : { proposalIntent: input.proposalIntent }),
+    text,
+    textPricing,
+    image,
+  })
+  return {
+    id: input.usage.id,
+    projectId: input.usage.projectId,
+    projectName: input.projectName,
+    provider: input.usage.provider,
+    model: input.usage.model,
+    inputTokens: input.usage.inputTokens
+      + (input.usage.imageInputTokens ?? 0),
+    outputTokens: input.usage.outputTokens
+      + (input.usage.imageOutputTokens ?? 0),
+    totalTokens: input.usage.totalTokens
+      + (input.usage.imageTotalTokens ?? 0),
+    text,
+    textPricing,
+    image,
+    stockCount: input.usage.stockCount ?? 0,
+    pricing,
+    createdAt: input.usage.createdAt.toISOString(),
+  }
+}
+
+function usageDateKeys(range: {
+  days: number
+  timezone: string
+  from: string
+}): string[] {
+  return Array.from({ length: range.days }, (_, index) => {
+    const date = new Date(range.from)
+    date.setUTCDate(date.getUTCDate() + index)
+    return usageDateKey(date, range.timezone)
+  })
+}
+
+export function createUsageRepository(
+  db: PgDatabase<PgQueryResultHKT, typeof schema>,
+) {
+  return {
+    async report(
+      context: AuthContext,
+      input: UsageListQuery,
+      now = new Date(),
+    ): Promise<UsageReport> {
+      const query = usageListQuerySchema.safeParse(input)
+      if (!query.success) throw new Error('invalid_usage_query')
+      const [membership] = await db.select({
+        id: workspaceMembers.id,
+      }).from(workspaceMembers).where(and(
+        eq(workspaceMembers.workspaceId, context.workspaceId),
+        eq(workspaceMembers.userId, context.userId),
+      )).limit(1)
+      if (!membership) throw new Error('not_found')
+
+      const range = createUsageDateRange({
+        days: query.data.days,
+        timezone: query.data.timezone,
+        now,
+      })
+      const from = new Date(range.from)
+      const to = new Date(range.to)
+      const search = query.data.search
+        ? `%${query.data.search}%`
+        : undefined
+      const filters = and(
+        eq(usageRecords.workspaceId, context.workspaceId),
+        eq(usageRecords.userId, context.userId),
+        gte(usageRecords.createdAt, from),
+        lte(usageRecords.createdAt, to),
+        query.data.projectId
+          ? eq(usageRecords.projectId, query.data.projectId)
+          : undefined,
+        query.data.provider
+          ? eq(usageRecords.provider, query.data.provider)
+          : undefined,
+        query.data.model
+          ? or(
+              eq(usageRecords.model, query.data.model),
+              eq(usageRecords.imageModel, query.data.model),
+            )
+          : undefined,
+        search
+          ? or(
+              ilike(usageRecords.model, search),
+              ilike(usageRecords.imageModel, search),
+              ilike(projects.name, search),
+            )
+          : undefined,
+      )
+      const [totalRow] = await db.select({
+        total: sql<number>`count(*)::int`,
+      }).from(usageRecords)
+        .innerJoin(
+          projects,
+          eq(projects.id, usageRecords.projectId),
+        )
+        .leftJoin(
+          generationRuns,
+          eq(generationRuns.id, usageRecords.generationRunId),
+        )
+        .where(filters)
+      const total = Number(totalRow?.total ?? 0)
+      const rows = await db.select({
+        usage: usageRecords,
+        projectName: projects.name,
+        proposalIntent: generationRuns.proposalIntent,
+      }).from(usageRecords)
+        .innerJoin(
+          projects,
+          eq(projects.id, usageRecords.projectId),
+        )
+        .leftJoin(
+          generationRuns,
+          eq(generationRuns.id, usageRecords.generationRunId),
+        )
+        .where(filters)
+        .orderBy(desc(usageRecords.createdAt))
+        .limit(query.data.pageSize)
+        .offset(
+          (query.data.page - 1) * query.data.pageSize,
+        )
+
+      const allRows = await db.select({
+        usage: usageRecords,
+        projectName: projects.name,
+        proposalIntent: generationRuns.proposalIntent,
+      }).from(usageRecords)
+        .innerJoin(
+          projects,
+          eq(projects.id, usageRecords.projectId),
+        )
+        .leftJoin(
+          generationRuns,
+          eq(generationRuns.id, usageRecords.generationRunId),
+        )
+        .where(filters)
+      const reportItems = allRows.map(usageReportItem)
+      const totals = reportItems.reduce((current, item) => ({
+        inputTokens: current.inputTokens + item.inputTokens,
+        outputTokens: current.outputTokens + item.outputTokens,
+        totalTokens: current.totalTokens + item.totalTokens,
+        pricedEstimatedMicroUsd: current.pricedEstimatedMicroUsd
+          + (item.pricing.status === 'unpriced'
+            ? 0
+            : item.pricing.totalEstimatedMicroUsd),
+        unpricedCount: current.unpricedCount
+          + (item.pricing.status === 'priced' ? 0 : 1),
+      }), {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        pricedEstimatedMicroUsd: 0,
+        unpricedCount: 0,
+      })
+      const byDate = new Map<string, {
+        inputTokens: number
+        outputTokens: number
+        totalTokens: number
+      }>()
+      for (const row of allRows) {
+        const key = usageDateKey(
+          row.usage.createdAt,
+          query.data.timezone,
+        )
+        const current = byDate.get(key) ?? {
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+        }
+        current.inputTokens += row.usage.inputTokens
+          + (row.usage.imageInputTokens ?? 0)
+        current.outputTokens += row.usage.outputTokens
+          + (row.usage.imageOutputTokens ?? 0)
+        current.totalTokens += row.usage.totalTokens
+          + (row.usage.imageTotalTokens ?? 0)
+        byDate.set(key, current)
+      }
+      const todayKey = usageDateKey(
+        now,
+        query.data.timezone,
+      )
+      const series = usageDateKeys(range).map(date => ({
+        date,
+        ...(byDate.get(date) ?? {
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+        }),
+      }))
+      return usageReportSchema.parse({
+        range,
+        totals: {
+          todayTokens: byDate.get(todayKey)?.totalTokens ?? 0,
+          ...totals,
+          currency: 'USD',
+        },
+        series,
+        items: rows.map(usageReportItem),
+        page: query.data.page,
+        pageSize: query.data.pageSize,
+        total,
+        totalPages: total === 0
+          ? 0
+          : Math.ceil(total / query.data.pageSize),
+      })
     },
   }
 }

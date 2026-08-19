@@ -7,6 +7,9 @@ import {
   leadMarkContactedRequestSchema,
   leadSubmissionRequestSchema,
   leadSummarySchema,
+  workspaceLeadListQuerySchema,
+  workspaceLeadListResponseSchema,
+  workspaceLeadSummarySchema,
   validateLeadSubmission,
 } from '../src/index'
 
@@ -115,5 +118,52 @@ describe('Inbox contracts', () => {
     expect(leadDetailSchema.safeParse({ ...detail, authTag: 'secret' }).success).toBe(false)
     expect(leadMarkContactedRequestSchema.parse({ workspaceId, expectedVersion: 1 })).toEqual({ workspaceId, expectedVersion: 1 })
     expect(leadMarkContactedRequestSchema.safeParse({ workspaceId, expectedVersion: 0 }).success).toBe(false)
+  })
+
+  it('validates bounded workspace filters and pagination defaults', () => {
+    expect(workspaceLeadListQuerySchema.parse({})).toEqual({
+      page: 1,
+      pageSize: 25,
+    })
+    expect(workspaceLeadListQuerySchema.parse({
+      projectId: leadId,
+      status: 'contacted',
+      page: '2',
+      pageSize: '100',
+    })).toEqual({
+      projectId: leadId,
+      status: 'contacted',
+      page: 2,
+      pageSize: 100,
+    })
+    expect(workspaceLeadListQuerySchema.safeParse({ page: 0 }).success).toBe(false)
+    expect(workspaceLeadListQuerySchema.safeParse({ pageSize: 101 }).success).toBe(false)
+    expect(workspaceLeadListQuerySchema.safeParse({ status: 'deleted' }).success).toBe(false)
+  })
+
+  it('keeps workspace summaries paginated and free of encrypted fields', () => {
+    const workspaceSummary = {
+      ...summary,
+      projectId: leadId,
+      projectName: 'Landing page',
+    }
+    expect(workspaceLeadSummarySchema.parse(workspaceSummary)).toEqual(workspaceSummary)
+    expect(workspaceLeadSummarySchema.safeParse({
+      ...workspaceSummary,
+      ciphertext: 'secret',
+    }).success).toBe(false)
+    expect(workspaceLeadListResponseSchema.parse({
+      items: [workspaceSummary],
+      page: 1,
+      pageSize: 25,
+      total: 1,
+      totalPages: 1,
+    })).toEqual({
+      items: [workspaceSummary],
+      page: 1,
+      pageSize: 25,
+      total: 1,
+      totalPages: 1,
+    })
   })
 })

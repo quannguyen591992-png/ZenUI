@@ -116,6 +116,35 @@ export const leadSummarySchema = z.object({
 }).strict()
 export type LeadSummary = z.infer<typeof leadSummarySchema>
 
+export const workspaceLeadSummarySchema = leadSummarySchema.extend({
+  projectId: z.string().uuid(),
+  projectName: z.string().trim().min(1).max(100),
+}).strict()
+export type WorkspaceLeadSummary = z.infer<
+  typeof workspaceLeadSummarySchema
+>
+
+export const workspaceLeadListQuerySchema = z.object({
+  projectId: z.string().uuid().optional(),
+  status: leadStatusSchema.optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+}).strict()
+export type WorkspaceLeadListQuery = z.infer<
+  typeof workspaceLeadListQuerySchema
+>
+
+export const workspaceLeadListResponseSchema = z.object({
+  items: z.array(workspaceLeadSummarySchema),
+  page: z.number().int().min(1),
+  pageSize: z.number().int().min(1).max(100),
+  total: z.number().int().min(0),
+  totalPages: z.number().int().min(0),
+}).strict()
+export type WorkspaceLeadListResponse = z.infer<
+  typeof workspaceLeadListResponseSchema
+>
+
 export const leadDetailSchema = leadSummarySchema.extend({
   fields: z.array(leadPayloadFieldSchema)
     .min(1)

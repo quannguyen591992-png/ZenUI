@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import nextConfig from '../apps/web/next.config.ts'
 import {
   assertDevPortsAvailable,
   assertVercelRedirectConfiguration,
@@ -10,6 +11,14 @@ import {
   resolveAssetServerOrigin,
   waitForDevReadiness,
 } from './dev-runtime.mjs'
+
+
+test('disables the Turbopack development filesystem cache to prevent cache compaction thrashing', () => {
+  assert.equal(
+    nextConfig.experimental?.turbopackFileSystemCacheForDev,
+    false,
+  )
+})
 
 test('includes the local asset server port instead of the public tunnel port in development preflight', () => {
   assert.deepEqual(getDevPorts({

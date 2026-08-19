@@ -126,6 +126,15 @@ describe('ZenUI editor', () => {
   beforeEach(() => localStorage.clear())
   afterEach(cleanup)
 
+  it('links the ZenUI brand back to the home page', () => {
+    render(<EditorApp />)
+
+    expect(screen.getByRole('link', { name: 'Về trang chủ ZenUI' }))
+      .toHaveAttribute('href', '/')
+    expect(screen.getByRole('link', { name: 'Về trang chủ ZenUI' }))
+      .toHaveClass('zenui-brand-gradient')
+  })
+
   it('keeps only proposal-first AI controls in Advanced mode', () => {
     render(serverEditor(api()))
 

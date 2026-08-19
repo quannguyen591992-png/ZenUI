@@ -457,6 +457,7 @@ export const leadSubmissions = pgTable('lead_submissions', {
 }, table => [
   unique('lead_submissions_binding_request_unique').on(table.bindingId, table.requestId),
   index('lead_submissions_project_status_received_idx').on(table.projectId, table.status, table.receivedAt),
+  index('lead_submissions_workspace_status_received_idx').on(table.workspaceId, table.status, table.receivedAt),
   index('lead_submissions_project_received_idx').on(table.projectId, table.receivedAt),
   index('lead_submissions_expiry_idx').on(table.expiresAt),
 ])
@@ -532,9 +533,39 @@ export const usageRecords = pgTable('usage_records', {
   inputTokens: integer('input_tokens').notNull(),
   outputTokens: integer('output_tokens').notNull(),
   totalTokens: integer('total_tokens').notNull(),
+  pricingVersion: text('pricing_version'),
+  inputRateMicroUsdPerMillion: integer('input_rate_micro_usd_per_million'),
+  outputRateMicroUsdPerMillion: integer('output_rate_micro_usd_per_million'),
+  inputEstimatedMicroUsd: integer('input_estimated_micro_usd'),
+  outputEstimatedMicroUsd: integer('output_estimated_micro_usd'),
+  totalEstimatedMicroUsd: integer('total_estimated_micro_usd'),
+  currency: text('currency'),
+  imageProvider: text('image_provider'),
+  imageModel: text('image_model'),
+  imageSize: text('image_size'),
+  imageCount: integer('image_count'),
+  stockCount: integer('stock_count'),
+  imageInputTokens: integer('image_input_tokens'),
+  imageOutputTokens: integer('image_output_tokens'),
+  imageTotalTokens: integer('image_total_tokens'),
+  imageTokenSource: text('image_token_source'),
+  imagePricingStatus: text('image_pricing_status'),
+  imagePricingReason: text('image_pricing_reason'),
+  imagePricingVersion: text('image_pricing_version'),
+  imageInputRateMicroUsdPerMillion:
+    integer('image_input_rate_micro_usd_per_million'),
+  imageOutputRateMicroUsdPerMillion:
+    integer('image_output_rate_micro_usd_per_million'),
+  imageInputEstimatedMicroUsd:
+    integer('image_input_estimated_micro_usd'),
+  imageOutputEstimatedMicroUsd:
+    integer('image_output_estimated_micro_usd'),
+  imageTotalEstimatedMicroUsd:
+    integer('image_total_estimated_micro_usd'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, table => [
   unique('usage_records_generation_run_unique').on(table.generationRunId),
   unique('usage_records_design_direction_run_unique').on(table.designDirectionRunId),
   index('usage_records_workspace_created_at_idx').on(table.workspaceId, table.createdAt),
+  index('usage_records_workspace_user_created_at_idx').on(table.workspaceId, table.userId, table.createdAt),
 ])

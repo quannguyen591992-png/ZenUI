@@ -28,6 +28,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import IORedis from 'ioredis'
 import { Pool } from 'pg'
 
+import { createAiObservability } from './ai-observability.js'
 import { createDeploymentReconciler } from './deployment-reconciliation.js'
 import { startLeadRetentionMaintenance } from './lead-retention.js'
 import { createWorkerOperationsServer } from './operations-server.js'
@@ -51,9 +52,11 @@ import {
   createHybridMediaResolver,
 } from './index.js'
 
+import type { AiObservabilityConfig } from './ai-observability.js'
 import type { AssistantObserver } from './index.js'
 import type { GenerateContentParameters } from '@google/genai'
 import type { DesignDocument } from '@zenui/design-schema'
+import type { ImageGenerationUsage } from '@zenui/usage-core'
 
 type WorkerService = 'generation' | 'asset' | 'export' | 'deployment'
 
@@ -144,6 +147,7 @@ interface WorkerRuntimeConfig {
   operationsHost: string
   operationsPort: number
   metricsBearerToken: string
+  aiObservability: AiObservabilityConfig
 }
 
 function required(name: string): string {
@@ -196,6 +200,58 @@ function boolean(name: string, fallback = false): boolean {
   if (value === 'true') return true
   if (value === 'false') return false
   throw new Error(`${name} is invalid`)
+}
+
+function decimal(name: string, fallback: number, min: number, max: number): number {
+  const value = process.env[name]
+  if (!value) return fallback
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+    throw new Error(`${name} is invalid`)
+  }
+  return parsed
+}
+
+function langSmithEndpoint(): string {
+  const raw = process.env.LANGSMITH_OTLP_ENDPOINT
+    ?? 'https://api.smith.langchain.com/otel/v1/traces'
+  let endpoint: URL
+  try {
+    endpoint = new URL(raw)
+  } catch {
+    throw new Error('LANGSMITH_OTLP_ENDPOINT is invalid')
+  }
+  if (
+    endpoint.protocol !== 'https:'
+    || endpoint.username
+    || endpoint.password
+    || endpoint.search
+    || endpoint.hash
+    || endpoint.origin + endpoint.pathname !== raw
+  ) {
+    throw new Error('LANGSMITH_OTLP_ENDPOINT is invalid')
+  }
+  return endpoint.href
+}
+
+function aiObservabilityConfig(): AiObservabilityConfig {
+  if (!boolean('LANGSMITH_TRACING_ENABLED')) return { enabled: false }
+  const correlationSecret = required('LANGSMITH_CORRELATION_SECRET')
+  if (Buffer.byteLength(correlationSecret, 'utf8') < 32) {
+    throw new Error('LANGSMITH_CORRELATION_SECRET is invalid')
+  }
+  return {
+    enabled: true,
+    endpoint: langSmithEndpoint(),
+    apiKey: providerSetting('LANGSMITH_API_KEY'),
+    project: required('LANGSMITH_PROJECT'),
+    correlationSecret,
+    sampleRatio: decimal('LANGSMITH_TRACE_SAMPLE_RATIO', 1, 0, 1),
+    exportTimeoutMs: integer('LANGSMITH_EXPORT_TIMEOUT_MS', 5_000, 100, 30_000),
+    batchDelayMs: integer('LANGSMITH_BATCH_DELAY_MS', 1_000, 10, 10_000),
+    maxQueueSize: integer('LANGSMITH_MAX_QUEUE_SIZE', 512, 1, 4_096),
+    shutdownTimeoutMs: integer('LANGSMITH_SHUTDOWN_TIMEOUT_MS', 2_000, 100, 30_000),
+  }
 }
 
 function assistantRolloutConfig(): {
@@ -437,6 +493,7 @@ export function loadWorkerRuntimeConfig(): WorkerRuntimeConfig {
     operationsHost: process.env.WORKER_OPERATIONS_HOST ?? '127.0.0.1',
     operationsPort: integer('WORKER_OPERATIONS_PORT', 9464, 1, 65_535),
     metricsBearerToken: required('METRICS_BEARER_TOKEN'),
+    aiObservability: aiObservabilityConfig(),
   }
 }
 
@@ -470,6 +527,7 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
     return { bytes, contentType: result.ContentType ?? 'application/octet-stream' }
   }
 
+  const aiObservability = createAiObservability(config.aiObservability)
   const metrics = createMetricRegistry('worker')
   metrics.setGauge('zenui_service_up', { service: 'worker', operation: 'health_probe', outcome: 'completed' }, 1)
   const observeAssistant: AssistantObserver = observation => {
@@ -550,6 +608,7 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
       model: config.generation.model,
       generateMaxOutputTokens: config.generation.generateMaxOutputTokens,
       editMaxOutputTokens: config.generation.editMaxOutputTokens,
+      observability: aiObservability,
       generateContent: (input: GenerateContentParameters) => ai.models.generateContent(input),
     })
     const activeAssistantProvider = config.generation.assistantV2Enabled
@@ -558,6 +617,7 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
       ? createGeminiMediaIntelligenceProvider({
           model: config.generation.model,
           maxOutputTokens: config.generation.editMaxOutputTokens,
+          observability: aiObservability,
           generateContent: (input, signal) => ai.models.generateContent({
             ...input as GenerateContentParameters,
             config: {
@@ -572,6 +632,7 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
       ? createGeminiMediaIntelligenceProvider({
           model: config.generation.model,
           maxOutputTokens: config.generation.editMaxOutputTokens,
+          observability: aiObservability,
           generateContent: (input, signal) => ai.models.generateContent({
             ...input as GenerateContentParameters,
             config: {
@@ -619,6 +680,7 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
     const imageGenerator = config.generation.imageGenerationEnabled && config.generation.imageModel
       ? createGeminiImageGenerator({
           model: config.generation.imageModel,
+          observability: aiObservability,
           generateContent: (input, signal) => ai.models.generateContent({
             ...input,
             config: { ...input.config, ...(signal ? { abortSignal: signal } : {}) },
@@ -632,8 +694,9 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
           projectId: string
           runId: string
           intent: { key: string; slot: 'hero' | 'feature-1' | 'feature-2' | 'feature-3'; query: string; alt: string }
+          collectImageUsage?: (usage: ImageGenerationUsage) => void
         }) => {
-          const { context, projectId, runId, intent } = input
+          const { context, projectId, runId, intent, collectImageUsage } = input
           const processAsset = async (asset: Awaited<ReturnType<typeof assetRepository.create>>) => {
             const settled = asset.status === 'ready' ? asset : await assetProcessor!({ data: {
               assetId: asset.id,
@@ -653,6 +716,11 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
                 aspectRatio: intent.slot === 'hero' ? '16:9' : '4:3',
                 signal: new AbortController().signal,
               })
+              try {
+                collectImageUsage?.(generated.usage)
+              } catch {
+                // Accounting collection is fail-open and never changes the media outcome.
+              }
               const digest = createHash('sha256').update(`${runId}:${intent.key}:generated`).digest('hex')
               const sourceObjectKey = `asset-sources/${context.workspaceId}/${digest.slice(0, 32)}`
               await s3!.send(new PutObjectCommand({
@@ -745,8 +813,17 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
     generationWorker = new Worker(GENERATION_QUEUE_NAME, createGenerationProcessor({
       provider,
       repository: generationRepository,
+      observability: aiObservability,
       ...(resolveOwnedMedia ? {
-        resolveProposalMedia: ({ context, projectId, runId, prompt, document, targetNodeId }) => {
+        resolveProposalMedia: ({
+          context,
+          projectId,
+          runId,
+          prompt,
+          document,
+          targetNodeId,
+          collectImageUsage,
+        }) => {
           const target = document.nodes[targetNodeId]
           const featureSlot = target?.type === 'feature-card' && 'mediaSlot' in target.props
             ? target.props.mediaSlot
@@ -762,6 +839,7 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
             projectId,
             runId,
             intent: { key: `proposal-${targetNodeId}-${slot}`, slot, query: prompt, alt },
+            ...(collectImageUsage ? { collectImageUsage } : {}),
           })
         },
       } : {}),
@@ -794,6 +872,7 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
     designDirectionWorker = new Worker(DESIGN_DIRECTION_QUEUE_NAME, createDesignDirectionProcessor({
       provider,
       repository: createDesignDirectionRepository(database),
+      observability: aiObservability,
       ...(resolveOwnedMedia ? { resolveMedia: resolveOwnedMedia } : {}),
       timeoutMs: config.generation.timeoutMs,
       maxMediaPerRun: config.generation.maxImagesPerRun,
@@ -952,6 +1031,7 @@ export function startWorker(config = loadWorkerRuntimeConfig()) {
     await operationsServer.close()
     await Promise.all(workers.map(worker => worker.close()))
     await Promise.all(queues.map(queue => queue.close()))
+    await aiObservability.shutdown()
     await redis.quit()
     s3?.destroy()
     await pool.end()

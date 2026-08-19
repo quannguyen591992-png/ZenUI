@@ -379,7 +379,7 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
     return (
       <main className="guided-onboarding guided-onboarding-pro guided-brief-shell" aria-labelledby="guided-brief-heading">
         <header className="guided-header">
-          <div className="logo-badge">ZenUI</div>
+          <div className="logo-badge zenui-brand-gradient">ZenUI</div>
           <div className="step-badge">Bước 1/3</div>
         </header>
         <section className="guided-intro">
@@ -534,7 +534,7 @@ export function GuidedOnboarding({ projectId, workspaceId, expectedVersion, asse
   return (
     <main className="guided-onboarding guided-onboarding-pro guided-gallery-shell" aria-labelledby="guided-gallery-heading">
       <header className="guided-header">
-        <div className="logo-badge">ZenUI</div>
+        <div className="logo-badge zenui-brand-gradient">ZenUI</div>
         <div className="header-actions" style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           <div className="step-badge">Bước 2/3</div>
           <button type="button" className="btn-ghost-pro" onClick={() => setScreen('brief')}>Điều chỉnh bản mô tả</button>

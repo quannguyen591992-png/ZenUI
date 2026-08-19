@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   createDesignDirectionRepository,
   createProjectRepository,
+  createUsageRepository,
   migrateTestDatabase,
 } from '../src/index'
 import * as schema from '../src/schema'
@@ -19,6 +20,16 @@ import * as schema from '../src/schema'
 const owner = { userId: '11111111-1111-4111-8111-111111111111', workspaceId: '22222222-2222-4222-8222-222222222222' }
 const outsider = { userId: '33333333-3333-4333-8333-333333333333', workspaceId: '44444444-4444-4444-8444-444444444444' }
 const usage = { inputTokens: 80, outputTokens: 120, totalTokens: 200 }
+const imageUsage = {
+  provider: 'google-gemini' as const,
+  model: 'gemini-3.1-flash-image',
+  imageSize: '1K' as const,
+  imageCount: 1,
+  inputTokens: 100,
+  outputTokens: 1_120,
+  totalTokens: 1_220,
+  tokenSource: 'provider_metadata' as const,
+}
 
 const brief: WebsiteBrief = {
   description: 'NovaFlow giúp các nhóm sản phẩm nhỏ lên kế hoạch ra mắt rõ ràng.',
@@ -192,13 +203,14 @@ describe('workspace-scoped Stage 5 design direction repository', () => {
     await expect(directions.getWorkerInput(outsider, remix.id)).resolves.toBeNull()
   })
 
-  it('completes transient directions without changing document version or project history', async () => {
+  it('completes transient directions with priced usage without changing project history', async () => {
     const { project, projects, directions } = await setup()
     const run = await directions.create(owner, project.id, {
       requestId: crypto.randomUUID(), expectedVersion: 1, brief, round: 0,
     })
-    expect(await directions.claim(owner, run.id, { provider: 'mock', model: 'mock-v1', promptVersion: 'directions-v1' }))
-      .toMatchObject({ status: 'running' })
+    expect(await directions.claim(owner, run.id, {
+      provider: 'google-gemini', model: 'gemini-2.5-flash', promptVersion: 'directions-v1',
+    })).toMatchObject({ status: 'running' })
     expect(await directions.complete(owner, run.id, {
       blueprint: generationPlan,
       directions: directionDocuments(),
@@ -211,6 +223,170 @@ describe('workspace-scoped Stage 5 design direction repository', () => {
     expect(visible?.directions).toHaveLength(3)
     expect(visible).not.toHaveProperty('brief')
     expect(visible).not.toHaveProperty('blueprint')
+    const rows = await client.query<{
+      pricing_version: string | null
+      input_estimated_micro_usd: number | null
+      output_estimated_micro_usd: number | null
+      total_estimated_micro_usd: number | null
+      currency: string | null
+    }>(`SELECT pricing_version,
+      input_estimated_micro_usd,
+      output_estimated_micro_usd,
+      total_estimated_micro_usd,
+      currency
+    FROM usage_records WHERE design_direction_run_id = $1`, [run.id])
+    expect(rows.rows).toEqual([{
+      pricing_version: 'google-gemini-2026-08-13',
+      input_estimated_micro_usd: 24,
+      output_estimated_micro_usd: 300,
+      total_estimated_micro_usd: 324,
+      currency: 'USD',
+    }])
+    const report = await createUsageRepository(drizzle(client, { schema })).report(owner, {
+      days: 1,
+      page: 1,
+      pageSize: 25,
+      timezone: 'UTC',
+    }, new Date())
+    expect(report.items[0]?.pricing).toMatchObject({
+      status: 'partial',
+      reason: 'unsupported_media_cost',
+      totalEstimatedMicroUsd: 324,
+    })
+    expect(report.totals).toMatchObject({
+      pricedEstimatedMicroUsd: 324,
+      unpricedCount: 1,
+    })
+  })
+
+  it('aggregates every generated image and stock selection into one immutable usage snapshot', async () => {
+    const { project, directions } = await setup()
+    const run = await directions.create(owner, project.id, {
+      requestId: crypto.randomUUID(), expectedVersion: 1, brief, round: 0,
+    })
+    await directions.claim(owner, run.id, {
+      provider: 'google-gemini', model: 'gemini-3.1-flash-lite', promptVersion: 'directions-v2',
+    })
+
+    expect(await directions.complete(owner, run.id, {
+      blueprint: generationPlan,
+      directions: directionDocuments(),
+      usage,
+      mediaUsage: {
+        generated: [imageUsage, imageUsage, imageUsage],
+        stockCount: 1,
+      },
+    })).toMatchObject({ accepted: true })
+
+    const rows = await client.query<{
+      image_count: number | null
+      stock_count: number | null
+      image_input_tokens: number | null
+      image_output_tokens: number | null
+      image_total_tokens: number | null
+      image_total_estimated_micro_usd: number | null
+    }>(`SELECT image_count, stock_count, image_input_tokens,
+      image_output_tokens, image_total_tokens,
+      image_total_estimated_micro_usd
+      FROM usage_records WHERE design_direction_run_id = $1`, [run.id])
+    expect(rows.rows).toEqual([{
+      image_count: 3,
+      stock_count: 1,
+      image_input_tokens: 300,
+      image_output_tokens: 3_360,
+      image_total_tokens: 3_660,
+      image_total_estimated_micro_usd: 201_750,
+    }])
+
+    const report = await createUsageRepository(drizzle(client, { schema })).report(owner, {
+      days: 1, page: 1, pageSize: 25, timezone: 'UTC',
+    }, new Date())
+    expect(report.totals).toMatchObject({
+      inputTokens: 380,
+      outputTokens: 3_480,
+      totalTokens: 3_860,
+      pricedEstimatedMicroUsd: 201_950,
+      unpricedCount: 0,
+    })
+    expect(report.items[0]).toMatchObject({
+      image: {
+        imageCount: 3,
+        stockCount: 1,
+        pricing: {
+          status: 'priced',
+          totalEstimatedMicroUsd: 201_750,
+        },
+      },
+      pricing: {
+        status: 'priced',
+        totalEstimatedMicroUsd: 201_950,
+      },
+    })
+  })
+
+  it('persists design direction failure usage exactly once', async () => {
+    const { project, directions } = await setup()
+    const run = await directions.create(owner, project.id, {
+      requestId: crypto.randomUUID(), expectedVersion: 1, brief, round: 0,
+    })
+    await directions.claim(owner, run.id, {
+      provider: 'google-gemini', model: 'gemini-2.5-flash-lite', promptVersion: 'directions-v1',
+    })
+
+    expect(await directions.fail(owner, run.id, {
+      errorCode: 'provider_error', usage,
+    })).toMatchObject({ status: 'failed' })
+    expect(await directions.fail(owner, run.id, {
+      errorCode: 'provider_error', usage,
+    })).toBeNull()
+
+    const rows = await client.query<{
+      count: number
+      total_tokens: number
+      total_estimated_micro_usd: number | null
+    }>(`SELECT count(*) OVER ()::int AS count,
+      total_tokens, total_estimated_micro_usd
+    FROM usage_records WHERE design_direction_run_id = $1`, [run.id])
+    expect(rows.rows).toEqual([{
+      count: 1,
+      total_tokens: 200,
+      total_estimated_micro_usd: 56,
+    }])
+  })
+
+  it('accounts for provider usage when direction completion becomes stale', async () => {
+    const { project, projects, directions } = await setup()
+    const run = await directions.create(owner, project.id, {
+      requestId: crypto.randomUUID(), expectedVersion: 1, brief, round: 0,
+    })
+    await directions.claim(owner, run.id, {
+      provider: 'google-gemini', model: 'gemini-2.5-flash', promptVersion: 'directions-v1',
+    })
+    await projects.replaceDocument(
+      owner,
+      project.id,
+      1,
+      createValidDesignFixture(),
+    )
+
+    expect(await directions.complete(owner, run.id, {
+      blueprint: generationPlan,
+      directions: directionDocuments(),
+      usage,
+    })).toEqual({
+      accepted: false,
+      code: 'stale_document_version',
+    })
+    const rows = await client.query<{
+      total_tokens: number
+      total_estimated_micro_usd: number | null
+    }>(`SELECT total_tokens, total_estimated_micro_usd
+      FROM usage_records
+      WHERE design_direction_run_id = $1`, [run.id])
+    expect(rows.rows).toEqual([{
+      total_tokens: 200,
+      total_estimated_micro_usd: 324,
+    }])
   })
 
   it('chooses exactly one direction atomically and keeps unchosen drafts out of history', async () => {
